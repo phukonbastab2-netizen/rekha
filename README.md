@@ -5,7 +5,7 @@ This folder is the complete static website for **rekhaastrology.in**. It needs n
 ## What is included
 
 - Minimal one-section landing page with the WhatsApp button at the top and centre
-- The exact WhatsApp link: `https://wa.me/message/O5TMVF36GMUJC1`
+- The exact WhatsApp link: `https://wa.me/message/OUVKZPNBFU7IL1`
 - No images or videos, for a lightweight and focused experience
 - Privacy Policy, Terms & Conditions, Astrology Disclaimer, Refund & Cancellation Policy, Shipping Policy and Contact page
 - Search files (`robots.txt`, `sitemap.xml`), custom-domain file (`CNAME`) and GitHub Pages compatibility file (`.nojekyll`)
