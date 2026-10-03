@@ -1,0 +1,8 @@
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS chat_messaging(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,customer_read INTEGER NOT NULL DEFAULT 0,owner_read INTEGER NOT NULL DEFAULT 0,customer_typing INTEGER NOT NULL DEFAULT 0,owner_typing INTEGER NOT NULL DEFAULT 0,pinned INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0,blocked INTEGER NOT NULL DEFAULT 0,labels TEXT NOT NULL DEFAULT '[]',notes TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS message_messaging(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,edited INTEGER,deleted INTEGER);
+CREATE TABLE IF NOT EXISTS message_stars(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,side TEXT NOT NULL CHECK(side IN ('customer','owner')),PRIMARY KEY(message_id,side));
+CREATE TABLE IF NOT EXISTS message_reactions(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,side TEXT NOT NULL CHECK(side IN ('customer','owner')),emoji TEXT NOT NULL,PRIMARY KEY(message_id,side));
+CREATE TABLE IF NOT EXISTS chat_attachments(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,title TEXT NOT NULL,type TEXT NOT NULL,object_key TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,ready INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS chat_attachments_conversation ON chat_attachments(conversation_id);
+CREATE TABLE IF NOT EXISTS saved_replies(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);

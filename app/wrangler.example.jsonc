@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rekha-astrology-preview",
+  "main": "cloudflare/worker-bundle.mjs",
+  "compatibility_date": "2026-09-24",
+  "workers_dev": true,
+  "preview_urls": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rekha-astrology",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "r2_buckets": [{ "binding": "MEDIA", "bucket_name": "rekha-astrology-media" }],
+  "vars": { "AD_REWARDS_ENABLED": "false" },
+  "triggers": { "crons": ["17 2 * * *", "* * * * *"] },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1, "redact_query_string": true }
+}

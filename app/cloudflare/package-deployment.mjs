@@ -1,0 +1,21 @@
+import { readFileSync,writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const files=['index.html','admin.html','app.js','admin.js','library.js','media.js','media.css','workflow-admin.js','workflow.css','app-settings-ui.js','app-settings.css','messaging-ui.js','calls.js','calls.css','styles.css','chat.css','admin.css','locales.js','art.svg','icon.svg','rekha-portrait.png','icon-192.png','icon-512.png','manifest.webmanifest','sw.js','offline.html','download.html','SHA256.txt'];
+const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webmanifest':'application/manifest+json','.apk':'application/vnd.android.package-archive','.txt':'text/plain; charset=utf-8'};
+// Keep the old small fallback only during the first R2 migration. New SDK APKs stay in R2.
+if(false)files.push('AstroRani.apk');
+const assets=Object.fromEntries(files.map(name=>['/'+name,{type:types[path.extname(name)],base64:readFileSync(path.join(root,'public',name)).toString('base64')} ]));
+const staticCode=`const bundledAssets=${JSON.stringify(assets)};\nasync function staticAssetFetch(request){if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405});let pathname=new URL(request.url).pathname;if(pathname==='/')pathname='/index.html';if(!Object.hasOwn(bundledAssets,pathname))return new Response('Not found',{status:404});const asset=bundledAssets[pathname];const bytes=Uint8Array.from(atob(asset.base64),c=>c.charCodeAt(0));return new Response(request.method==='HEAD'?null:bytes,{headers:{'Content-Type':asset.type}});}\n`;
+const ai=readFileSync(path.join(root,'src','ai.mjs'),'utf8').replace('export async function generateReply','async function generateReply');
+const owner=readFileSync(path.join(root,'cloudflare','owner.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replaceAll('export async function','async function');
+const messaging=readFileSync(path.join(root,'cloudflare','messaging.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function');
+const calls=readFileSync(path.join(root,'cloudflare','calls.mjs'),'utf8').replaceAll('export async function','async function');
+const workflow=readFileSync(path.join(root,'cloudflare','workflow.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export const','const');
+const appSettings=readFileSync(path.join(root,'cloudflare','app-settings.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
+const rewards=readFileSync(path.join(root,'cloudflare','rewards.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
+const worker=readFileSync(path.join(root,'cloudflare','worker.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replace('env.ASSETS.fetch(new Request(target,request))','staticAssetFetch(new Request(target,request))');
+const bundle=staticCode+ai+'\n'+messaging+'\n'+calls+'\n'+workflow+'\n'+appSettings+'\n'+owner+'\n'+rewards+'\n'+worker;
+writeFileSync(path.join(root,'cloudflare','worker-bundle.mjs'),bundle);
+console.log(JSON.stringify({bundleBytes:Buffer.byteLength(bundle),assets:files.length}));

@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local Wrangler development only.
+# SHA-256 hex digest of your private owner password; do not commit the value.
+ADMIN_PASSWORD_HASH=

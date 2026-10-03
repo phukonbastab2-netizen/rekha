@@ -1,0 +1,51 @@
+.workflow-dialog{box-sizing:border-box;width:min(750px,calc(100vw - 24px));max-height:92dvh;border:0;border-radius:16px;padding:0;color:#1f353d;font-family:system-ui,sans-serif;box-shadow:0 20px 70px #0004;overflow:auto;overscroll-behavior:contain}
+.workflow-dialog::backdrop{background:#14282e99}
+.workflow-dialog>header{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid #dfe7e9;background:#f1f6f6;position:sticky;top:0;z-index:1}
+.workflow-dialog h2{min-width:0;font-size:20px;line-height:1.35;margin:0;overflow-wrap:anywhere}
+.workflow-dialog h3{font-size:16px;margin:24px 0 12px}
+.workflow-dialog button{border:1px solid #d5e2e2;border-radius:8px;padding:10px 14px;min-height:44px;background:white;cursor:pointer;color:inherit;font:inherit;font-size:14px;white-space:normal;overflow-wrap:anywhere}
+.workflow-dialog [data-close]{flex:none;width:44px;padding:10px}
+.workflow-dialog button.primary{background:#008069;color:white;border-color:#008069}
+.workflow-dialog button:disabled{opacity:.5;cursor:not-allowed}
+.workflow-dialog[aria-busy=true] button:disabled{cursor:wait}
+.workflow-dialog button:focus-visible,.workflow-dialog input:focus-visible,.workflow-dialog textarea:focus-visible,.workflow-dialog select:focus-visible{outline:3px solid #54b9a4;outline-offset:2px}
+.workflow-body{padding:16px 20px;min-width:0}
+.workflow-note{font-size:13px;line-height:1.6;color:#61737a;background:#f4f8f8;border-radius:10px;padding:12px;overflow-wrap:anywhere}
+.workflow-hold{border-left:3px solid #d2a24e;background:#fff8e9;color:#735d2d}
+.workflow-error{font-size:14px;line-height:1.5;color:#a73625;overflow-wrap:anywhere}
+.workflow-error:empty{display:none}
+.workflow-dialog label{display:block;min-width:0;font-size:13px;line-height:1.5;font-weight:600;margin:12px 0}
+.workflow-dialog input:not([type=checkbox]),.workflow-dialog select,.workflow-dialog textarea{display:block;box-sizing:border-box;min-width:0;width:100%;padding:10px;border:1px solid #d5e2e2;border-radius:8px;font:14px/1.5 system-ui;margin-top:6px;color:inherit;background:white}
+.workflow-dialog textarea{resize:vertical;min-height:84px}
+.workflow-dialog [aria-invalid=true]{border-color:#a73625}
+.workflow-dialog label.workflow-check{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #cee4d9;border-radius:10px;background:#f2faf6;font-size:15px}
+.workflow-check input{flex:0 0 20px;width:20px;height:20px;margin:0;accent-color:#008069}
+.workflow-check span{min-width:0}
+.workflow-check small,.workflow-field-hint{display:block;font-size:12px;line-height:1.5;font-weight:400;color:#61737a;margin-top:4px}
+.workflow-fields,.workflow-timings{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 16px}
+.workflow-number{display:flex;align-items:center;gap:10px}
+.workflow-number input{flex:1;min-width:0}
+.workflow-number small{flex:0 0 52px;font-weight:400;color:#61737a}
+.workflow-languages,.workflow-actions,.workflow-dialog footer{display:flex;gap:8px;flex-wrap:wrap}
+.workflow-languages button[aria-pressed=true]{background:#d9f5e8;border-color:#81c9b0}
+.workflow-state{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px 10px;font-size:14px;line-height:1.5}
+.workflow-state dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.workflow-state dd small{display:block;font-size:12px;color:#61737a;margin-top:4px}
+.workflow-state dt{color:#61737a}
+.workflow-status{display:inline-block;border-radius:14px;background:#dff4e9;color:#17674b;padding:3px 10px;font-weight:600;font-size:13px}
+.workflow-status.is-held{background:#fff1d2;color:#805e20}
+.workflow-queue{padding-left:24px}
+.workflow-queue li{font-size:13px;line-height:1.5;padding:10px 0;overflow-wrap:anywhere}
+.workflow-queue small{display:block;color:#61737a;margin-top:4px}
+.flow-tools-button{width:100%;text-align:left;border:1px solid #d5e2e2;border-radius:10px;padding:12px;background:#eff7f5;color:#1f353d;cursor:pointer;margin:8px 0 16px}
+.workflow-dialog footer{padding:14px 0 4px}
+.workflow-dialog [hidden]{display:none!important}
+@media(max-width:520px){
+  .workflow-fields,.workflow-timings{grid-template-columns:minmax(0,1fr)}
+  .workflow-body{padding:14px}
+  .workflow-dialog>header{padding:12px 14px}
+  .workflow-dialog h2{font-size:18px}
+  .workflow-state{grid-template-columns:88px minmax(0,1fr)}
+  .workflow-dialog input:not([type=checkbox]),.workflow-dialog select,.workflow-dialog textarea{font-size:16px}
+  .workflow-actions>button{flex:1 1 120px}
+}
