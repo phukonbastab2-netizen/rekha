@@ -52,6 +52,7 @@
 .chat-mode .message-content { display: inline; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-touch-callout: none; }
 .chat-mode .stamp { display: inline-flex; float: right; align-items: center; justify-content: flex-end; gap: 4px; margin: 6px 0 0 12px; padding: 0; color: var(--chat-muted); font-size: 10px; line-height: 14px; white-space: nowrap; }
 .chat-mode .sent-check { color: var(--chat-muted); font-size: 13px; line-height: 1; }
+.chat-mode .sent-check.delivered { color: #53bdeb; }
 .chat-mode .sent-check.read { color: #53bdeb; font-weight: 600; letter-spacing: -3px; margin-right: 3px; }
 .chat-mode .sent-check svg { width: 18px; height: 16px; }
 .chat-mode .star-marker { color: #74828a; font-size: 10px; }
