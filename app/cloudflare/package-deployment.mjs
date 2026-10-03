@@ -2,7 +2,7 @@ import { readFileSync,writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const files=['index.html','admin.html','app.js','admin.js','send-queue.js','library.js','media.js','media.css','workflow-admin.js','workflow.css','app-settings-ui.js','app-settings.css','messaging-ui.js','permissions.js','permissions.css','calls.js','calls.css','voice-effects.js','voice-effects-worklet.js','styles.css','chat.css','admin.css','locales.js','art.svg','icon.svg','rekha-portrait.png','icon-192.png','icon-512.png','manifest.webmanifest','sw.js','offline.html','download.html','SHA256.txt'];
+const files=['index.html','admin.html','app.js','admin.js','send-queue.js','adaptive-poll.js','chat-history.js','inbox-pages.js','library.js','media.js','media.css','workflow-admin.js','workflow.css','app-settings-ui.js','app-settings.css','messaging-ui.js','permissions.js','permissions.css','calls.js','calls.css','voice-effects.js','voice-effects-worklet.js','styles.css','chat.css','admin.css','locales.js','art.svg','icon.svg','rekha-portrait.png','icon-192.png','icon-512.png','manifest.webmanifest','sw.js','offline.html','download.html','SHA256.txt'];
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webmanifest':'application/manifest+json','.apk':'application/vnd.android.package-archive','.txt':'text/plain; charset=utf-8'};
 // Keep the old small fallback only during the first R2 migration. New SDK APKs stay in R2.
 if(false)files.push('AstroRani.apk');
@@ -15,7 +15,7 @@ const calls=readFileSync(path.join(root,'cloudflare','calls.mjs'),'utf8').replac
 const workflow=readFileSync(path.join(root,'cloudflare','workflow.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export const','const');
 const appSettings=readFileSync(path.join(root,'cloudflare','app-settings.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
 const rewards=readFileSync(path.join(root,'cloudflare','rewards.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
-const worker=readFileSync(path.join(root,'cloudflare','worker.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replace('env.ASSETS.fetch(new Request(target,request))','staticAssetFetch(new Request(target,request))');
+const worker=readFileSync(path.join(root,'cloudflare','worker.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replaceAll('export const','const').replace('env.ASSETS.fetch(new Request(target,request))','staticAssetFetch(new Request(target,request))');
 const bundle=staticCode+ai+'\n'+messaging+'\n'+calls+'\n'+workflow+'\n'+appSettings+'\n'+owner+'\n'+rewards+'\n'+worker;
 writeFileSync(path.join(root,'cloudflare','worker-bundle.mjs'),bundle);
 console.log(JSON.stringify({bundleBytes:Buffer.byteLength(bundle),assets:files.length}));

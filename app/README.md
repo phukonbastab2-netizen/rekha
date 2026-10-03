@@ -2,7 +2,7 @@
 
 This directory contains the customer app, private owner panel, Cloudflare backend and two Android WebView projects. The website in the repository root is separate and stays unchanged. That static website can be hosted separately; the authenticated chat needs the Cloudflare Worker.
 
-Web and Android source package: **0.8.0-preview**, including immediate customer send feedback, retryable messages, the owner app editor, feature-specific permission prompts and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
+Web and Android source package: **0.9.0-preview**, including bounded chat updates, searchable customer pages, adaptive polling, reliable message retries, the owner app editor, feature-specific permission prompts and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
 
 Customers have one private conversation with Rekha. The owner can send text, images, video, audio, PDFs and ordered collections without waiting for a customer reply. Ads are disabled. Payments remain a preview with no real charges. No passwords, payment-card collection, OTP access or private-device scraping is implemented.
 
@@ -19,6 +19,14 @@ npm test
 The lockfile pins the dependencies. Building checks JavaScript syntax and generates `cloudflare/worker-bundle.mjs` from the tracked source and public assets. The generated bundle is ignored by Git. Tests use temporary local D1/R2 resources and fake test identities; they make no production changes. They cover the original Node prototype, private messaging, guided delivery, retries, scheduled work, owner settings and the exact generated Worker with actual authentication and media-access checks. Browser and actual phone testing remain separate.
 
 The repository workflow runs these same build and test commands. It has no deployment credentials and does not deploy.
+
+## Capacity on the existing resources
+
+The target is 100,000 registered customer profiles with fewer people online together. Current web clients fetch 80 recent messages, use revision deltas, and load older messages on request. The owner inbox pages and searches names on the server. Hidden/offline screens stop periodic reads, idle screens back off, and durable indexed work replaces repeated history scans. Legacy clients remain compatible.
+
+See [the capacity report](docs/CAPACITY-REPORT.md) for measured local data volume, query plans, request limits and remaining constraints. Reproduce the synthetic benchmark with `node scripts/benchmark-capacity.mjs --profiles=100000`. It creates an ephemeral local database and does not send traffic to Cloudflare. Registered-profile volume is different from concurrent chat throughput; these results do not guarantee 100,000 simultaneous customers or unlimited activity within an account's daily quotas.
+
+Existing installations need the additive scale, workflow, attachment-quota and call indexes migrations before serving this version. Use `applyScaleMigration` and the bounded `backfillScaleCache` helper in `cloudflare/scale-migration.mjs` to resume interrupted upgrades safely. Keep account resources, bindings, secrets and existing schedules intact.
 
 ## Main directories
 

@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 // Local D1/R2 integration: no cloud account, credentials, provider or customer data.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
@@ -20,7 +21,7 @@ const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibil
 const latency=[];
 try{
   const db=await mf.getD1Database('DB');
-  for(const sql of fs.readFileSync('cloudflare/schema.sql','utf8').split(';').filter(value=>value.trim()))await db.prepare(sql).run();
+  for(const sql of splitSqlStatements(fs.readFileSync('cloudflare/schema.sql','utf8')))await db.prepare(sql).run();
   await db.prepare('CREATE TABLE fixture_reply_control(id INTEGER PRIMARY KEY,delay_ms INTEGER,fail INTEGER)').run();
   await db.prepare('INSERT INTO fixture_reply_control VALUES(1,1500,0)').run();
   await db.prepare('CREATE TABLE fixture_reply_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,message_id INTEGER,history_size INTEGER,started INTEGER,finished INTEGER)').run();

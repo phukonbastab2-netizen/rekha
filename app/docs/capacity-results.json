@@ -1,0 +1,2557 @@
+{
+  "generatedAt": "2026-10-03T06:08:13.845Z",
+  "scope": "Ephemeral local data-volume and bounded-request benchmark; not a production or 100,000-concurrent-user load test.",
+  "sourceHashes": {
+    "src/ai.mjs": "8f861000e4fc662f7213d84ed1d63adce5c1392c2f45d684484cb8fce5f4244f",
+    "cloudflare/messaging.mjs": "92fd89c98fd106a739afc984aa62e11e79202b710ae27732d018f3f2ec7bf4eb",
+    "cloudflare/calls.mjs": "f265495fb921c60f32555fb417514fc4b5e5ce863c586c1ea9be1d6683d96d88",
+    "cloudflare/workflow.mjs": "6a6455b551fbd3fe171f848343a808cf2ba846edccfb049d1efd4f827092d276",
+    "cloudflare/app-settings.mjs": "96429974a60170b85698916f493f971229f3ad68b57c8dd029f56a8eac29460a",
+    "cloudflare/owner.mjs": "b87bad36c6e2649fa31c0bed68383a197b7d83454447c6006cf6c3cf4422fe96",
+    "cloudflare/rewards.mjs": "55fcc9d04296d219e4df3b66cd4ddc2eb224b14634934f9d1901e78affb2e3c3",
+    "cloudflare/worker.mjs": "27545152fd11068da5cf814cc831b67f645088633121f0796ce7dc98839fb513"
+  },
+  "runtime": {
+    "node": "v24.19.0",
+    "platform": "win32",
+    "cpus": 4,
+    "cpu": "Intel(R) Core(TM) i5-2500 CPU @ 3.30GHz",
+    "totalRamBytes": 8469671936
+  },
+  "fixture": {
+    "profiles": 100000,
+    "baseMessages": 500000,
+    "longMessages": 4995,
+    "actualProfiles": 100000,
+    "actualMessages": 504995,
+    "databaseBytes": 248586240,
+    "endedCallHistory": 105000,
+    "workflowEventHistory": 100000,
+    "finalDatabaseBytes": 450052096
+  },
+  "seed": {
+    "rowsRead": 6330353,
+    "rowsWritten": 9477668,
+    "lastSizeBytes": 454889472,
+    "ms": 31147.8466
+  },
+  "queries": [
+    {
+      "label": "calls idle owner excludes ended history",
+      "sql": "SELECT id FROM calls INDEXED BY calls_active_expiry WHERE status!='ended' ORDER BY expires,id LIMIT 20",
+      "bindings": [],
+      "plan": [
+        "SCAN calls USING INDEX calls_active_expiry"
+      ],
+      "ms": 66.32129999999597,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 0
+    },
+    {
+      "label": "owner inbox plan",
+      "sql": "SELECT c.id,c.name,c.language,c.mode,c.entitlement,c.updated,c.version,c.inbox_revision AS inboxRevision,c.free_used,c.inbox_pinned AS pinned,c.inbox_archived AS archived,c.inbox_blocked AS blocked,COALESCE(s.labels,'[]') AS labels,COALESCE(s.notes,'') AS notes,MIN(c.waiting_count,101) AS waiting,(SELECT COUNT(*) FROM (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status!='deleted' AND m.id>c.inbox_owner_read LIMIT 101)) AS unread,c.last_user_id AS latestUserMessageId,c.last_user_id AS latestUserId,c.last_message_id AS latestMessageId FROM conversations c  LEFT JOIN chat_messaging s ON s.conversation_id=c.id WHERE c.inbox_archived=0 ORDER BY c.inbox_pinned DESC,c.updated DESC,c.id DESC LIMIT ?",
+      "bindings": [
+        51
+      ],
+      "plan": [
+        "SEARCH c USING INDEX conversations_inbox (inbox_archived=?)",
+        "SEARCH s USING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?) LEFT-JOIN",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "CO-ROUTINE (subquery-1)",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=? AND id>?)",
+        "SCAN (subquery-1)"
+      ],
+      "ms": 103.31530000000203,
+      "rowsRead": 228,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 51
+    },
+    {
+      "label": "owner broad prefix plan",
+      "sql": "SELECT c.id,c.name,c.language,c.mode,c.entitlement,c.updated,c.version,c.inbox_revision AS inboxRevision,c.free_used,c.inbox_pinned AS pinned,c.inbox_archived AS archived,c.inbox_blocked AS blocked,COALESCE(s.labels,'[]') AS labels,COALESCE(s.notes,'') AS notes,MIN(c.waiting_count,101) AS waiting,(SELECT COUNT(*) FROM (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status!='deleted' AND m.id>c.inbox_owner_read LIMIT 101)) AS unread,c.last_user_id AS latestUserMessageId,c.last_user_id AS latestUserId,c.last_message_id AS latestMessageId FROM conversations c INDEXED BY conversations_name_active LEFT JOIN chat_messaging s ON s.conversation_id=c.id WHERE c.inbox_archived=0 AND c.name>=? COLLATE NOCASE AND c.name<? COLLATE NOCASE AND c.name LIKE ? ESCAPE '\\' COLLATE NOCASE ORDER BY c.name COLLATE NOCASE,c.id LIMIT ?",
+      "bindings": [
+        "customer",
+        "customes",
+        "Customer%",
+        51
+      ],
+      "plan": [
+        "SEARCH c USING INDEX conversations_name_active (name>? AND name<?)",
+        "SEARCH s USING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?) LEFT-JOIN",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "CO-ROUTINE (subquery-1)",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=? AND id>?)",
+        "SCAN (subquery-1)"
+      ],
+      "ms": 84.09189999999944,
+      "rowsRead": 327,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 51
+    },
+    {
+      "label": "owner no match plan",
+      "sql": "SELECT c.id,c.name,c.language,c.mode,c.entitlement,c.updated,c.version,c.inbox_revision AS inboxRevision,c.free_used,c.inbox_pinned AS pinned,c.inbox_archived AS archived,c.inbox_blocked AS blocked,COALESCE(s.labels,'[]') AS labels,COALESCE(s.notes,'') AS notes,MIN(c.waiting_count,101) AS waiting,(SELECT COUNT(*) FROM (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status!='deleted' AND m.id>c.inbox_owner_read LIMIT 101)) AS unread,c.last_user_id AS latestUserMessageId,c.last_user_id AS latestUserId,c.last_message_id AS latestMessageId FROM conversations c INDEXED BY conversations_name_active LEFT JOIN chat_messaging s ON s.conversation_id=c.id WHERE c.inbox_archived=0 AND c.name>=? COLLATE NOCASE AND c.name<? COLLATE NOCASE AND c.name LIKE ? ESCAPE '\\' COLLATE NOCASE ORDER BY c.name COLLATE NOCASE,c.id LIMIT ?",
+      "bindings": [
+        "absent",
+        "absenu",
+        "Absent%",
+        51
+      ],
+      "plan": [
+        "SEARCH c USING INDEX conversations_name_active (name>? AND name<?)",
+        "SEARCH s USING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?) LEFT-JOIN",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "CO-ROUTINE (subquery-1)",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=? AND id>?)",
+        "SCAN (subquery-1)"
+      ],
+      "ms": 75.42050000000017,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 0
+    },
+    {
+      "label": "owner broad waiting plan",
+      "sql": "SELECT c.id,c.name,c.language,c.mode,c.entitlement,c.updated,c.version,c.inbox_revision AS inboxRevision,c.free_used,c.inbox_pinned AS pinned,c.inbox_archived AS archived,c.inbox_blocked AS blocked,COALESCE(s.labels,'[]') AS labels,COALESCE(s.notes,'') AS notes,MIN(c.waiting_count,101) AS waiting,(SELECT COUNT(*) FROM (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status!='deleted' AND m.id>c.inbox_owner_read LIMIT 101)) AS unread,c.last_user_id AS latestUserMessageId,c.last_user_id AS latestUserId,c.last_message_id AS latestMessageId FROM conversations c INDEXED BY conversations_name_waiting LEFT JOIN chat_messaging s ON s.conversation_id=c.id WHERE c.inbox_archived=0 AND c.waiting_count>0 AND c.name>=? COLLATE NOCASE AND c.name<? COLLATE NOCASE AND c.name LIKE ? ESCAPE '\\' COLLATE NOCASE ORDER BY c.name COLLATE NOCASE,c.id LIMIT ?",
+      "bindings": [
+        "customer",
+        "customes",
+        "Customer%",
+        51
+      ],
+      "plan": [
+        "SEARCH c USING INDEX conversations_name_waiting (name>? AND name<?)",
+        "SEARCH s USING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?) LEFT-JOIN",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "CO-ROUTINE (subquery-1)",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=? AND id>?)",
+        "SCAN (subquery-1)"
+      ],
+      "ms": 79.130799999999,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 0
+    },
+    {
+      "label": "customer latest80 plan",
+      "sql": "SELECT id,body FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT 81",
+      "bindings": [
+        "00000000-0000-4000-8000-000000000001"
+      ],
+      "plan": [
+        "SEARCH messages USING INDEX messages_conversation (conversation_id=?)"
+      ],
+      "ms": 73.0969000000041,
+      "rowsRead": 81,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 81
+    },
+    {
+      "label": "customer unchanged delta plan",
+      "sql": "SELECT id,body FROM messages WHERE conversation_id=? AND change_revision>? AND change_revision<=? ORDER BY change_revision,id LIMIT 201",
+      "bindings": [
+        "00000000-0000-4000-8000-000000000001",
+        5000,
+        5000
+      ],
+      "plan": [
+        "SEARCH messages USING INDEX messages_changes (conversation_id=? AND change_revision>? AND change_revision<?)"
+      ],
+      "ms": 165.02249999999913,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 0
+    },
+    {
+      "label": "legacy recovery bounded200",
+      "sql": "SELECT id FROM messages WHERE role='user' AND id>? AND id<=? ORDER BY id LIMIT ?",
+      "bindings": [
+        0,
+        500000,
+        200
+      ],
+      "plan": [
+        "SEARCH messages USING COVERING INDEX messages_user_id (id>? AND id<?)"
+      ],
+      "ms": 80.22350000000006,
+      "rowsRead": 200,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 200
+    },
+    {
+      "label": "workflow empty FIFO20",
+      "sql": "SELECT m.* FROM workflow_recovery r JOIN messages m ON m.id=r.message_id ORDER BY r.message_id LIMIT ?",
+      "bindings": [
+        20
+      ],
+      "plan": [
+        "SCAN r",
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)"
+      ],
+      "ms": 77.88590000000113,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 0
+    },
+    {
+      "label": "workflow empty due20",
+      "sql": "WITH candidates AS (SELECT * FROM workflow_jobs WHERE status='pending' AND due<=? ORDER BY due,id LIMIT ?) SELECT j.*,CASE WHEN f.status!='paused' AND c.mode='ai' AND COALESCE(s.blocked,0)=0 THEN 1 ELSE 0 END AS eligible FROM candidates j LEFT JOIN chat_workflow f ON f.conversation_id=j.conversation_id AND f.generation=j.generation JOIN conversations c ON c.id=j.conversation_id LEFT JOIN chat_messaging s ON s.conversation_id=c.id",
+      "bindings": [
+        1791007692912,
+        20
+      ],
+      "plan": [
+        "CO-ROUTINE candidates",
+        "SEARCH workflow_jobs USING INDEX workflow_jobs_pending_order (status=? AND due<?)",
+        "SCAN j",
+        "SEARCH f USING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?) LEFT-JOIN",
+        "SEARCH c USING INDEX sqlite_autoindex_conversations_1 (id=?)",
+        "SEARCH s USING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?) LEFT-JOIN"
+      ],
+      "ms": 79.79089999999997,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 283889664,
+      "resultCount": 0
+    },
+    {
+      "label": "workflow populated FIFO20",
+      "sql": "SELECT m.* FROM workflow_recovery r JOIN messages m ON m.id=r.message_id ORDER BY r.message_id LIMIT ?",
+      "bindings": [
+        20
+      ],
+      "plan": [
+        "SCAN r",
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)"
+      ],
+      "ms": 75.11479999999574,
+      "rowsRead": 40,
+      "rowsWritten": 0,
+      "databaseBytes": 303304704,
+      "resultCount": 20
+    },
+    {
+      "label": "workflow populated scoped FIFO20",
+      "sql": "SELECT m.* FROM workflow_recovery r JOIN messages m ON m.id=r.message_id WHERE r.conversation_id=? ORDER BY r.message_id LIMIT ?",
+      "bindings": [
+        "00000000-0000-4000-8000-000000000001",
+        20
+      ],
+      "plan": [
+        "SEARCH r USING COVERING INDEX workflow_recovery_conversation (conversation_id=?)",
+        "SEARCH m USING INTEGER PRIMARY KEY (rowid=?)"
+      ],
+      "ms": 46.565400000006775,
+      "rowsRead": 3,
+      "rowsWritten": 0,
+      "databaseBytes": 303304704,
+      "resultCount": 1
+    },
+    {
+      "label": "workflow populated due20 behind500 held",
+      "sql": "WITH candidates AS (SELECT * FROM workflow_jobs WHERE status='pending' AND due<=? ORDER BY due,id LIMIT ?) SELECT j.*,CASE WHEN f.status!='paused' AND c.mode='ai' AND COALESCE(s.blocked,0)=0 THEN 1 ELSE 0 END AS eligible FROM candidates j LEFT JOIN chat_workflow f ON f.conversation_id=j.conversation_id AND f.generation=j.generation JOIN conversations c ON c.id=j.conversation_id LEFT JOIN chat_messaging s ON s.conversation_id=c.id",
+      "bindings": [
+        1791007692912,
+        20
+      ],
+      "plan": [
+        "CO-ROUTINE candidates",
+        "SEARCH workflow_jobs USING INDEX workflow_jobs_pending_order (status=? AND due<?)",
+        "SCAN j",
+        "SEARCH f USING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?) LEFT-JOIN",
+        "SEARCH c USING INDEX sqlite_autoindex_conversations_1 (id=?)",
+        "SEARCH s USING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?) LEFT-JOIN"
+      ],
+      "ms": 79.39540000000125,
+      "rowsRead": 60,
+      "rowsWritten": 0,
+      "databaseBytes": 303304704,
+      "resultCount": 20
+    },
+    {
+      "label": "workflow idle guard with2000 cancelled jobs",
+      "sql": "SELECT 1 FROM workflow_jobs WHERE conversation_id=? AND status='pending' AND due<=? UNION ALL SELECT 1 FROM workflow_jobs WHERE conversation_id=? AND status='processing' AND lease_until<=? LIMIT 1",
+      "bindings": [
+        "00000000-0000-4000-8000-000000000002",
+        1791007692912,
+        "00000000-0000-4000-8000-000000000002",
+        1791007692912
+      ],
+      "plan": [
+        "COMPOUND QUERY",
+        "LEFT-MOST SUBQUERY",
+        "SEARCH workflow_jobs USING COVERING INDEX workflow_jobs_chat_order (conversation_id=? AND status=? AND due<?)",
+        "UNION ALL",
+        "SEARCH workflow_jobs USING COVERING INDEX workflow_jobs_chat_lease (conversation_id=? AND status=? AND lease_until<?)"
+      ],
+      "ms": 77.27249999999913,
+      "rowsRead": 2,
+      "rowsWritten": 0,
+      "databaseBytes": 303304704,
+      "resultCount": 0
+    },
+    {
+      "label": "workflow queued inbound write",
+      "sql": "INSERT INTO messages(conversation_id,role,kind,body,status,created) VALUES(?,'user','customer','One new enrolled inbound','pending',?)",
+      "bindings": [
+        "00000000-0000-4000-8000-000000000001",
+        1791007692912
+      ],
+      "plan": [
+        "SEARCH workflow_recovery USING INTEGER PRIMARY KEY (rowid=?)",
+        "SEARCH workflow_events USING COVERING INDEX workflow_events_message (message_id=?)",
+        "SEARCH message_reactions USING COVERING INDEX sqlite_autoindex_message_reactions_1 (message_id=?)",
+        "SEARCH message_stars USING COVERING INDEX sqlite_autoindex_message_stars_1 (message_id=?)",
+        "SEARCH message_messaging USING COVERING INDEX message_quotes (reply_to=?)",
+        "SEARCH message_messaging USING INTEGER PRIMARY KEY (rowid=?)"
+      ],
+      "ms": 82.49370000000636,
+      "rowsRead": 7,
+      "rowsWritten": 19,
+      "databaseBytes": 303304704,
+      "resultCount": 0
+    },
+    {
+      "label": "cron fair window200 page0",
+      "sql": "WITH candidates AS MATERIALIZED (\n SELECT * FROM conversations INDEXED BY conversations_reply_waiting\n WHERE waiting_count>0 AND mode IN ('ai','assist') AND inbox_blocked=0\n AND (updated,id)>(?,?) ORDER BY updated,id LIMIT 200\n)\nSELECT c.id,c.updated,CASE WHEN\n NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)\n AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT id FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed') ORDER BY id DESC LIMIT 1)))\n THEN 1 ELSE 0 END AS eligible FROM candidates c ORDER BY c.updated,c.id",
+      "bindings": [
+        0,
+        "",
+        5,
+        1791007692912
+      ],
+      "plan": [
+        "MATERIALIZE candidates",
+        "SEARCH conversations USING INDEX conversations_reply_waiting ((updated,id)>(?,?))",
+        "SCAN c",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH r USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 4",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 5",
+        "SEARCH l USING INDEX sqlite_autoindex_rate_limits_1 (key=?)",
+        "CORRELATED SCALAR SUBQUERY 7",
+        "SEARCH d USING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 6",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=?)"
+      ],
+      "ms": 83.49680000000808,
+      "rowsRead": 650,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 200
+    },
+    {
+      "label": "cron fair window200 page1",
+      "sql": "WITH candidates AS MATERIALIZED (\n SELECT * FROM conversations INDEXED BY conversations_reply_waiting\n WHERE waiting_count>0 AND mode IN ('ai','assist') AND inbox_blocked=0\n AND (updated,id)>(?,?) ORDER BY updated,id LIMIT 200\n)\nSELECT c.id,c.updated,CASE WHEN\n NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)\n AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT id FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed') ORDER BY id DESC LIMIT 1)))\n THEN 1 ELSE 0 END AS eligible FROM candidates c ORDER BY c.updated,c.id",
+      "bindings": [
+        1791007693212,
+        "00000000-0000-4000-8000-000000000300",
+        5,
+        1791007692912
+      ],
+      "plan": [
+        "MATERIALIZE candidates",
+        "SEARCH conversations USING INDEX conversations_reply_waiting ((updated,id)>(?,?))",
+        "SCAN c",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH r USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 4",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 5",
+        "SEARCH l USING INDEX sqlite_autoindex_rate_limits_1 (key=?)",
+        "CORRELATED SCALAR SUBQUERY 7",
+        "SEARCH d USING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 6",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=?)"
+      ],
+      "ms": 69.48970000000554,
+      "rowsRead": 701,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 200
+    },
+    {
+      "label": "cron fair window200 page2",
+      "sql": "WITH candidates AS MATERIALIZED (\n SELECT * FROM conversations INDEXED BY conversations_reply_waiting\n WHERE waiting_count>0 AND mode IN ('ai','assist') AND inbox_blocked=0\n AND (updated,id)>(?,?) ORDER BY updated,id LIMIT 200\n)\nSELECT c.id,c.updated,CASE WHEN\n NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)\n AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT id FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed') ORDER BY id DESC LIMIT 1)))\n THEN 1 ELSE 0 END AS eligible FROM candidates c ORDER BY c.updated,c.id",
+      "bindings": [
+        1791007693612,
+        "00000000-0000-4000-8000-000000000700",
+        5,
+        1791007692912
+      ],
+      "plan": [
+        "MATERIALIZE candidates",
+        "SEARCH conversations USING INDEX conversations_reply_waiting ((updated,id)>(?,?))",
+        "SCAN c",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH r USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 4",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 5",
+        "SEARCH l USING INDEX sqlite_autoindex_rate_limits_1 (key=?)",
+        "CORRELATED SCALAR SUBQUERY 7",
+        "SEARCH d USING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 6",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=?)"
+      ],
+      "ms": 69.10970000000088,
+      "rowsRead": 701,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 200
+    },
+    {
+      "label": "cron fair window200 page3",
+      "sql": "WITH candidates AS MATERIALIZED (\n SELECT * FROM conversations INDEXED BY conversations_reply_waiting\n WHERE waiting_count>0 AND mode IN ('ai','assist') AND inbox_blocked=0\n AND (updated,id)>(?,?) ORDER BY updated,id LIMIT 200\n)\nSELECT c.id,c.updated,CASE WHEN\n NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)\n AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT id FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed') ORDER BY id DESC LIMIT 1)))\n THEN 1 ELSE 0 END AS eligible FROM candidates c ORDER BY c.updated,c.id",
+      "bindings": [
+        1791007694012,
+        "00000000-0000-4000-8000-000000001100",
+        5,
+        1791007692912
+      ],
+      "plan": [
+        "MATERIALIZE candidates",
+        "SEARCH conversations USING INDEX conversations_reply_waiting ((updated,id)>(?,?))",
+        "SCAN c",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH r USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 4",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 5",
+        "SEARCH l USING INDEX sqlite_autoindex_rate_limits_1 (key=?)",
+        "CORRELATED SCALAR SUBQUERY 7",
+        "SEARCH d USING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 6",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=?)"
+      ],
+      "ms": 82.73219999999856,
+      "rowsRead": 701,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 200
+    },
+    {
+      "label": "cron fair window200 page4",
+      "sql": "WITH candidates AS MATERIALIZED (\n SELECT * FROM conversations INDEXED BY conversations_reply_waiting\n WHERE waiting_count>0 AND mode IN ('ai','assist') AND inbox_blocked=0\n AND (updated,id)>(?,?) ORDER BY updated,id LIMIT 200\n)\nSELECT c.id,c.updated,CASE WHEN\n NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)\n AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT id FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed') ORDER BY id DESC LIMIT 1)))\n THEN 1 ELSE 0 END AS eligible FROM candidates c ORDER BY c.updated,c.id",
+      "bindings": [
+        1791007694412,
+        "00000000-0000-4000-8000-000000001500",
+        5,
+        1791007692912
+      ],
+      "plan": [
+        "MATERIALIZE candidates",
+        "SEARCH conversations USING INDEX conversations_reply_waiting ((updated,id)>(?,?))",
+        "SCAN c",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH r USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 4",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 5",
+        "SEARCH l USING INDEX sqlite_autoindex_rate_limits_1 (key=?)",
+        "CORRELATED SCALAR SUBQUERY 7",
+        "SEARCH d USING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 6",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=?)"
+      ],
+      "ms": 68.05409999999392,
+      "rowsRead": 700,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 200
+    },
+    {
+      "label": "cron fair window200 page5",
+      "sql": "WITH candidates AS MATERIALIZED (\n SELECT * FROM conversations INDEXED BY conversations_reply_waiting\n WHERE waiting_count>0 AND mode IN ('ai','assist') AND inbox_blocked=0\n AND (updated,id)>(?,?) ORDER BY updated,id LIMIT 200\n)\nSELECT c.id,c.updated,CASE WHEN\n NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))\n AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)\n AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT id FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed') ORDER BY id DESC LIMIT 1)))\n THEN 1 ELSE 0 END AS eligible FROM candidates c ORDER BY c.updated,c.id",
+      "bindings": [
+        1791007694809,
+        "00000000-0000-4000-8000-000000001897",
+        5,
+        1791007692912
+      ],
+      "plan": [
+        "MATERIALIZE candidates",
+        "SEARCH conversations USING INDEX conversations_reply_waiting ((updated,id)>(?,?))",
+        "SCAN c",
+        "CORRELATED SCALAR SUBQUERY 2",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 3",
+        "SEARCH r USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 4",
+        "SEARCH f USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 5",
+        "SEARCH l USING INDEX sqlite_autoindex_rate_limits_1 (key=?)",
+        "CORRELATED SCALAR SUBQUERY 7",
+        "SEARCH d USING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "CORRELATED SCALAR SUBQUERY 6",
+        "SEARCH m USING INDEX messages_user_conversation (conversation_id=?)"
+      ],
+      "ms": 67.44199999999546,
+      "rowsRead": 701,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 200
+    },
+    {
+      "label": "retention bounded chats25",
+      "sql": "SELECT id FROM conversations WHERE updated<? ORDER BY updated,id LIMIT 25",
+      "bindings": [
+        1791007692911
+      ],
+      "plan": [
+        "SEARCH conversations USING COVERING INDEX conversations_retention (updated<?)"
+      ],
+      "ms": 79.81339999999909,
+      "rowsRead": 1,
+      "rowsWritten": 0,
+      "databaseBytes": 454901760,
+      "resultCount": 0
+    },
+    {
+      "label": "retention select100",
+      "sql": "SELECT id FROM conversations WHERE updated<? ORDER BY updated,id LIMIT 100",
+      "bindings": [
+        1783231692912
+      ],
+      "plan": [
+        "SEARCH conversations USING COVERING INDEX conversations_retention (updated<?)"
+      ],
+      "ms": 62.61680000000342,
+      "rowsRead": 100,
+      "rowsWritten": 0,
+      "databaseBytes": 454889472,
+      "resultCount": 100
+    },
+    {
+      "label": "retention cascade100",
+      "sql": "DELETE FROM conversations WHERE id IN (SELECT id FROM conversations WHERE updated<? ORDER BY updated,id LIMIT 100)",
+      "bindings": [
+        1783231692912
+      ],
+      "plan": [
+        "SEARCH conversations USING COVERING INDEX sqlite_autoindex_conversations_1 (id=?)",
+        "LIST SUBQUERY 1",
+        "SEARCH conversations USING COVERING INDEX conversations_retention (updated<?)",
+        "SEARCH workflow_recovery USING COVERING INDEX workflow_recovery_conversation (conversation_id=?)",
+        "SEARCH workflow_events USING COVERING INDEX sqlite_autoindex_workflow_events_1 (conversation_id=?)",
+        "SEARCH workflow_jobs USING COVERING INDEX workflow_jobs_chat_lease (conversation_id=?)",
+        "SEARCH chat_workflow USING COVERING INDEX sqlite_autoindex_chat_workflow_1 (conversation_id=?)",
+        "SEARCH calls USING COVERING INDEX calls_conversation (conversation_id=?)",
+        "SEARCH chat_attachments USING COVERING INDEX chat_attachments_conversation (conversation_id=?)",
+        "SEARCH chat_messaging USING COVERING INDEX sqlite_autoindex_chat_messaging_1 (conversation_id=?)",
+        "SEARCH reward_grants USING COVERING INDEX reward_grants_conversation (conversation_id=?)",
+        "SEARCH reward_attempts USING COVERING INDEX reward_attempts_conversation (conversation_id=?)",
+        "SEARCH media_grants USING COVERING INDEX sqlite_autoindex_media_grants_1 (conversation_id=?)",
+        "SEARCH drafts USING COVERING INDEX sqlite_autoindex_drafts_1 (conversation_id=?)",
+        "SEARCH messages USING COVERING INDEX messages_changes (conversation_id=?)"
+      ],
+      "ms": 394.4045999999944,
+      "rowsRead": 68772,
+      "rowsWritten": 13197,
+      "databaseBytes": 450052096,
+      "resultCount": 0
+    }
+  ],
+  "requests": [
+    {
+      "label": "customer latest80",
+      "status": 200,
+      "ms": 42.219899999996414,
+      "rowsRead": 1123,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 80,
+      "bytes": 21185
+    },
+    {
+      "label": "customer older80",
+      "status": 200,
+      "ms": 35.443099999996775,
+      "rowsRead": 1123,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 80,
+      "bytes": 21185
+    },
+    {
+      "label": "customer unchanged delta",
+      "status": 200,
+      "ms": 23.783300000002782,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 463
+    },
+    {
+      "label": "owner first50",
+      "status": 200,
+      "ms": 13.908400000000256,
+      "rowsRead": 230,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "items": 50,
+      "bytes": 18337
+    },
+    {
+      "label": "owner next50",
+      "status": 200,
+      "ms": 13.131799999995565,
+      "rowsRead": 232,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "items": 50,
+      "bytes": 18337
+    },
+    {
+      "label": "owner broad prefix",
+      "status": 200,
+      "ms": 14.405899999997928,
+      "rowsRead": 329,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "items": 50,
+      "bytes": 17845
+    },
+    {
+      "label": "owner no match prefix",
+      "status": 200,
+      "ms": 10.339899999999034,
+      "rowsRead": 3,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "items": 0,
+      "bytes": 46
+    },
+    {
+      "label": "owner broad prefix waiting no matches",
+      "status": 200,
+      "ms": 12.403700000002573,
+      "rowsRead": 3,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "items": 0,
+      "bytes": 46
+    },
+    {
+      "label": "owner unique prefix",
+      "status": 200,
+      "ms": 11.527200000004086,
+      "rowsRead": 5,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "items": 1,
+      "bytes": 407
+    },
+    {
+      "label": "customer calls with ended history",
+      "status": 200,
+      "ms": 17.218400000005204,
+      "rowsRead": 8,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "bytes": 12
+    },
+    {
+      "label": "owner calls with ended history",
+      "status": 200,
+      "ms": 13.538699999997334,
+      "rowsRead": 8,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "bytes": 12
+    },
+    {
+      "label": "burst 25 client 1",
+      "status": 200,
+      "ms": 44.81390000000101,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 463
+    },
+    {
+      "label": "burst 25 client 2",
+      "status": 200,
+      "ms": 574.903999999995,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 3",
+      "status": 200,
+      "ms": 575.1771000000008,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 4",
+      "status": 200,
+      "ms": 584.3323999999993,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 5",
+      "status": 200,
+      "ms": 584.5372000000061,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 6",
+      "status": 200,
+      "ms": 584.6418999999951,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 7",
+      "status": 200,
+      "ms": 584.7428,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 8",
+      "status": 200,
+      "ms": 584.8450000000012,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 9",
+      "status": 200,
+      "ms": 584.9561000000031,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 10",
+      "status": 200,
+      "ms": 585.0608999999968,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 11",
+      "status": 200,
+      "ms": 585.1706000000049,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 12",
+      "status": 200,
+      "ms": 585.2753999999986,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 13",
+      "status": 200,
+      "ms": 585.3793000000005,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 14",
+      "status": 200,
+      "ms": 585.4730999999956,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 15",
+      "status": 200,
+      "ms": 585.5633999999991,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 16",
+      "status": 200,
+      "ms": 585.652599999994,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 17",
+      "status": 200,
+      "ms": 585.7497999999978,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 18",
+      "status": 200,
+      "ms": 585.8476999999984,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 19",
+      "status": 200,
+      "ms": 585.9409999999989,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 20",
+      "status": 200,
+      "ms": 586.0310000000027,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 21",
+      "status": 200,
+      "ms": 586.1199999999953,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 22",
+      "status": 200,
+      "ms": 586.2200000000012,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 23",
+      "status": 200,
+      "ms": 586.3078999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 24",
+      "status": 200,
+      "ms": 586.3986000000004,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 25 client 25",
+      "status": 200,
+      "ms": 586.4861999999994,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 24",
+      "status": 200,
+      "ms": 963.4958000000042,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 25",
+      "status": 200,
+      "ms": 963.6477999999988,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 26",
+      "status": 200,
+      "ms": 963.7406999999948,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 27",
+      "status": 200,
+      "ms": 963.8286000000007,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 29",
+      "status": 200,
+      "ms": 963.9120999999941,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 28",
+      "status": 200,
+      "ms": 964.0030000000042,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 30",
+      "status": 200,
+      "ms": 964.0885000000053,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 32",
+      "status": 200,
+      "ms": 964.1935999999987,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 31",
+      "status": 200,
+      "ms": 964.3022999999957,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 33",
+      "status": 200,
+      "ms": 964.452400000002,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 34",
+      "status": 200,
+      "ms": 964.5521999999983,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 35",
+      "status": 200,
+      "ms": 964.6414999999979,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 36",
+      "status": 200,
+      "ms": 964.7276999999958,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 37",
+      "status": 200,
+      "ms": 964.8116999999984,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 38",
+      "status": 200,
+      "ms": 964.8947999999946,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 39",
+      "status": 200,
+      "ms": 964.976800000004,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 40",
+      "status": 200,
+      "ms": 965.0590999999986,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 41",
+      "status": 200,
+      "ms": 965.1476000000039,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 42",
+      "status": 200,
+      "ms": 965.245600000002,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 43",
+      "status": 200,
+      "ms": 965.4172000000035,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 44",
+      "status": 200,
+      "ms": 965.5014999999985,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 46",
+      "status": 200,
+      "ms": 965.9198999999935,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 45",
+      "status": 200,
+      "ms": 966.1070000000036,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 47",
+      "status": 200,
+      "ms": 966.2024999999994,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 48",
+      "status": 200,
+      "ms": 966.2940999999992,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 49",
+      "status": 200,
+      "ms": 966.3828999999969,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 50",
+      "status": 200,
+      "ms": 966.4903999999951,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 1",
+      "status": 200,
+      "ms": 966.6645000000062,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 463
+    },
+    {
+      "label": "burst 50 client 2",
+      "status": 200,
+      "ms": 966.7409999999945,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 3",
+      "status": 200,
+      "ms": 966.8269999999975,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 4",
+      "status": 200,
+      "ms": 966.9160999999949,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 5",
+      "status": 200,
+      "ms": 967.1588000000047,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 6",
+      "status": 200,
+      "ms": 967.2641999999978,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 7",
+      "status": 200,
+      "ms": 967.3672000000006,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 8",
+      "status": 200,
+      "ms": 967.4956999999995,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 9",
+      "status": 200,
+      "ms": 967.607600000003,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 10",
+      "status": 200,
+      "ms": 967.6915999999983,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 11",
+      "status": 200,
+      "ms": 967.7750000000015,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 12",
+      "status": 200,
+      "ms": 967.8568999999989,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 13",
+      "status": 200,
+      "ms": 967.9392999999982,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 14",
+      "status": 200,
+      "ms": 968.0213000000003,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 15",
+      "status": 200,
+      "ms": 968.1316999999981,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 16",
+      "status": 200,
+      "ms": 968.2722999999969,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 17",
+      "status": 200,
+      "ms": 968.373400000004,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 18",
+      "status": 200,
+      "ms": 968.4753000000055,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 19",
+      "status": 200,
+      "ms": 968.5671999999977,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 20",
+      "status": 200,
+      "ms": 968.6554000000033,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 21",
+      "status": 200,
+      "ms": 968.7448999999979,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 22",
+      "status": 200,
+      "ms": 968.8294999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 50 client 23",
+      "status": 200,
+      "ms": 968.9136999999973,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 1",
+      "status": 200,
+      "ms": 109.95020000000659,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 463
+    },
+    {
+      "label": "burst 100 client 23",
+      "status": 200,
+      "ms": 847.622199999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 24",
+      "status": 200,
+      "ms": 847.857299999996,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 25",
+      "status": 200,
+      "ms": 847.9582999999984,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 26",
+      "status": 200,
+      "ms": 848.0529000000024,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 27",
+      "status": 200,
+      "ms": 848.1477999999988,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 28",
+      "status": 200,
+      "ms": 848.2395999999935,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 29",
+      "status": 200,
+      "ms": 848.3295999999973,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 30",
+      "status": 200,
+      "ms": 848.4184999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 31",
+      "status": 200,
+      "ms": 848.559500000003,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 32",
+      "status": 200,
+      "ms": 848.6526999999987,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 33",
+      "status": 200,
+      "ms": 848.7423999999955,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 34",
+      "status": 200,
+      "ms": 848.8294999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 35",
+      "status": 200,
+      "ms": 848.9164000000019,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 36",
+      "status": 200,
+      "ms": 849.0040999999983,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 37",
+      "status": 200,
+      "ms": 849.1010000000024,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 38",
+      "status": 200,
+      "ms": 849.1912000000011,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 39",
+      "status": 200,
+      "ms": 849.277399999999,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 40",
+      "status": 200,
+      "ms": 849.379700000005,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 41",
+      "status": 200,
+      "ms": 849.4671999999991,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 42",
+      "status": 200,
+      "ms": 849.5503000000026,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 43",
+      "status": 200,
+      "ms": 849.6339000000007,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 44",
+      "status": 200,
+      "ms": 849.7175999999963,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 45",
+      "status": 200,
+      "ms": 849.8142000000007,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 46",
+      "status": 200,
+      "ms": 849.8991999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 47",
+      "status": 200,
+      "ms": 850.0411000000022,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 22",
+      "status": 200,
+      "ms": 850.1516000000047,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 2",
+      "status": 200,
+      "ms": 850.2667000000001,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 3",
+      "status": 200,
+      "ms": 850.3502000000008,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 4",
+      "status": 200,
+      "ms": 850.466800000002,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 5",
+      "status": 200,
+      "ms": 850.5587999999989,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 6",
+      "status": 200,
+      "ms": 850.6385999999984,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 7",
+      "status": 200,
+      "ms": 850.7191000000021,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 8",
+      "status": 200,
+      "ms": 850.7996999999959,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 9",
+      "status": 200,
+      "ms": 850.8797999999952,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 10",
+      "status": 200,
+      "ms": 850.9593999999997,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 11",
+      "status": 200,
+      "ms": 851.047799999993,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 12",
+      "status": 200,
+      "ms": 851.1428999999989,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 13",
+      "status": 200,
+      "ms": 851.2212,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 14",
+      "status": 200,
+      "ms": 851.2996000000057,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 15",
+      "status": 200,
+      "ms": 851.380600000004,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 16",
+      "status": 200,
+      "ms": 851.490899999997,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 17",
+      "status": 200,
+      "ms": 851.5749999999971,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 18",
+      "status": 200,
+      "ms": 851.6563000000024,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 19",
+      "status": 200,
+      "ms": 851.7632999999987,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 20",
+      "status": 200,
+      "ms": 851.8498000000036,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 21",
+      "status": 200,
+      "ms": 852.1071000000011,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 75",
+      "status": 200,
+      "ms": 1675.253300000004,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 76",
+      "status": 200,
+      "ms": 1675.386900000005,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 77",
+      "status": 200,
+      "ms": 1675.4780000000028,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 78",
+      "status": 200,
+      "ms": 1675.565999999999,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 79",
+      "status": 200,
+      "ms": 1675.6733999999997,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 80",
+      "status": 200,
+      "ms": 1675.7566000000006,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 81",
+      "status": 200,
+      "ms": 1675.8528000000006,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 82",
+      "status": 200,
+      "ms": 1675.934000000001,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 83",
+      "status": 200,
+      "ms": 1676.0165999999954,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 84",
+      "status": 200,
+      "ms": 1676.1791000000012,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 85",
+      "status": 200,
+      "ms": 1676.3125,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 86",
+      "status": 200,
+      "ms": 1676.4006000000008,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 87",
+      "status": 200,
+      "ms": 1676.4835999999996,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 88",
+      "status": 200,
+      "ms": 1676.564099999996,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 89",
+      "status": 200,
+      "ms": 1676.6442000000025,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 90",
+      "status": 200,
+      "ms": 1676.7309999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 91",
+      "status": 200,
+      "ms": 1676.8102,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 92",
+      "status": 200,
+      "ms": 1676.887999999999,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 93",
+      "status": 200,
+      "ms": 1676.9665999999997,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 94",
+      "status": 200,
+      "ms": 1677.051999999996,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 95",
+      "status": 200,
+      "ms": 1677.2178000000058,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 96",
+      "status": 200,
+      "ms": 1677.3345000000045,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 97",
+      "status": 200,
+      "ms": 1677.4363999999987,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 98",
+      "status": 200,
+      "ms": 1677.5708000000013,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 99",
+      "status": 200,
+      "ms": 1677.6920000000027,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 100",
+      "status": 200,
+      "ms": 1677.7914000000019,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 73",
+      "status": 200,
+      "ms": 1677.905700000003,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 74",
+      "status": 200,
+      "ms": 1678.0009999999966,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 48",
+      "status": 200,
+      "ms": 1678.1791000000012,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 49",
+      "status": 200,
+      "ms": 1678.270899999996,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 50",
+      "status": 200,
+      "ms": 1678.3958000000057,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 51",
+      "status": 200,
+      "ms": 1678.5318000000043,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 52",
+      "status": 200,
+      "ms": 1678.6243000000031,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 53",
+      "status": 200,
+      "ms": 1678.7295000000013,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 54",
+      "status": 200,
+      "ms": 1678.8250000000044,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 55",
+      "status": 200,
+      "ms": 1679.1036999999997,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 56",
+      "status": 200,
+      "ms": 1679.2183000000005,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 57",
+      "status": 200,
+      "ms": 1679.3761999999988,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 58",
+      "status": 200,
+      "ms": 1679.461599999995,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 59",
+      "status": 200,
+      "ms": 1679.5411999999997,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 60",
+      "status": 200,
+      "ms": 1679.6209000000017,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 61",
+      "status": 200,
+      "ms": 1679.7180000000008,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 62",
+      "status": 200,
+      "ms": 1679.8021000000008,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 63",
+      "status": 200,
+      "ms": 1679.8938000000053,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 64",
+      "status": 200,
+      "ms": 1679.9804999999978,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 65",
+      "status": 200,
+      "ms": 1680.0633000000016,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 66",
+      "status": 200,
+      "ms": 1680.1491999999998,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 67",
+      "status": 200,
+      "ms": 1680.2335999999996,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 68",
+      "status": 200,
+      "ms": 1680.3215999999957,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 69",
+      "status": 200,
+      "ms": 1680.4063000000024,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 70",
+      "status": 200,
+      "ms": 1680.4968999999983,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 71",
+      "status": 200,
+      "ms": 1680.5860999999932,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "burst 100 client 72",
+      "status": 200,
+      "ms": 1680.6863000000012,
+      "rowsRead": 6,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 0,
+      "bytes": 460
+    },
+    {
+      "label": "manual pending customer poll",
+      "status": 200,
+      "ms": 19.999600000010105,
+      "rowsRead": 88,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 6,
+      "bytes": 2051
+    },
+    {
+      "label": "blocked pending customer poll",
+      "status": 200,
+      "ms": 21.15810000000056,
+      "rowsRead": 89,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 6,
+      "bytes": 2044
+    },
+    {
+      "label": "paused guided customer poll",
+      "status": 200,
+      "ms": 33.95910000000731,
+      "rowsRead": 91,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 6,
+      "bytes": 2051
+    },
+    {
+      "label": "completed assist draft customer poll",
+      "status": 200,
+      "ms": 26.42740000000049,
+      "rowsRead": 92,
+      "rowsWritten": 0,
+      "backgroundTasks": 0,
+      "messages": 6,
+      "bytes": 2045
+    }
+  ],
+  "bursts": [
+    {
+      "concurrency": 25,
+      "requests": 25,
+      "elapsedMs": 586.8165000000008,
+      "p50Ms": 585.3793000000005,
+      "p95Ms": 586.3078999999998,
+      "maxMs": 586.4861999999994,
+      "rowsRead": 150,
+      "rowsWritten": 0,
+      "backgroundTasks": 0
+    },
+    {
+      "concurrency": 50,
+      "requests": 50,
+      "elapsedMs": 969.0315999999948,
+      "p50Ms": 966.2940999999992,
+      "p95Ms": 968.6554000000033,
+      "maxMs": 968.9136999999973,
+      "rowsRead": 300,
+      "rowsWritten": 0,
+      "backgroundTasks": 0
+    },
+    {
+      "concurrency": 100,
+      "requests": 100,
+      "elapsedMs": 1680.8650000000052,
+      "p50Ms": 1675.4780000000028,
+      "p95Ms": 1680.2335999999996,
+      "maxMs": 1680.6863000000012,
+      "rowsRead": 600,
+      "rowsWritten": 0,
+      "backgroundTasks": 0
+    }
+  ],
+  "initialSeed": {
+    "rowsRead": 2625127,
+    "rowsWritten": 5902503,
+    "lastSizeBytes": 248586240,
+    "ms": 31147.8466
+  },
+  "cronWindows": [
+    {
+      "page": 0,
+      "visited": 200,
+      "eligible": 0,
+      "reachedLateEligible": false
+    },
+    {
+      "page": 1,
+      "visited": 200,
+      "eligible": 0,
+      "reachedLateEligible": false
+    },
+    {
+      "page": 2,
+      "visited": 200,
+      "eligible": 0,
+      "reachedLateEligible": false
+    },
+    {
+      "page": 3,
+      "visited": 200,
+      "eligible": 0,
+      "reachedLateEligible": false
+    },
+    {
+      "page": 4,
+      "visited": 200,
+      "eligible": 1,
+      "reachedLateEligible": true
+    },
+    {
+      "page": 5,
+      "visited": 200,
+      "eligible": 0,
+      "reachedLateEligible": false
+    }
+  ],
+  "cronScanAvailable": true,
+  "retentionAvailable": true
+}

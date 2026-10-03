@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 // Exact shipped bundle, ephemeral local D1/R2, and actual owner/customer auth.
 // No cloud requests, production writes, credentials or real customer data.
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ const mf=new Miniflare(convertV4MiniflareOptions({
 
 try{
   const db=await mf.getD1Database('DB');
-  for(const sql of fs.readFileSync(root+'cloudflare/schema.sql','utf8').split(';').filter(s=>s.trim()))await db.prepare(sql).run();
+  for(const sql of splitSqlStatements(fs.readFileSync(root+'cloudflare/schema.sql','utf8')))await db.prepare(sql).run();
   async function request(route,method='GET',data,cookie='',mime){
     return mf.dispatchFetch(origin+route,{method,headers:{Origin:origin,Cookie:cookie,'Content-Type':mime||'application/json'},
       ...(data===undefined?{}:{body:mime?data:JSON.stringify(data)})});

@@ -1,10 +1,12 @@
 import {getFeatureMedia} from './permissions.js';
 import {createVoiceEffectsSession,voicePresets} from './voice-effects.js';
+import {createAdaptivePoll} from './adaptive-poll.js';
 const svg=(video)=>video?'<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M3 5h12v14H3zM16 9l6-4v14l-6-4z"/></svg>':'<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="m6 2 4 5-3 3c2 4 3 5 7 7l3-3 5 4-2 4C9 22 2 15 2 4z"/></svg>';
 export function installCalls({role,getConversationId,notify,getAppSettings=()=>null}){
-  const prefix=role==='admin'?'/api/admin/calls':'/api/calls';let active=null,pc=null,local=null,outbound=null,effects=null,captureController=null,muted=false,selectedPreset='natural',remote=new MediaStream(),cursor=0,queue=[],panel=null,polling=false,handling=false,timeout=null,config=null,pollTimer=null,generation=0,destroyed=false,outgoing=[],flushing=false,pendingAnswer=null;
+  const prefix=role==='admin'?'/api/admin/calls':'/api/calls';let active=null,pc=null,local=null,outbound=null,effects=null,captureController=null,muted=false,selectedPreset='natural',remote=new MediaStream(),cursor=0,queue=[],panel=null,polling=false,handling=false,timeout=null,config=null,generation=0,destroyed=false,outgoing=[],flushing=false,pendingAnswer=null;
+  const callPoll=createAdaptivePoll({task:poll,canRun:()=>!destroyed&&(role==='admin'||Boolean(getConversationId()))&&(Boolean(active)||allowed('voice')||allowed('video')),hot:()=>Boolean(active),fastMs:6000,hotMs:1200,idleMs:15000});
   if(role==='admin'){try{const saved=localStorage.getItem('rekha-admin-call-voice');if(voicePresets.some(p=>p.id===saved))selectedPreset=saved;}catch{}}
-  const api=async(route,method='GET',data)=>{const r=await fetch(prefix+route,{method,credentials:'same-origin',cache:'no-store',headers:method!=='GET'?{'Content-Type':'application/json'}:{},...(data!==undefined?{body:JSON.stringify(data)}:{}),signal:AbortSignal.timeout(20000)});const value=await r.json();if(!r.ok)throw Error(value.error||'Call unavailable.');return value;};
+  const api=async(route,method='GET',data,{signal}={})=>{const r=await fetch(prefix+route,{method,credentials:'same-origin',cache:'no-store',headers:method!=='GET'?{'Content-Type':'application/json'}:{},...(data!==undefined?{body:JSON.stringify(data)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000)});let value;try{value=await r.json();}catch{throw Object.assign(Error('The call connection returned an unreadable response.'),{status:r.status});}if(!r.ok)throw Object.assign(Error(value.error||'Call unavailable.'),{status:r.status});return value;};
   const label=()=>role==='admin'?'Customer':getAppSettings()?.brand?.astrologerName||getAppSettings()?.brand?.name||'Rekha Astrology';
   const valid=token=>!destroyed&&generation===token;
   const allowed=type=>getAppSettings()?.chat?.[type==='voice'?'voiceCallsEnabled':'videoCallsEnabled']!==false;
@@ -54,17 +56,17 @@ export function installCalls({role,getConversationId,notify,getAppSettings=()=>n
   }
   async function answer(){
     if(destroyed||handling||!active||!panel)return;handling=true;panel.querySelector('.call-answer').disabled=true;const token=generation,callId=active.id;
-    try{prepareEffects();status('Opening microphone…');if(!await media(token))return;const accepted=await api('/'+callId+'/accept','POST',{});if(!valid(token))return;active=accepted;if(!await setup(token))return;panel.querySelector('.call-buttons').innerHTML='<button class="call-mute">Mute</button><button class="call-end">End call</button>';panel.querySelector('.call-end').onclick=()=>end('completed');bindMute();status('Connecting…');cursor=0;beginPoll();await poll();}
+    try{prepareEffects();status('Opening microphone…');if(!await media(token))return;const accepted=await api('/'+callId+'/accept','POST',{});if(!valid(token))return;active=accepted;if(!await setup(token))return;panel.querySelector('.call-buttons').innerHTML='<button class="call-mute">Mute</button><button class="call-end">End call</button>';panel.querySelector('.call-end').onclick=()=>end('completed');bindMute();status('Connecting…');cursor=0;beginPoll();}
     catch(error){if(valid(token))await end('connection-failed',error.name==='NotAllowedError'?'Microphone or camera access was declined. Open app settings to allow access.':error.name==='AbortError'?undefined:error.message);}finally{if(generation===token||!active)handling=false;}
   }
-  function clean(){generation++;captureController?.abort();captureController=null;handling=false;clearTimeout(timeout);clearInterval(pollTimer);pollTimer=null;if(pc){pc.ontrack=null;pc.onicecandidate=null;pc.onconnectionstatechange=null;pc.close();}pc=null;effects?.destroy();effects=null;for(const track of outbound?.getTracks()||[])track.stop();outbound=null;for(const track of local?.getTracks()||[])track.stop();local=null;muted=false;for(const track of remote.getTracks())track.stop();remote=new MediaStream();panel?.remove();panel=null;active=null;cursor=0;queue=[];outgoing=[];pendingAnswer=null;}
+  function clean(){generation++;captureController?.abort();captureController=null;handling=false;clearTimeout(timeout);if(pc){pc.ontrack=null;pc.onicecandidate=null;pc.onconnectionstatechange=null;pc.close();}pc=null;effects?.destroy();effects=null;for(const track of outbound?.getTracks()||[])track.stop();outbound=null;for(const track of local?.getTracks()||[])track.stop();local=null;muted=false;for(const track of remote.getTracks())track.stop();remote=new MediaStream();panel?.remove();panel=null;active=null;cursor=0;queue=[];outgoing=[];pendingAnswer=null;}
   async function end(reason='completed',message){const call=active;clean();if(call?.id)await api('/'+call.id+'/end','POST',{reason}).catch(()=>{});if(message)notify(message);}
-  function beginPoll(){if(!pollTimer)pollTimer=setInterval(poll,1500);}
-  async function poll(){
-    if(destroyed||polling||document.hidden||active&&!active.id)return;polling=true;const token=generation,callId=active?.id;
+  function beginPoll(){callPoll.poke({immediate:true});}
+  async function poll({signal:pollSignal}={}){
+    if(destroyed||polling||document.hidden||navigator.onLine===false||active&&!active.id)return;polling=true;const token=generation,callId=active?.id;
     try{
-      if(!active){const list=await api('');if(!valid(token)||active)return;const incoming=list.calls.find(c=>c.caller!==(role==='admin'?'admin':'customer')&&c.status==='ringing');if(incoming){generation++;active=incoming;show(true);beginPoll();notify('Incoming '+incoming.type+' call.');}return;}
-      const data=await api('/'+callId+'/signals?after='+cursor);if(!valid(token)||active?.id!==callId)return;active=data.call;
+      if(!active){const list=await api('','GET',undefined,{signal:pollSignal});if(!valid(token)||active)return;const incoming=list.calls.find(c=>c.caller!==(role==='admin'?'admin':'customer')&&c.status==='ringing');if(incoming){generation++;active=incoming;show(true);beginPoll();notify('Incoming '+incoming.type+' call.');}return{changed:!!incoming};}
+      const data=await api('/'+callId+'/signals?after='+cursor,'GET',undefined,{signal:pollSignal});if(!valid(token)||active?.id!==callId)return;active=data.call;
       if(active.status==='ended'){const reason=active.reason;clean();notify(reason==='declined'?'Call declined.':reason==='expired'?'Call was not answered.':'Call ended.');return;}
       if(active.caller!==(role==='admin'?'admin':'customer')&&active.status==='ringing')return;
       if(!pc)return;
@@ -77,9 +79,10 @@ export function installCalls({role,getConversationId,notify,getAppSettings=()=>n
       }
       if(pc.remoteDescription){const candidates=queue;queue=[];for(const candidate of candidates){if(!valid(token)||!pc)return;await pc.addIceCandidate(candidate).catch(()=>{});}}
       await flushSignals(token);
-    }catch(error){if(valid(token)&&active)status('Connection paused. Retrying…');}finally{polling=false;}
+      return{changed:data.signals.length>0};
+    }catch(error){if(pollSignal?.aborted)return;if(valid(token)&&active)status('Connection paused. Retrying…');throw error;}finally{polling=false;}
   }
-  const onVisibility=()=>{if(!document.hidden)poll();};document.addEventListener('visibilitychange',onVisibility);
-  const onSettings=()=>{for(const button of document.querySelectorAll('.call-launch[data-call-type]'))button.hidden=!allowed(button.dataset.callType);if(active&&!allowed(active.type))end('cancelled','This call option was paused.');};window.addEventListener('rekha:app-settings',onSettings);
-  return {mount,poll,destroy:()=>{if(destroyed)return;destroyed=true;document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('rekha:app-settings',onSettings);return end('cancelled');}};
+  const onSettings=()=>{for(const button of document.querySelectorAll('.call-launch[data-call-type]'))button.hidden=!allowed(button.dataset.callType);if(active&&!allowed(active.type))end('cancelled','This call option was paused.');callPoll.poke();};window.addEventListener('rekha:app-settings',onSettings);
+  callPoll.start({immediate:true});
+  return {mount,poll:()=>callPoll.poke({immediate:true}),destroy:()=>{if(destroyed)return;destroyed=true;callPoll.destroy();window.removeEventListener('rekha:app-settings',onSettings);return end('cancelled');}};
 }

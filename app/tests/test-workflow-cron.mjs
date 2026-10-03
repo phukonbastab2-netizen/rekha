@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 // Runs the exact bundled scheduled handler against temporary local Miniflare D1/R2.
 // No production connections, private credentials or customer data are used.
 import fs from 'node:fs';
@@ -15,7 +16,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
 console.log('Local bundled Worker cron fixture starting.');
 try {
   const db = await mf.getD1Database('DB'), bucket = await mf.getR2Bucket('MEDIA');
-  for (const sql of fs.readFileSync(root + 'cloudflare/schema.sql', 'utf8').split(';').filter(value => value.trim())) await db.prepare(sql).run();
+  for (const sql of splitSqlStatements(fs.readFileSync(root + 'cloudflare/schema.sql', 'utf8'))) await db.prepare(sql).run();
   const config = {
     enabled: true, paymentEnabled: false, revision: 1,
     timings: { firstDelayMs: 5000, itemGapMs: 5000, reminderDelayMs: 60000, mediaDelayMs: 3600000 }, assets: {},
@@ -77,8 +78,8 @@ try {
     return Date.now() - began;
   };
   console.log('Dispatching actual minute cron; no customer chat polling occurs.');
-  const sequenceElapsed = await dispatch('* * * * *');
-  job = await db.prepare('SELECT * FROM workflow_jobs WHERE id=?').bind(job.id).first();
+  let sequenceElapsed=0,sequenceCronTicks=0;
+  do{sequenceElapsed+=await dispatch('* * * * *');sequenceCronTicks++;job=await db.prepare('SELECT * FROM workflow_jobs WHERE id=?').bind(job.id).first();}while(job.status!=='done'&&sequenceCronTicks<5);
   assert.equal(job.status, 'done'); assert.equal(job.step, 4);
   const flow = await db.prepare('SELECT stage FROM chat_workflow WHERE conversation_id=?').bind(id).first();
   assert.equal(flow.stage, 'WAITING_FOR_DETAILS');
@@ -120,7 +121,7 @@ try {
   console.log(JSON.stringify({ exactBundledWorkerScheduledHandler: true, sequenceWithoutCustomerPolling: true,
     minuteCronPreservesExpiredChatAndAttachment: true, dailyCronDeletesExpiredChatAndAttachment: true,
     dailyCronPreservesActiveChatAndOwnerLibrary: true, distantJobsDoNotBlockTimer: true,
-    shortFixtureGapsMs: 200, sequenceElapsedMs: sequenceElapsed, futureTimerElapsedMs: futureElapsed, dailyElapsedMs: dailyElapsed,
+    shortFixtureGapsMs: 200, sequenceCronTicks, sequenceElapsedMs: sequenceElapsed, futureTimerElapsedMs: futureElapsed, dailyElapsedMs: dailyElapsed,
     productionWrites: false }));
 } finally {
   await mf.dispose();

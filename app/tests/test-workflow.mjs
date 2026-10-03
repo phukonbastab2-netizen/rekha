@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +25,7 @@ return result({workflow:await workflowChatView(ctx,chat.id),messages:await all('
 }catch(error){return result({error:error.message},error.status||503);}}};`;
 const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:source+'\n'+fixture,compatibilityDate:'2026-09-24',d1Databases:{DB:'workflow-test'},r2Buckets:{MEDIA:'workflow-media'}}));
 const db=await mf.getD1Database('DB'),bucket=await mf.getR2Bucket('MEDIA');
-for(const file of ['schema.sql','migration-workflow.sql'])for(const sql of readFileSync(path.join(root,'cloudflare',file),'utf8').split(';').filter(s=>s.trim()))await db.prepare(sql).run();
+for(const file of ['schema.sql','migration-workflow.sql'])for(const sql of splitSqlStatements(readFileSync(path.join(root,'cloudflare',file),'utf8')))await db.prepare(sql).run();
 let clock=Date.now();const owner='fixture-owner';
 async function api(route,method='GET',data,cookie=owner){const response=await mf.dispatchFetch('https://workflow.test'+route,{method,headers:{'Content-Type':'application/json',Cookie:cookie,'X-Fixture-Now':String(clock)},...(data===undefined?{}:{body:JSON.stringify(data)})});return{status:response.status,data:await response.json()};}
 async function makeChat(language='en'){const id=randomUUID();await db.prepare('INSERT INTO conversations(id,token_hash,name,dob,language,preferences,created,updated) VALUES(?,?,?,?,?,?,?,?)').bind(id,randomUUID(),'Workflow fixture','1990-01-01',language,'{}',clock,clock).run();return id;}

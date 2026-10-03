@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -31,7 +32,7 @@ export default {async fetch(request,env){
 const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:source+'\n'+fixture,compatibilityDate:'2026-09-24',d1Databases:{DB:'app-settings-test'},r2Buckets:{MEDIA:'app-settings-media'}}));
 try{
  const db=await mf.getD1Database('DB'),bucket=await mf.getR2Bucket('MEDIA');
- for(const file of ['schema.sql','migration-app-settings.sql'])for(const sql of fs.readFileSync(root+'cloudflare/'+file,'utf8').split(';').filter(value=>value.trim()))await db.prepare(sql).run();
+ for(const file of ['schema.sql','migration-app-settings.sql'])for(const sql of splitSqlStatements(fs.readFileSync(root+'cloudflare/'+file,'utf8')))await db.prepare(sql).run();
  let now=100000;
  async function api(route,method='GET',data,cookie='fixture-owner',headers={}){
   const response=await mf.dispatchFetch('https://settings.test'+route,{method,headers:{Cookie:cookie,Origin:'https://settings.test','Content-Type':'application/json','X-Fixture-Now':String(++now),...headers},...(data===undefined?{}:{body:JSON.stringify(data)})});

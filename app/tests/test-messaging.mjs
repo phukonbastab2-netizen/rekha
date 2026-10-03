@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync } from 'node:fs';
 import { createHash,randomUUID } from 'node:crypto';
@@ -8,7 +9,7 @@ const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/cal
 const script=files.map(name=>readFileSync(path.join(root,name),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n');
 const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'messaging-test'},r2Buckets:{MEDIA:'messaging-media'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update('local-test-password').digest('hex')}}));
 const db=await mf.getD1Database('DB');
-for(const sql of readFileSync(path.join(root,'cloudflare/schema.sql'),'utf8').split(';').filter(s=>s.trim()))await db.prepare(sql).run();
+for(const sql of splitSqlStatements(readFileSync(path.join(root,'cloudflare/schema.sql'),'utf8')))await db.prepare(sql).run();
 async function call(route,method='GET',data,cookie='',headers={}){const response=await mf.dispatchFetch('https://rekha.test'+route,{method,headers:{Origin:'https://rekha.test','Content-Type':'application/json',Cookie:cookie,...headers},...(data===undefined?{}:{body:JSON.stringify(data)})});return{status:response.status,data:await response.json(),cookie:response.headers.get('Set-Cookie')?.split(';')[0]};}
 async function upload(route,mime,bytes,cookie){const response=await mf.dispatchFetch('https://rekha.test'+route,{method:'POST',headers:{Origin:'https://rekha.test','Content-Type':mime,Cookie:cookie},body:bytes});return{status:response.status,data:await response.json()};}
 async function settled(cookie,freeUsed){for(let attempt=0;attempt<60;attempt++){const reply=await call('/api/chat','GET',undefined,cookie);if(reply.data.freeUsed===freeUsed)return reply.data;await new Promise(resolve=>setTimeout(resolve,20));}assert.fail('The asynchronously saved reply did not settle.');}
@@ -82,7 +83,7 @@ try{
   const aged=await send({body:'Old message'}),agedId=aged.data.messages.at(-1).id;
   await db.prepare('UPDATE messages SET created=? WHERE id=?').bind(Date.now()-16*60000,agedId).run();assert.equal((await call('/api/messages/'+agedId,'PATCH',{body:'Too late'},c)).status,409);
   await db.prepare('UPDATE messages SET created=? WHERE id=?').bind(Date.now()-25*3600000,agedId).run();assert.equal((await call('/api/messages/'+agedId,'DELETE',{},c)).status,409);
-  await call('/api/chat','DELETE',{},c);assert.equal((await mf.dispatchFetch('https://rekha.test'+file.data.url,{headers:{Cookie:a}})).status,404);
+  const deletion=await call('/api/chat','DELETE',{},c);assert.equal(deletion.status,200,JSON.stringify(deletion.data));assert.equal((await mf.dispatchFetch('https://rekha.test'+file.data.url,{headers:{Cookie:a}})).status,404);
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM chat_attachments WHERE conversation_id=?').bind(id).first()).n,0);
   console.log('Private messaging runtime checks passed: session isolation, upload formats and grants, document download, edits/tombstones, per-side stars/reactions/read receipts, typing expiry, quoted replies and independent answer accounting, inbox controls, private notes, quick replies, attachment deletion.');
 }finally{await mf.dispose();}

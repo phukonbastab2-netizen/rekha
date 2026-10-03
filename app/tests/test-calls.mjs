@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -7,7 +8,7 @@ const root=path.resolve('.'),files=['cloudflare/rewards.mjs','cloudflare/messagi
 const script=files.map(name=>readFileSync(path.join(root,name),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n');
 const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'calls-test'},r2Buckets:{MEDIA:'calls-media'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update('local-test-password').digest('hex')}}));
 const db=await mf.getD1Database('DB');
-for(const source of ['schema.sql','migration-calls.sql'])for(const sql of readFileSync(path.join(root,'cloudflare',source),'utf8').split(';').filter(s=>s.trim()))await db.prepare(sql).run();
+for(const source of ['schema.sql','migration-calls.sql'])for(const sql of splitSqlStatements(readFileSync(path.join(root,'cloudflare',source),'utf8')))await db.prepare(sql).run();
 async function call(route,method='GET',data,cookie='',headers={}){const response=await mf.dispatchFetch('https://rekha.test'+route,{method,headers:{Origin:'https://rekha.test','Content-Type':'application/json',Cookie:cookie,...headers},...(data===undefined?{}:{body:JSON.stringify(data)})});return{status:response.status,data:await response.json(),cookie:response.headers.get('Set-Cookie')?.split(';')[0]};}
 try{
   const signup=()=>call('/api/start','POST',{name:'Calls test',dob:'1990-01-01',language:'en',consent:true,preferences:{}});

@@ -4,22 +4,29 @@ import { installCalls } from './calls.js';
 import { openWorkflowSettings,openChatWorkflow } from './workflow-admin.js';
 import { openAppSettings } from './app-settings-ui.js';
 import { openFeatureAccess,getFeatureMedia } from './permissions.js';
+import {createAdaptivePoll} from './adaptive-poll.js';
+import {createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor} from './chat-history.js';
+import {createInboxPages} from './inbox-pages.js';
 
 const app = document.querySelector('#admin-app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let selected=null, chats=[], current=null, timer, dirty=false, fingerprint='', lastDraft='', loading=false, actionBusy=false;
+let selected=null, chats=[], current=null, dirty=false, fingerprint='', lastDraft='', loading=false, actionBusy=false;
 let attachment=null, sendAttempt=null, quoted=null, filter='all', config={}, threadSearch='', onlyStarred=false, typingAt=0;
 let recorder=null, recordingStream=null, recordingTimer=null, recordingChunks=[], recordingStarted=0, recordingCancelled=false;
 let calls;
+const history=createChatHistory(),inboxPages=createInboxPages();
+let inboxController=null,inboxLoading=false,searchTimer=null,olderLoading=false,connectionPaused=false;
+const inboxPoll=createAdaptivePoll({task:loadInbox,canRun:()=>app.dataset.view!=='login',fastMs:8000,idleMs:60000});
+const threadPoll=createAdaptivePoll({task:poll,canRun:()=>Boolean(selected)&&app.dataset.view==='chat',hot:()=>current?.typing?.customer,idleMs:30000});
 const readThrough=new Map();
 const messageMarkup=new Map(),inboxMarkup=new Map();let inboxFingerprint='';
 const timeFormatter=new Intl.DateTimeFormat('en-IN',{hour:'2-digit',minute:'2-digit'}),dayFormatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',year:'numeric'}),inboxDateFormatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short'});
-async function api(route, method='GET', body) {
-  const response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:method!=='GET'?{'Content-Type':'application/json'}:{},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(40000)});
-  const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error||'Please try again.'),{status:response.status});if(method==='POST'&&route==='/api/admin/app-settings/publish'){config={...config,appSettings:data.published,settingsRevision:data.revision};window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));}return data;
+async function api(route, method='GET', body,{signal}={}) {
+  const response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});
+  let data;try{data=await response.json();}catch{throw Object.assign(new Error('The connection returned an unreadable response. Please try again.'),{status:response.ok?undefined:response.status});}if(!response.ok)throw Object.assign(new Error(data.error||'Please try again.'),{status:response.status});if(method==='POST'&&route==='/api/admin/app-settings/publish'){config={...config,appSettings:data.published,settingsRevision:data.revision};window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));}return data;
 }
 function notice(text) { const n=document.querySelector('#notice');n.textContent=text;n.hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>n.hidden=true,5000); }
-function mobileView(view){app.dataset.view=view;}
+function mobileView(view){app.dataset.view=view;if(view==='chat')threadPoll.start({immediate:true});else threadPoll.stop();}
 function sender(m){return m.role==='user'?current?.name||'Customer':config.appSettings?.brand?.astrologerName||'Rekha';}
 function readable(m){if(m.deleted)return 'This message was deleted';if(m.kind==='media'){try{const d=JSON.parse(m.body);return [d.text,d.title,...(d.items||[]).map(i=>i.title)].filter(Boolean).join(' · ')||'Attachment';}catch{return 'Attachment';}}return m.body||'';}
 function time(value){return timeFormatter.format(new Date(value));}
@@ -27,15 +34,14 @@ function latestPreview(c){return c.preview||c.lastMessage||c.last_message||`${c.
 function closeRecorder(cancel=true){recordingCancelled=cancel;if(recorder&&recorder.state!=='inactive')recorder.stop();recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;}
 function login() {
   calls?.destroy();calls=null;
-  clearInterval(timer);closeRecorder();readThrough.clear();selected=null;current=null;mobileView('login');
+  inboxPoll.stop();threadPoll.stop();inboxController?.abort();clearTimeout(searchTimer);closeRecorder();readThrough.clear();selected=null;current=null;chats=[];history.reset();inboxPages.reset();mobileView('login');
   app.innerHTML=`<main class="login"><section class="login-card"><div class="brand"><img src="/icon-192.png" alt="">Rekha Astrology</div><h1>Your customer inbox.</h1><p class="muted">Read conversations, send messages and manage replies from your private admin app.</p><form id="login-form"><label>Owner password<input id="password" type="password" autocomplete="current-password" required minlength="16"></label><p id="login-error" class="error" role="alert"></p><button class="primary">Sign in securely →</button></form><a class="install-owner" href="/astrorani/RekhaAdmin.apk" download>Download private admin app ↓</a><p class="muted">Only the owner can access this panel.</p></section></main>`;
   app.querySelector('#login-form').onsubmit=async event=>{event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;try{await api('/api/admin/login','POST',{password:app.querySelector('#password').value});await workspace();}catch(error){app.querySelector('#login-error').textContent=error.message;}finally{button.disabled=false;}};
 }
 async function workspace() {
   inboxFingerprint='';inboxMarkup.clear();messageMarkup.clear();
-  chats=await api('/api/admin/conversations');
+  inboxPages.reset('',filter);const request=inboxPages.request();const [list,nextConfig]=await Promise.all([api(request.route),api('/api/config')]);inboxPages.accept(list,request);chats=inboxPages.state().items;config=nextConfig;
   if(!calls)calls=installCalls({role:'admin',getConversationId:()=>selected,notify:notice,getAppSettings:()=>config?.appSettings});
-  calls.poll();
   app.innerHTML=`<header class="topbar"><div class="brand"><img src="/icon-192.png" alt="">Rekha <span class="private">PRIVATE ADMIN</span></div><div class="links"><a class="install-owner" href="/astrorani/RekhaAdmin.apk" download>Admin app ↓</a><button id="open-library">Media library</button><button id="open-quick-replies">Quick replies</button><button id="logout">Sign out</button></div></header><main class="workspace"><aside class="inbox"><div class="inbox-head"><h2>Chats <span id="count" class="badge"></span></h2><input class="search" id="search" placeholder="Search customers or labels" aria-label="Search conversations"><nav class="inbox-filters" aria-label="Filter customers">${[['all','All'],['waiting','Waiting'],['unread','Unread'],['pinned','Pinned'],['archived','Archived'],['blocked','Blocked']].map(([key,label])=>`<button data-filter="${key}" aria-pressed="${filter===key}">${label}</button>`).join('')}</nav></div><div id="inbox-list"></div></aside><section class="conversation" id="conversation"><div class="empty"><div class="empty-icon">✧</div><h2>Your conversations.</h2><p>Choose a customer to read messages and reply. You can send messages anytime.</p></div></section><aside class="controls" id="controls"><h3>Customer & reply settings</h3><p class="muted">Open a chat to manage reply mode, notes and customer details.</p></aside></main>`;
   mobileView(selected?'chat':'inbox');
   app.querySelector('#open-library').onclick=()=>openLibrary({api,notice});
@@ -49,27 +55,51 @@ async function workspace() {
     const alerts=document.createElement('button');alerts.id='message-alerts';alerts.textContent='Message alerts';alerts.onclick=()=>{try{window.RekhaDevice.showAlertSettings();}catch{notice('Could not open message alert settings.');}};
     app.querySelector('.topbar .links').insertBefore(alerts,app.querySelector('#logout'));
   }
-  app.querySelector('#search').oninput=drawList;
+  const more=document.createElement('button');more.id='inbox-more';more.className='inbox-more';more.type='button';more.onclick=()=>loadInbox({more:true}).catch(error=>notice(error.message));app.querySelector('#inbox-list').after(more);
+  app.querySelector('#search').placeholder='Search customer name';app.querySelector('#search').setAttribute('aria-label','Search customer names starting with these letters');app.querySelector('#search').title='Search by the beginning of a customer name';
+  app.querySelector('#search').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>searchInbox(),300);};
   app.querySelector('#inbox-list').onclick=event=>{const button=event.target.closest('[data-id]');if(button&&app.querySelector('#inbox-list').contains(button))select(button.dataset.id);};
-  app.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;app.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));drawList();});
-  drawList();clearInterval(timer);timer=setInterval(poll,2200);
-  config=await api('/api/config');
+  app.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;app.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));searchInbox();});
+  drawList();inboxPoll.start();
   app.querySelector('.topbar .brand').title=`AI: ${config.aiMode} · Payment: ${config.paymentMode}`;
+}
+function drawInboxPaging(){const button=app.querySelector('#inbox-more');if(!button)return;button.hidden=!inboxPages.state().hasMore&&!inboxLoading;button.disabled=inboxLoading;button.textContent=inboxLoading?'Loading customers…':'Load more customers';}
+async function loadInbox({more=false,signal}={}){
+  if(document.hidden||navigator.onLine===false||app.dataset.view==='login')return;
+  if(inboxLoading)return;
+  const request=inboxPages.request({more}),controller=new AbortController();inboxController=controller;inboxLoading=true;drawInboxPaging();
+  const before=JSON.stringify(chats);
+  try{const data=await api(request.route,'GET',undefined,{signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});if(controller.signal.aborted||!inboxPages.accept(data,request))return;chats=inboxPages.state().items;for(const row of chats)if(row.latestUserId&&row.latestUserId<=(readThrough.get(row.id)||0))row.unread=0;connectionPaused=false;drawList();return{changed:before!==JSON.stringify(chats)};}
+  catch(error){if(controller.signal.aborted||signal?.aborted)return;if(error.status===401)login();else if(!connectionPaused){connectionPaused=true;notice('Connection paused. Trying again…');}throw error;}
+  finally{if(inboxController===controller){inboxLoading=false;inboxController=null;drawInboxPaging();}}
+}
+async function searchInbox(){
+  clearTimeout(searchTimer);inboxPoll.stop();inboxController?.abort();inboxController=null;inboxLoading=false;inboxPages.reset(app.querySelector('#search')?.value||'',filter);chats=[];inboxFingerprint='';drawList();
+  try{await loadInbox();}catch{/* The list retains a retrying state. */}finally{if(app.dataset.view!=='login')inboxPoll.start();}
 }
 function drawList(){
   const search=app.querySelector('#search');if(!search)return;
-  const query=search.value.trim().toLowerCase(),print=JSON.stringify([chats,query,filter,selected]);if(print===inboxFingerprint)return;inboxFingerprint=print;app.querySelector('#count').textContent=chats.length;
-  const list=chats.filter(c=>{const matches=[c.name,...(c.labels||[])].join(' ').toLowerCase().includes(query);if(!matches)return false;if(filter==='archived')return c.archived;if(filter==='blocked')return c.blocked;if(c.archived)return false;if(filter==='waiting')return c.waiting;if(filter==='unread')return c.unread>0;if(filter==='pinned')return c.pinned;return true;}).sort((a,b)=>Number(b.pinned)-Number(a.pinned)||new Date(b.updated)-new Date(a.updated));
+  drawInboxPaging();const print=JSON.stringify([chats,filter,selected]);if(print===inboxFingerprint)return;inboxFingerprint=print;app.querySelector('#count').textContent=`${chats.length} loaded`;
+  const list=chats.filter(c=>filter==='archived'?c.archived:!c.archived&&(filter==='blocked'?c.blocked:filter==='waiting'?c.waiting:filter==='unread'?c.unread>0:filter==='pinned'?c.pinned:true)).sort(inboxPages.state().query?(a,b)=>a.name.toLowerCase().localeCompare(b.name.toLowerCase())||String(a.id).localeCompare(String(b.id)):(a,b)=>Number(b.pinned)-Number(a.pinned)||new Date(b.updated)-new Date(a.updated)||String(b.id).localeCompare(String(a.id)));
   const active=new Set(),fragments=list.map(c=>{active.add(c.id);const key=JSON.stringify([c,selected===c.id]),cached=inboxMarkup.get(c.id);if(cached?.key===key)return{id:c.id,html:cached.html};const html=`<button class="chat-item ${selected===c.id?'selected':''} ${c.unread?'has-unread':''}" data-id="${esc(c.id)}" data-message="${esc(c.id)}"><span class="customer-avatar" aria-hidden="true">${esc(c.name.slice(0,1).toUpperCase())}</span><span class="chat-summary"><span class="row"><strong>${esc(c.name)}</strong><span class="inbox-date">${inboxDateFormatter.format(new Date(c.updated))}</span></span><span class="row"><small>${esc(latestPreview(c))}</small><span class="inbox-markers">${c.pinned?'<span title="Pinned">⌖</span>':''}${c.blocked?'<span title="Blocked">⊘</span>':''}${c.unread?`<span class="unread-count">${Number(c.unread)}</span>`:c.waiting?'<span class="waiting-dot" title="Waiting for your reply"></span>':''}</span></span>${c.labels?.length?`<span class="inbox-labels">${c.labels.map(x=>`<span>${esc(x)}</span>`).join('')}</span>`:''}</span></button>`;inboxMarkup.set(c.id,{key,html});return{id:c.id,html};});for(const id of inboxMarkup.keys())if(!active.has(id))inboxMarkup.delete(id);
   syncThread(app.querySelector('#inbox-list'),fragments.length?fragments:[{id:'empty-inbox',html:'<div data-message="empty-inbox" class="empty inbox-empty"><p>No chats match this filter.</p></div>'}]);
 }
 async function select(id){
   if(selected===id&&current?.id===id){mobileView('chat');await markRead();return;}
   if(actionBusy)return;if(dirty&&!confirm('Discard your unsent reply and open another conversation?'))return;
-  closeRecorder();selected=id;attachment=null;sendAttempt=null;quoted=null;dirty=false;fingerprint='';lastDraft='';threadSearch='';onlyStarred=false;drawList();mobileView('chat');
+  threadPoll.stop();closeRecorder();selected=id;current=null;history.reset();attachment=null;sendAttempt=null;quoted=null;dirty=false;fingerprint='';lastDraft='';threadSearch='';onlyStarred=false;drawList();mobileView('chat');
+  app.querySelector('#conversation').innerHTML='<div class="empty" role="status"><p>Opening this private conversation…</p></div>';app.querySelector('#controls').innerHTML='<p class="muted">Loading customer settings…</p>';
   messageMarkup.clear();
-  try{const data=await api(`/api/admin/conversations/${id}`);if(selected!==id)return;current=data;drawConversation(true);await markRead();}catch(error){notice(error.message);}
+  try{const data=await api(`/api/admin/conversations/${id}`);if(selected!==id)return;acceptConversation(data,{kind:'initial'});drawConversation(true);await markRead();threadPoll.start();}catch(error){if(error.status===401)login();else if(error.status===404)removeDeletedChat(id);notice(error.message);}
 }
+function removeDeletedChat(id){inboxPages.remove(id);chats=inboxPages.state().items;if(selected===id){selected=null;current=null;dirty=false;history.reset();mobileView('inbox');app.querySelector('#conversation').innerHTML='<div class="empty"><p>This conversation was deleted. Choose another customer.</p></div>';}inboxFingerprint='';drawList();}
+function acceptConversation(data,{kind='mutation'}={}){if(data?.id!==selected||!Array.isArray(data.messages))return false;current=history.accept(current,data,{kind});const row=chats.find(item=>item.id===current.id);if(row)for(const key of ['name','mode','version','inboxRevision','updated','pinned','archived','blocked','labels'])if(key in current)row[key]=current[key];return true;}
+async function loadEarlier(){
+  if(olderLoading||!history.state().hasOlder||!current)return;const id=selected;olderLoading=true;drawHistory();
+  try{const data=await api(history.route(`/api/admin/conversations/${id}`,{older:true}));if(selected!==id||!current)return;const thread=app.querySelector('#thread'),anchor=captureThreadAnchor(thread);acceptConversation(data,{kind:'older'});fingerprint='';drawConversation();restoreThreadAnchor(thread,anchor);}
+  catch(error){notice(error.message);}finally{olderLoading=false;drawHistory();}
+}
+function drawHistory(){const button=app.querySelector('#owner-load-earlier');if(!button)return;button.hidden=!history.state().hasOlder;button.disabled=olderLoading;button.textContent=olderLoading?'Loading earlier messages…':'Load earlier messages';}
 function toInbox(){if(actionBusy)return;closeRecorder();mobileView('inbox');app.querySelector('#controls')?.classList.remove('mobile-open');}
 async function markRead(){
   const lastId=current?.messages?.findLast(m=>m.role==='user')?.id;if(!lastId||lastId<=(readThrough.get(current.id)||0)||document.hidden||app.dataset.view!=='chat')return;
@@ -87,6 +117,7 @@ function drawConversation(initial=false){
   const print=JSON.stringify([current,threadSearch,onlyStarred]);if(print===fingerprint&&!initial)return;fingerprint=print;
   const pane=app.querySelector('#conversation');
   if(initial)pane.innerHTML=`<header class="conversation-head"><button type="button" class="back-inbox" aria-label="Back to customer inbox">←</button><span class="customer-avatar" id="header-avatar"></span><div class="conversation-heading"><h2 id="customer-name"></h2><p id="customer-state"></p></div><div class="owner-call-actions"></div><button type="button" id="thread-find" aria-label="Search messages">⌕</button><button type="button" id="customer-settings" aria-label="Customer settings">⋮</button></header><div class="thread-search" hidden><input id="message-search" type="search" placeholder="Find in this conversation" aria-label="Find messages"><button id="starred-messages" aria-pressed="false">★ Starred</button><button id="close-find" aria-label="Close search">✕</button></div><div class="thread" id="thread"></div><div class="customer-typing" id="customer-typing" hidden>Customer is typing…</div><form class="reply-box" id="reply-form"><div class="quote-composer" id="quote-composer" hidden></div><div class="attachment-row" id="attachment-row" hidden><span id="attached-label"></span><button type="button" id="remove-attachment">✕</button></div><div class="recording-row" hidden><span class="recording-dot"></span><span id="recording-time">0:00</span><span>Recording voice message</span><button type="button" id="cancel-recording">Cancel</button><button type="button" id="finish-recording">Use recording</button></div><div class="composer-main"><button type="button" id="emoji-picker" aria-label="Add emoji">☺</button><button type="button" id="attach-menu" aria-label="Attach file or collection">＋</button><textarea id="reply" maxlength="4000" rows="1" placeholder="Message as Rekha" aria-label="Message as Rekha"></textarea><button type="button" id="voice-record" aria-label="Record voice message">🎙</button><button class="primary" id="send-reply" aria-label="Send message">➤</button></div><div class="composer-tools"><button type="button" id="insert-quick-reply">⚡ Quick replies</button><span id="draft-label"></span><label class="answer-toggle"><input type="checkbox" id="answer-pending" checked> Answer waiting messages</label></div><p id="reply-hint" class="reply-hint"></p><p class="error" id="reply-error" role="alert"></p><input id="owner-file" type="file" accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/*,application/pdf" hidden></form>`;
+  if(initial){const older=document.createElement('button');older.id='owner-load-earlier';older.type='button';older.className='history-more';older.onclick=loadEarlier;pane.querySelector('#thread').before(older);const field=pane.querySelector('#message-search');field.placeholder='Find in loaded messages';field.setAttribute('aria-label','Find in loaded messages. Load earlier for older results.');}drawHistory();
   app.querySelector('#customer-name').textContent=current.name;app.querySelector('#header-avatar').textContent=current.name.slice(0,1).toUpperCase();
   app.querySelector('#customer-state').textContent=current.typing?.customer?'typing…':`${current.mode==='ai'?'Auto reply':current.mode==='assist'?'Draft approval':'Personal reply'}${current.blocked?' · Customer blocked':''}`;
   const thread=app.querySelector('#thread'),bottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<110;
@@ -126,8 +157,8 @@ function drawConversation(initial=false){
   app.querySelector('#reply-form').onsubmit=async event=>{
     event.preventDefault();if(actionBusy||(!reply.value.trim()&&!attachment))return;actionBusy=true;
     const id=current.id,body=reply.value;app.querySelector('#send-reply').disabled=true;app.querySelector('#reply-error').textContent='';
-    try{const payload={body,version:current.version,replyTo:quoted?.id||null,answersPending:!!pending&&app.querySelector('#answer-pending').checked,...(attachment?.collectionId?{collectionId:attachment.collectionId}:attachment?{itemIds:attachment.itemIds}:{})};const signature=JSON.stringify({...payload,version:undefined});if(!sendAttempt||sendAttempt.signature!==signature)sendAttempt={signature,clientId:crypto.randomUUID()};const data=await api(`/api/admin/conversations/${id}/send`,'POST',{...payload,clientId:sendAttempt.clientId});attachment=null;sendAttempt=null;quoted=null;if(selected===id){current=data;dirty=false;reply.value='';lastDraft='';}api(`/api/admin/conversations/${id}/typing`,'POST',{active:false}).catch(()=>{});}
-    catch(error){app.querySelector('#reply-error').textContent=error.message;if(error.status===409){current=await api(`/api/admin/conversations/${id}`);sendAttempt=null;}}
+    try{const payload={body,version:current.version,replyTo:quoted?.id||null,answersPending:!!pending&&app.querySelector('#answer-pending').checked,...(attachment?.collectionId?{collectionId:attachment.collectionId}:attachment?{itemIds:attachment.itemIds}:{})};const signature=JSON.stringify({...payload,version:undefined});if(!sendAttempt||sendAttempt.signature!==signature)sendAttempt={signature,clientId:crypto.randomUUID()};const data=await api(`/api/admin/conversations/${id}/send`,'POST',{...payload,clientId:sendAttempt.clientId});attachment=null;sendAttempt=null;quoted=null;if(selected===id){acceptConversation(data);dirty=false;reply.value='';lastDraft='';}threadPoll.poke({immediate:true});inboxPoll.poke({immediate:true});api(`/api/admin/conversations/${id}/typing`,'POST',{active:false}).catch(()=>{});}
+    catch(error){app.querySelector('#reply-error').textContent=error.message;if(error.status===409){await refreshSelected();sendAttempt=null;}}
     finally{actionBusy=false;fingerprint='';drawConversation();}
   };
   if(initial)app.querySelector('#controls').dataset.formEditing='false';
@@ -141,14 +172,14 @@ function drawControls(pending){
   controls.innerHTML=`<div class="controls-head"><h3>Customer settings</h3><button id="close-settings" aria-label="Close customer settings">✕</button></div><section class="customer-actions"><button data-setting="pinned" aria-pressed="${!!current.pinned}">${current.pinned?'Unpin':'Pin'} chat</button><button data-setting="archived">${current.archived?'Unarchive':'Archive'}</button><button data-setting="blocked" class="${current.blocked?'danger-active':''}">${current.blocked?'Unblock customer':'Block customer'}</button></section><section class="customer-notes"><h3>Private notes & labels</h3><form id="customer-details-form"><label>Labels<input id="customer-labels" maxlength="300" value="${esc((current.labels||[]).join(', '))}" placeholder="Paid, Follow up, New"></label><label>Notes<textarea id="customer-notes" maxlength="4000" rows="3" placeholder="Visible only to you">${esc(current.notes||'')}</textarea></label><button class="primary">Save details</button><span id="details-status" role="status"></span></form></section><h3>Reply mode</h3>${[['ai','AI auto-reply','Automatic replies for this customer.'],['assist','AI assisted','Review or edit a draft, then send.'],['manual','Personal reply','Reply yourself whenever you like.']].map(([key,name,description])=>`<button class="mode ${current.mode===key?'active':''}" data-mode="${key}" aria-pressed="${current.mode===key}" ${actionBusy?'disabled':''}><strong>${name}</strong><span>${description}</span></button>`).join('')}<p class="control-note">These settings are private. Your customer sees Rekha.</p>${pending?.status==='failed'?'<button id="retry-ai">Retry failed draft / reply</button>':''}<section class="profile"><h3>Customer details</h3><dl><dt>Date of birth</dt><dd>${esc(current.dob)}</dd><dt>Language</dt><dd>${esc(current.language)}</dd><dt>Conversation</dt><dd>${current.entitlement==='demo'?'Preview unlock · not paid':current.entitlement==='paid'?'₹49 paid':'Free'}</dd><dt>Free replies used</dt><dd>${current.freeUsed}</dd><dt>Location</dt><dd>${current.preferences?.location?esc(`${current.preferences.location.latitude}, ${current.preferences.location.longitude}`):'Not shared'}</dd><dt>Kundli</dt><dd>Not calculated in this preview.</dd></dl></section>`;
   controls.querySelector('#close-settings').onclick=()=>controls.classList.remove('mobile-open');
   const flowButton=document.createElement('button');flowButton.className='flow-tools-button';flowButton.textContent='Customer video & reply flow →';flowButton.type='button';flowButton.onclick=()=>openChatWorkflow({api,notice,conversationId:current.id,customerName:current.name});controls.querySelector('.customer-actions').after(flowButton);
-  controls.querySelectorAll('[data-setting]').forEach(b=>b.onclick=async()=>{const key=b.dataset.setting;if(key==='blocked'&&!current.blocked&&!confirm('Block this customer from sending new messages? You can unblock them later.'))return;try{const result=await api(`/api/admin/conversations/${current.id}/settings`,'PATCH',{[key]:!current[key]});current={...current,...result};const row=chats.find(c=>c.id===current.id);if(row)Object.assign(row,result);fingerprint='';drawConversation();drawList();notice('Customer settings saved.');}catch(error){notice(error.message);}});
-  controls.querySelector('#customer-details-form').onsubmit=async e=>{e.preventDefault();const labels=controls.querySelector('#customer-labels').value.split(',').map(x=>x.trim()).filter(Boolean);if(labels.some(x=>x.length>30)||labels.length>8)return notice('Use up to 8 labels, with 30 characters each.');try{const result=await api(`/api/admin/conversations/${current.id}/settings`,'PATCH',{labels,notes:controls.querySelector('#customer-notes').value});current={...current,...result};const row=chats.find(c=>c.id===current.id);if(row)Object.assign(row,result);controls.dataset.formEditing='false';controls.querySelector('#details-status').textContent=' Saved';drawList();}catch(error){notice(error.message);}};
+  controls.querySelectorAll('[data-setting]').forEach(b=>b.onclick=async()=>{const key=b.dataset.setting;if(key==='blocked'&&!current.blocked&&!confirm('Block this customer from sending new messages? You can unblock them later.'))return;try{const result=await api(`/api/admin/conversations/${current.id}/settings`,'PATCH',{[key]:!current[key]});if(!acceptConversation(result))return;fingerprint='';drawConversation();drawList();inboxPoll.poke({immediate:true});notice('Customer settings saved.');}catch(error){notice(error.message);}});
+  controls.querySelector('#customer-details-form').onsubmit=async e=>{e.preventDefault();const labels=controls.querySelector('#customer-labels').value.split(',').map(x=>x.trim()).filter(Boolean);if(labels.some(x=>x.length>30)||labels.length>8)return notice('Use up to 8 labels, with 30 characters each.');try{const result=await api(`/api/admin/conversations/${current.id}/settings`,'PATCH',{labels,notes:controls.querySelector('#customer-notes').value});if(!acceptConversation(result))return;controls.dataset.formEditing='false';if(controls.querySelector('#details-status'))controls.querySelector('#details-status').textContent=' Saved';drawList();}catch(error){notice(error.message);}};
   controls.dataset.formEditing='false';controls.querySelector('#customer-details-form').addEventListener('input',()=>controls.dataset.formEditing='true');
   controls.querySelectorAll('[data-mode]').forEach(button=>button.onclick=async()=>{
     if(actionBusy||button.dataset.mode===current.mode)return;if(dirty&&!confirm('Discard your unsent reply and change reply mode?'))return;actionBusy=true;
-    try{current=await api(`/api/admin/conversations/${current.id}/mode`,'PATCH',{mode:button.dataset.mode});dirty=false;app.querySelector('#reply').value='';lastDraft='';notice('Reply mode updated.');}catch(error){notice(error.message);}finally{actionBusy=false;fingerprint='';drawConversation();}
+    try{acceptConversation(await api(`/api/admin/conversations/${current.id}/mode`,'PATCH',{mode:button.dataset.mode}));dirty=false;app.querySelector('#reply').value='';lastDraft='';notice('Reply mode updated.');}catch(error){notice(error.message);}finally{actionBusy=false;fingerprint='';drawConversation();}
   });
-  controls.querySelector('#retry-ai')?.addEventListener('click',async()=>{try{current=await api(`/api/admin/conversations/${current.id}/retry`,'POST',{});fingerprint='';drawConversation();}catch(error){notice(error.message);}});
+  controls.querySelector('#retry-ai')?.addEventListener('click',async()=>{try{acceptConversation(await api(`/api/admin/conversations/${current.id}/retry`,'POST',{}));fingerprint='';drawConversation();threadPoll.poke({immediate:true});}catch(error){notice(error.message);}});
   controls.scrollTop=previousScroll;
 }
 function dialog(title,content,className='owner-dialog'){
@@ -170,7 +201,7 @@ async function startRecording(){
 }
 function emojiPicker(){const d=dialog('Add emoji',`<div class="emoji-grid">${['😊','🙏','❤️','👍','✨','🌸','☀️','🌙','🎉','💫','🌟','🤗','✅','🙂','💐','🕉️'].map(x=>`<button data-emoji="${x}" aria-label="${x}">${x}</button>`).join('')}</div>`);d.querySelectorAll('[data-emoji]').forEach(b=>b.onclick=()=>{const reply=app.querySelector('#reply'),start=reply.selectionStart,end=reply.selectionEnd;reply.value=reply.value.slice(0,start)+b.dataset.emoji+reply.value.slice(end);dirty=true;sendAttempt=null;d.close();reply.focus();growReply();});}
 function jumpMessage(id){const el=app.querySelector(`[data-message="${id}"]`);if(!el)return notice('Clear the message search to see this reply.');el.scrollIntoView({block:'center',behavior:'smooth'});el.classList.add('highlight');setTimeout(()=>el.classList.remove('highlight'),1800);}
-async function refreshSelected(){const id=selected;if(!id)return;const data=await api(`/api/admin/conversations/${id}`);if(selected===id){current=data;fingerprint='';drawConversation();}}
+async function refreshSelected(){const id=selected;if(!id)return;const kind=history.state().revision===null?'initial':'delta',data=await api(history.route(`/api/admin/conversations/${id}`));if(selected===id){acceptConversation(data,{kind});fingerprint='';drawConversation();if(data.hasMoreChanges)threadPoll.poke({immediate:true});}}
 async function react(id,emoji){try{await api(`/api/admin/conversations/${current.id}/messages/${id}/reaction`,'PUT',{emoji});await refreshSelected();}catch(error){notice(error.message);}}
 function messageMenu(id){
   const m=current.messages.find(x=>x.id===id);if(!m)return;const own=m.role!=='user'&&m.kind!=='welcome',text=!m.deleted&&m.kind!=='media',age=Date.now()-new Date(m.created).getTime();
@@ -194,12 +225,11 @@ async function quickReplies(insert){
     }draw();
   }catch(error){notice(error.message);}
 }
-async function poll(){
-  calls?.poll();
-  if(loading||document.hidden||actionBusy)return;loading=true;
-  try{const id=selected&&app.dataset.view==='chat'?selected:null;const [list,data]=await Promise.all([api('/api/admin/conversations'),id?api(`/api/admin/conversations/${id}`):null]);if(actionBusy)return;chats=list;drawList();if(data&&id===selected&&(!current||data.version>=current.version)){current=data;drawConversation();await markRead();}}
-  catch(error){if(error.status===401)login();else if(error.status===404){selected=null;current=null;dirty=false;await workspace();notice('This conversation was deleted.');}else notice('Connection paused. Trying again…');}
+async function poll({signal}={}){
+  if(loading||document.hidden||navigator.onLine===false||actionBusy||!current||app.dataset.view!=='chat')return;loading=true;
+  try{const id=selected,previous=JSON.stringify([current.version,current.updated,current.typing,history.state().revision]),kind=history.state().revision===null?'initial':'delta',data=await api(history.route(`/api/admin/conversations/${id}`),'GET',undefined,{signal});if(actionBusy||signal?.aborted||id!==selected)return;acceptConversation(data,{kind});poll.paused=false;drawConversation();await markRead();return{changed:previous!==JSON.stringify([current.version,current.updated,current.typing,history.state().revision]),again:!!data.hasMoreChanges};}
+  catch(error){if(signal?.aborted)return;if(error.status===401)login();else if(error.status===404){removeDeletedChat(selected);notice('This conversation was deleted.');}else if(!poll.paused){poll.paused=true;notice('Connection paused. Trying again…');}throw error;}
   finally{loading=false;}
 }
-document.addEventListener('visibilitychange',()=>{if(document.hidden){closeRecorder();if(selected)api(`/api/admin/conversations/${selected}/typing`,'POST',{active:false}).catch(()=>{});}else poll();});
+document.addEventListener('visibilitychange',()=>{if(document.hidden){closeRecorder();if(selected&&navigator.onLine!==false)api(`/api/admin/conversations/${selected}/typing`,'POST',{active:false}).catch(()=>{});}});
 workspace().catch(error=>{if(error.status===401)login();else{login();notice(error.message);}});

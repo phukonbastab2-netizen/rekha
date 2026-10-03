@@ -2,20 +2,24 @@ import { messageBody, syncThread } from './media.js';
 import { languages } from './locales.js';
 import { createMessagingUI, messageExtras } from './messaging-ui.js';
 import { installCalls } from './calls.js';
-import { createSendQueue,mergeServerChat } from './send-queue.js';
+import { createSendQueue } from './send-queue.js';
+import { createAdaptivePoll } from './adaptive-poll.js';
+import { createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor } from './chat-history.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
-let lang = 'en', config, chat, stage = 'splash', profile = {}, interval, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
+let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
 let calls, configReadAt=0, sessionEnded=false,chatMutation=0,outboxChatId=null;
+const history=createChatHistory();let olderLoading=false;
 const messageMarkup=new Map(),dateFormatters=new Map();
 const outbox=createSendQueue({
   online:()=>navigator.onLine!==false&&!sessionEnded&&Boolean(chat),
   send:async(record,{signal})=>{if(!chat||chat.id!==record.conversationId||sessionEnded)throw Object.assign(new Error('This chat session has ended. Your message was not sent.'),{status:401});const payload=await record.prepare(record.snapshot,{signal});if(!payload)throw Object.assign(new Error('There is no message to send.'),{status:400});return payload.editId?api(`/api/messages/${payload.editId}`,'PATCH',{body:payload.body},{signal}):api('/api/messages','POST',payload,{signal});},
-  onAck:next=>acceptServerChat(next),
+  onAck:next=>{acceptServerChat(next);chatPoll.poke({immediate:true});},
   onConfirmed:record=>record.finish?.(record.snapshot),
   onError:error=>{if(error.status===401)endSession();},
   onChange:()=>{fingerprint='';if(stage==='chat')drawChat();},
 });
+const chatPoll=createAdaptivePoll({task:refresh,canRun:()=>stage==='chat'&&!sessionEnded,hot:()=>outbox.list().some(record=>record.state==='queued'||record.state==='sending')||chat?.typing?.owner,idleMs:30000});
 function dates(){const locale=lang==='hi'?'hi-IN':'en-IN';if(!dateFormatters.has(locale))dateFormatters.set(locale,{day:new Intl.DateTimeFormat(locale,{day:'numeric',month:'short',year:'numeric'}),time:new Intl.DateTimeFormat(locale,{hour:'2-digit',minute:'2-digit'})});return dateFormatters.get(locale);}
 const copyKeys=new Set(['tagline','languageTitle','languageSubtitle','detailsTitle','detailsSubtitle','kundli','kundliNote','permissionsTitle','permissionsSubtitle','messagePlaceholder','reflection','offerTitle','offerText','topics']);
 const brand=()=>config?.appSettings?.brand||{};
@@ -57,16 +61,24 @@ function applyPublishedConfig(next){
 const previewLabel = () => [!chat?.guidedConversation && config.aiMode === 'demo' ? (lang === 'hi' ? 'नमूना उत्तर' : 'Sample replies') : '', config.paymentMode === 'demo' || config.paymentTest ? (lang === 'hi' ? 'परीक्षण भुगतान · कोई असली शुल्क नहीं' : 'Payment preview · no real charges') : ''].filter(Boolean).join(' · ');
 async function api(route, method = 'GET', body, {signal}={}) {
   let response;
-  try{response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:method!=='GET'?{'Content-Type':'application/json'}:{},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});}catch(error){if(signal?.aborted)throw error;throw new Error(navigator.onLine===false?'You are offline. Your unsent message is kept.':'Could not confirm delivery. Please retry your message.');}
+  try{response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});}catch(error){if(signal?.aborted)throw error;throw new Error(navigator.onLine===false?'You are offline. Your unsent message is kept.':'Could not confirm delivery. Please retry your message.');}
   let data;try{data=await response.json();}catch{throw Object.assign(new Error('The connection returned an unreadable response. Please try again.'),{status:response.ok?undefined:response.status});}
   if(!response.ok){const queuedWrite=method==='POST'&&route==='/api/messages'||method==='PATCH'&&/^\/api\/messages\/\d+$/.test(route);if(response.status===401&&stage==='chat'&&!queuedWrite)endSession();throw Object.assign(new Error(data.error||text('generalError')),{status:response.status});}
   return data;
 }
-function endSession(){clearInterval(interval);sessionEnded=true;outbox.pause({abort:true});messaging?.destroy();messaging=null;calls?.destroy();calls=null;toast(text('expired'));const input=app.querySelector('#message-input'),send=app.querySelector('.send');if(input)input.disabled=true;if(send)send.disabled=true;}
-function acceptServerChat(next){
+function endSession(){chatPoll.stop();sessionEnded=true;outbox.pause({abort:true});messaging?.destroy();messaging=null;calls?.destroy();calls=null;toast(text('expired'));const input=app.querySelector('#message-input'),send=app.querySelector('.send');if(input)input.disabled=true;if(send)send.disabled=true;}
+function acceptServerChat(next,{kind='mutation'}={}){
   if(!next||!Array.isArray(next.messages)||chat&&next.id!==chat.id)return false;
-  chat=mergeServerChat(chat,next);
-  chatMutation++;outbox.reconcile(next);if(stage==='chat')drawChat();return true;
+  chat=history.accept(chat,next,{kind});
+  chatMutation++;outbox.reconcile(chat);if(stage==='chat')drawChat();return true;
+}
+function drawHistory(){const button=app.querySelector('#load-earlier');if(!button)return;button.hidden=!history.state().hasOlder;button.disabled=olderLoading;button.textContent=olderLoading?(lang==='hi'?'पुराने संदेश खुल रहे हैं…':'Loading earlier messages…'):(lang==='hi'?'पुराने संदेश देखें':'Load earlier messages');}
+async function loadEarlier(){
+  if(olderLoading||!history.state().hasOlder||sessionEnded)return;
+  const id=chat.id;olderLoading=true;drawHistory();
+  try{const next=await api(history.route('/api/chat',{older:true}));if(chat?.id!==id||stage!=='chat')return;const scroller=app.querySelector('#chat-scroll'),anchor=captureThreadAnchor(scroller);acceptServerChat(next,{kind:'older'});restoreThreadAnchor(scroller,anchor);}
+  catch(error){if(error.status===401)endSession();else toast(error.message);}
+  finally{olderLoading=false;drawHistory();}
 }
 function pendingMessages(){return outbox.list().filter(r=>r.conversationId===chat?.id).map(record=>({id:record.snapshot.editId||'local-'+record.clientId,clientId:record.clientId,role:'user',kind:'customer',body:[record.snapshot.body,...(record.snapshot.attachments||[]).map(a=>'📎 '+(a.file?.name||a.uploaded?.title||'Attachment'))].filter(Boolean).join('\n'),created:record.created,status:'outgoing',replyTo:record.snapshot.replyTo||null,reactions:[],sendState:record.state,sendError:record.error,sendUncertain:record.uncertain,editId:record.snapshot.editId||null}));}
 function displayMessages(){const local=pendingMessages(),edits=new Map(local.filter(m=>m.editId).map(m=>[m.editId,m]));return[...chat.messages.map(m=>edits.has(m.id)?{...m,...edits.get(m.id),created:m.created}:m),...local.filter(m=>!m.editId)];}
@@ -122,6 +134,7 @@ async function start(skip) {
 }
 function renderChat() {
   if(outboxChatId&&outboxChatId!==chat.id){outbox.clear();composerDraft=null;}outboxChatId=chat.id;
+  if(history.state().id!==chat.id)history.reset(chat);
   chatMutation++;
   messageMarkup.clear();
   messaging?.destroy(); messaging = null;
@@ -132,6 +145,7 @@ function renderChat() {
   app.querySelector('#chat-privacy').textContent='⋮';
   app.querySelector('.send').innerHTML='<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="m3 3 19 9-19 9v-7l13-2L3 10z"/></svg>';
   app.querySelector('.date-divider').textContent=lang==='hi'?'बातचीत की शुरुआत':'Start of conversation';
+  const older=document.createElement('button');older.id='load-earlier';older.className='history-more';older.type='button';older.onclick=loadEarlier;app.querySelector('.date-divider').before(older);
   const composerInput=app.querySelector('#message-input');
   composerInput.oninput=()=>{composerInput.style.height='auto';composerInput.style.height=Math.min(composerInput.scrollHeight,120)+'px';};
   app.querySelector('#chat-privacy').onclick = () => privacy(true);
@@ -142,13 +156,14 @@ function renderChat() {
   if(composerDraft){messaging.restoreDraft?.(composerDraft);composerDraft=null;}
   window.RekhaChatUI=messaging;
   outbox.resume();
-  drawChat(); clearInterval(interval); interval = setInterval(refresh, 2200);
+  drawChat();chatPoll.start();
   window.dispatchEvent(new CustomEvent('rekha:chat-mounted',{detail:{header:app.querySelector('.chat-head'),conversationId:chat.id}}));
   if(!calls)calls=installCalls({role:'customer',getConversationId:()=>chat?.id,getAppSettings:()=>config?.appSettings,notify:toast});
-  calls.mount(app.querySelector('.chat-head'));calls.poll();
+  calls.mount(app.querySelector('.chat-head'));
 }
 function drawChat() {
   if (stage !== 'chat') return;
+  drawHistory();app.querySelector('.date-divider').hidden=history.state().hasOlder;
   const visibleMessages=displayMessages(),print=JSON.stringify([chat,visibleMessages]);if(print===fingerprint)return;fingerprint=print;
   app.querySelector('.demo-ribbon').textContent = previewLabel();
   const scroller = app.querySelector('#chat-scroll'), nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 140;
@@ -184,7 +199,6 @@ function drawChat() {
   if (nearBottom || chat.locked) scroller.scrollTop = scroller.scrollHeight;
   messaging?.refresh();
   window.dispatchEvent(new CustomEvent('rekha:chat-refreshed',{detail:{conversationId:chat.id}}));
-  calls?.poll();
 }
 function send(event) {
   event.preventDefault(); if (busy) return;
@@ -193,20 +207,25 @@ function send(event) {
   try {
     const snapshot=messaging.takeDraft(body,crypto.randomUUID());if(!snapshot)return;
     chatMutation++;outbox.enqueue({snapshot,conversationId:chat.id,baseVersion:Number(chat.version)||0,prepare:messaging.prepareDraft,finish:messaging.finishDraft});
+    chatPoll.poke({immediate:true});
     if(!input.value)input.style.height='44px';input.focus();app.querySelector('#chat-scroll').scrollTop=app.querySelector('#chat-scroll').scrollHeight;
   }
   catch (error) { app.querySelector('#send-error').textContent = error.message; }
 }
-async function refresh() {
-  if (stage !== 'chat' || document.hidden || busy || refresh.pending) return;
+async function refresh({signal}={}) {
+  if (stage !== 'chat' || document.hidden || navigator.onLine===false || busy || refresh.pending) return;
   refresh.pending = true;
   try {
-    if(Date.now()-configReadAt>=60000){configReadAt=Date.now();try{const nextConfig=await api('/api/config');if(stage==='chat')applyPublishedConfig(nextConfig);}catch{/* Existing chat remains usable while published settings are unavailable. */}}
-    const next = await api('/api/chat');if(stage!=='chat')return;
-    acceptServerChat(next);messaging?.refresh();if(offline){toast(text('restored'));offline=false;}
+    const id=chat.id,previous=JSON.stringify([chat.version,chat.updated,chat.typing,history.state().revision]),kind=history.state().revision===null?'initial':'delta';
+    let settings=null;if(Date.now()-configReadAt>=120000){configReadAt=Date.now();settings=api('/api/config','GET',undefined,{signal}).then(value=>{if(stage==='chat')applyPublishedConfig(value);}).catch(()=>{});}
+    const next=await api(history.route('/api/chat'),'GET',undefined,{signal});await settings;if(stage!=='chat'||chat?.id!==id||signal?.aborted)return;
+    acceptServerChat(next,{kind});messaging?.refresh();if(offline){toast(text('restored'));offline=false;}
+    return{changed:previous!==JSON.stringify([chat.version,chat.updated,chat.typing,history.state().revision]),again:!!next.hasMoreChanges};
   } catch (error) {
+    if(signal?.aborted)return;
     if (error.status === 401) endSession();
     else if (!offline) { offline = true; toast(text('connection')); }
+    throw error;
   } finally { refresh.pending = false; }
 }
 async function checkout() {
@@ -236,7 +255,7 @@ function privacy(editable) {
 function confirmDelete() {
   dialog.innerHTML = `<h2 id="privacy-title">${t('deleteTitle')}</h2><p>${t('deleteText')}</p><div class="dialog-actions"><button class="secondary" id="cancel-delete">${t('cancel')}</button><button class="secondary danger" id="confirm-delete">${t('confirmDelete')}</button></div>`;
   dialog.querySelector('#cancel-delete').onclick = () => privacy(true);
-  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});clearInterval(interval);stage='language';outbox.clear();composerDraft=null;chat=null;dialog.close();chooseLanguage();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
+  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});chatPoll.stop();stage='language';outbox.clear();composerDraft=null;chat=null;history.reset();dialog.close();chooseLanguage();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
 }
 function introduction() {
   if(!introEnabled()){if(stage==='chat'){toast(lang==='hi'?'परिचय अभी उपलब्ध नहीं है।':'The introduction is currently unavailable.');return;}if(chat)renderChat();else chooseLanguage();return;}
@@ -246,7 +265,7 @@ function introduction() {
   outbox.pause();
   messaging?.destroy(); messaging=null;
   document.body.classList.remove('chat-mode');
-  stage='intro';clearInterval(interval);
+  stage='intro';chatPoll.stop();
   const labels={welcome:'Welcome',introduction:'Meet us',testimonials:'Testimonials'},configured=config.appSettings?.onboarding?.introOrder,order=Array.isArray(configured)&&configured.length===3&&new Set(configured).size===3&&configured.every(id=>Object.hasOwn(labels,id))?configured:['welcome','introduction','testimonials'],first=order[0];
   app.innerHTML=`<section class="intro screen"><span class="eyebrow">WELCOME · स्वागत है</span><h1>${esc(brandName())}</h1><p class="subtitle">${t('tagline')}</p><video id="intro-video" controls playsinline preload="none" poster="${esc(logo(true))}" src="/intro/${first}.mp4"></video><p id="video-note" class="footnote" role="status">Tap play to watch. You can continue whenever you are ready.</p><div class="intro-choices" role="group" aria-label="Introduction videos">${order.map((id,index)=>`<button class="intro-choice ${id===first?'selected':''}" data-video="${id}" aria-pressed="${id===first}"><small>0${index+1}</small>${labels[id]}</button>`).join('')}</div><button class="primary" id="intro-continue">Continue to chat →</button><p class="footnote">Your own space for questions and conversation.</p></section>`;
   const video=app.querySelector('video');
@@ -262,7 +281,7 @@ async function boot() {
   }catch(error){app.innerHTML=`<section class="loading"><h1>A quiet pause.</h1><p>${esc(error.message)}</p><button class="primary" id="reload">Try again</button></section>`;app.querySelector('#reload').onclick=boot;}
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(stage==='chat')outbox.resume({retryUncertain:true});refresh();}});
-window.addEventListener('online',()=>{if(stage==='chat')outbox.resume({retryUncertain:true});refresh();});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&stage==='chat')outbox.resume({retryUncertain:true});});
+window.addEventListener('online',()=>{if(stage==='chat')outbox.resume({retryUncertain:true});});
 window.addEventListener('beforeunload',event=>{if(outbox.isPending()||messaging?.hasContent()||messaging?.hasLiveCapture?.()||composerDraft&&(composerDraft.body||composerDraft.attachments?.length)){event.preventDefault();event.returnValue='';}});
 boot();

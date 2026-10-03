@@ -2,7 +2,7 @@ plugins { id 'com.android.application' version '8.9.1' }
 android {
     namespace 'in.rekhaastrology.astrorani'
     compileSdk 36
-    defaultConfig { applicationId 'in.rekhaastrology.astrorani'; minSdk 26; targetSdk 35; versionCode 7; versionName '0.8.0-preview' }
+    defaultConfig { applicationId 'in.rekhaastrology.astrorani'; minSdk 26; targetSdk 35; versionCode 8; versionName '0.9.0-preview' }
     sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs = ['src']; res.srcDirs = ['res'] } }
     buildFeatures { buildConfig true }
     buildTypes { release { minifyEnabled false } }

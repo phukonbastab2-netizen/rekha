@@ -2,15 +2,18 @@
 // Keep its clientId until a private server view confirms that same message.
 export function mergeServerChat(previous,next){
   if(!next||!Array.isArray(next.messages)||previous&&next.id!==previous.id)return previous;
-  const version=Number(next.version)||0,previousVersion=Number(previous?.version)||0,updated=Number(next.updated)||0,previousUpdated=Number(previous?.updated)||0,newest=next.messages.reduce((id,m)=>Math.max(id,Number(m.id)||0),0),previousNewest=(previous?.messages||[]).reduce((id,m)=>Math.max(id,Number(m.id)||0),0),stale=previous&&(version<previousVersion||version===previousVersion&&(updated<previousUpdated||updated===previousUpdated&&newest<previousNewest)),incoming=new Map(next.messages.map(m=>[m.id,m]));
+  const version=Number(next.version)||0,previousVersion=Number(previous?.version)||0,updated=Number(next.updated)||0,previousUpdated=Number(previous?.updated)||0,newest=next.messages.reduce((id,m)=>Math.max(id,Number(m.id)||0),0),previousNewest=(previous?.messages||[]).reduce((id,m)=>Math.max(id,Number(m.id)||0),0),stale=previous&&(version<previousVersion||version===previousVersion&&(updated<previousUpdated||next.historyComplete!==false&&updated===previousUpdated&&newest<previousNewest)),incoming=new Map(next.messages.map(m=>[m.id,m]));
   for(const message of previous?.messages||[]){
     const fresh=incoming.get(message.id);
-    if(stale||!fresh)incoming.set(message.id,fresh?.readByOther===true&&message.readByOther!==true?{...message,readByOther:true}:message);
+    const nextRevision=Number(fresh?.changeRevision??fresh?.change_revision),oldRevision=Number(message.changeRevision??message.change_revision),hasRowVersions=Number.isSafeInteger(nextRevision)&&Number.isSafeInteger(oldRevision),newerRow=hasRowVersions&&nextRevision>oldRevision,olderRow=hasRowVersions&&nextRevision<oldRevision;
+    if((stale&&!newerRow)||olderRow||!fresh)incoming.set(message.id,fresh?.readByOther===true&&message.readByOther!==true?{...message,readByOther:true}:message);
     // A private read cursor only advances. Its writes do not change version,
     // so an equal-version view may be older than the receipt already displayed.
     else if(message.readByOther===true&&fresh.readByOther!==true)incoming.set(message.id,{...fresh,readByOther:true});
   }
-  return{...(stale?previous:next),messages:[...incoming.values()].sort((a,b)=>a.id-b.id)};
+  const metadata={...(stale?previous:next)};
+  if(previous&&Number.isSafeInteger(Number(next.inboxRevision))&&Number.isSafeInteger(Number(previous.inboxRevision))){const settings=Number(next.inboxRevision)<Number(previous.inboxRevision)?previous:next;for(const key of ['inboxRevision','pinned','archived','blocked','labels','notes'])if(key in settings)metadata[key]=settings[key];}
+  return{...metadata,messages:[...incoming.values()].sort((a,b)=>a.id-b.id)};
 }
 export function createSendQueue({send,onChange=()=>{},onAck=()=>{},onConfirmed=()=>{},onError=()=>{},online=()=>true,now=()=>Date.now()}){
   const records=new Map();let active=null,paused=false,scheduled=false;

@@ -1,3 +1,4 @@
+import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 // Local transient-failure regression. No cloud requests, credentials or persistent data.
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
@@ -11,7 +12,8 @@ const hook = 'async function onCustomerMessage(chat,message){await flowOnCustome
 assert.ok(source.includes(hook), 'The current worker must have the customer workflow hook.');
 source = 'let fixtureHookFailed=false,fixtureBackgroundFailed=false;\n' + source.replace(hook,
   "async function onCustomerMessage(chat,message){if(!fixtureHookFailed){fixtureHookFailed=true;throw Error('Local injected transient hook failure');}await flowOnCustomer");
-source=source.replace('const work=Promise.resolve().then(async()=>{await recoverWorkflowMessages',"const work=Promise.resolve().then(async()=>{if(!fixtureBackgroundFailed){fixtureBackgroundFailed=true;throw Error('Local interrupted background fixture');}await recoverWorkflowMessages");
+const backgroundHook='const run=async()=>{';assert.ok(source.includes(backgroundHook),'The current worker must have its deferred background callback.');
+source=source.replace(backgroundHook,"const run=async()=>{if(!fixtureBackgroundFailed){fixtureBackgroundFailed=true;throw Error('Local interrupted background fixture');}");
 const mf = new Miniflare(convertV4MiniflareOptions({
   modules: true, script: source, compatibilityDate: '2026-09-24',
   d1Databases: { DB: 'workflow-retry-test' }, r2Buckets: { MEDIA: 'workflow-retry-media' },
@@ -20,7 +22,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
 console.log('Local workflow retry fixture starting.');
 try {
   const db = await mf.getD1Database('DB');
-  for (const sql of fs.readFileSync(root + 'cloudflare/schema.sql', 'utf8').split(';').filter(value => value.trim())) await db.prepare(sql).run();
+  for (const sql of splitSqlStatements(fs.readFileSync(root + 'cloudflare/schema.sql', 'utf8'))) await db.prepare(sql).run();
   const config = {
     enabled: true, paymentEnabled: false, revision: 1,
     timings: { firstDelayMs: 5000, itemGapMs: 5000, reminderDelayMs: 60000, mediaDelayMs: 3600000 }, assets: {},
