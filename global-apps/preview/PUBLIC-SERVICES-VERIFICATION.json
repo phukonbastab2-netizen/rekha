@@ -2,109 +2,121 @@
   {
     "id": "luna-harbor",
     "url": "https://rekha-luna-harbor.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "willow-moon",
     "url": "https://rekha-willow-moon.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "southern-star",
     "url": "https://rekha-southern-star.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "siam-dao",
     "url": "https://rekha-siam-dao.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "nyota-path",
     "url": "https://rekha-nyota-path.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "tala-guide",
     "url": "https://rekha-tala-guide.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "orion-naija",
     "url": "https://rekha-orion-naija.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "byeol-saju",
     "url": "https://rekha-byeol-saju.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "serendib-stars",
     "url": "https://rekha-serendib-stars.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "hoshi-note",
     "url": "https://rekha-hoshi-note.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "xing-light",
     "url": "https://rekha-xing-light.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   },
   {
     "id": "csillag-ut",
     "url": "https://rekha-csillag-ut.phukonbastab2.workers.dev/",
-    "build": "global-1.3.1-connected",
+    "build": "global-1.3.2-connected",
     "healthStatus": 200,
     "callClientMatches": true,
+    "voiceRelayAssetsMatch": true,
     "ownerLinkPresent": true,
-    "verifiedAt": "2026-10-03T03:31:15.595Z"
+    "verifiedAt": "2026-10-03T04:57:28.717Z"
   }
 ]
