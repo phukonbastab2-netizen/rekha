@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.3-preview",
+  "version": "0.9.4-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -71,6 +71,7 @@
     "public/chat-sounds.js",
     "public/chat.css",
     "public/contact.html",
+    "public/countdown.js",
     "public/data-deletion.html",
     "public/device-chat-store.js",
     "public/disclaimer.html",
@@ -121,6 +122,7 @@
     "src/server.mjs",
     "tests/app.test.mjs",
     "tests/chat-sounds.test.mjs",
+    "tests/countdown.test.mjs",
     "tests/device-chat-store.test.mjs",
     "tests/editor-integration.mjs",
     "tests/permissions.test.mjs",

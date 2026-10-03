@@ -1,3 +1,4 @@
+import {kundliWaitBody,bindCountdowns} from './countdown.js';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const bindings=new WeakMap();let viewerNumber=0;
 export function mediaItems(message){try{const data=JSON.parse(message.body);return message.kind==='media'&&Array.isArray(data.items)?data.items:[];}catch{return [];}}
@@ -25,6 +26,7 @@ function mediaCard(item,index,total){
 }
 export function messageBody(message){
   if(message.deleted)return '<span class="deleted-message">This message was deleted</span>';
+  if(message.kind==='kundli-wait')return kundliWaitBody(message);
   if(message.kind!=='media')return escape(message.body);
   try{const data=JSON.parse(message.body);if(!Array.isArray(data.items))throw Error();
     const title=data.title?`<h3>${escape(data.title)}</h3>`:'',collection=data.items.length>1?`<div class="media-collection-head"><span>${data.items.length} attachments · in order</span><button type="button" data-open-collection>View collection</button></div>`:'';
@@ -74,7 +76,7 @@ function openViewer(collection,start,binding){
 // Preserve player nodes during receipt/reaction updates; restore ordered search results.
 export function syncThread(container,html){
   const binding=bindMedia(container);
-  if(typeof html==='string'&&binding.lastHTML===html)return binding;
+  if(typeof html==='string'&&binding.lastHTML===html){bindCountdowns(container);return binding;}
   const keyed=Array.isArray(html),template=document.createElement('template');
   if(!keyed)template.innerHTML=html;
   const fragments=keyed?html:[...template.content.children].map(node=>({id:node.dataset.message,html:node.outerHTML,node}));
@@ -93,5 +95,6 @@ export function syncThread(container,html){
   for(const el of old.values()){stopPlayers(el);el.remove();}
   for(const node of changed)for(const card of node.querySelectorAll('.media-card')){const player=card.querySelector('audio,video'),image=card.querySelector('img');if(player?.error||image?.complete&&!image.naturalWidth)statusOf(card,true);else if(player?.readyState>=1){const formatted=duration(player.duration),target=card.querySelector('.media-duration');if(target)target.textContent=formatted?' · '+formatted:'';}}
   binding.markup=nextMarkup;binding.lastHTML=keyed?null:html;
+  bindCountdowns(container);
   return binding;
 }

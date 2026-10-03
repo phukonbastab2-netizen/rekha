@@ -262,7 +262,7 @@ async function messagingOwnerSend(ctx){
     stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND "+guard,chat.id,answerId??-1,...guardArgs),
     stmt('DELETE FROM drafts WHERE conversation_id=? AND '+guard,chat.id,...guardArgs),
     ...(library.length?[stmt('INSERT OR IGNORE INTO media_grants(conversation_id,media_id) SELECT ?,value FROM json_each(?) WHERE '+guard,chat.id,JSON.stringify(library.map(item=>item.id)),...guardArgs)]:[]),
-    stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media')) WHERE id=? AND "+guard,chat.id,chat.id,...guardArgs),
+    stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait')) WHERE id=? AND "+guard,chat.id,chat.id,...guardArgs),
     stmt('UPDATE chat_messaging SET owner_typing=0 WHERE conversation_id=? AND '+guard,chat.id,...guardArgs),
     stmt("UPDATE conversations SET mode=CASE WHEN mode='ai' THEN 'manual' ELSE mode END,version=version+1,updated=? WHERE id=? AND "+guard,now,chat.id,...guardArgs),
   ]);
