@@ -4,9 +4,9 @@ Twelve independently branded astrology-themed web apps and connected Android cus
 
 **Start here:** [Apps and customer APKs](https://rekhaastrology.in/global-apps/preview/) · [Owner control centre](https://rekhaastrology.in/global-apps/preview/control.html) · [Admin Android APK](https://rekhaastrology.in/global-apps/preview/apks/rekha-global-admin.apk) · [Connected deployment](docs/CONNECTED-DEPLOYMENT.md)
 
-All 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`; their owner panels are at `/admin`. The collection also keeps separate offline web demos. APK 1.3.2-connected (versionCode 6) loads the live service, so messaging needs an internet connection. Preserve existing customer package IDs and the signing key for updates.
+All 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`; their owner panels are at `/admin`. The collection also keeps separate offline web demos. APK 1.3.3-connected (versionCode 7) loads the live service, so messaging needs an internet connection. Preserve existing customer package IDs and the signing key for updates.
 
-Release 1.3.2 adds a private voice relay through the existing backend, bounded audio startup and recovery controls for interrupted audio. It retains the communication-audio permission, playback recovery and two-minute participant leases. It includes 12 customer APKs and one admin APK. See [release notes](docs/RELEASE-NOTES-1.3.2.md), [relay details](docs/VOICE-RELAY.md), [phone test steps](docs/PHONE-CALL-TEST.md) and [verification](docs/VERIFICATION.md).
+Release 1.3.3 adds automatic recovery from brief voice-connection drops, receive volume, connected time, clearer microphone warnings and Android speaker/phone-audio controls. The mobile call panel scrolls to keep its controls accessible. It retains the private voice relay, four existing permissions and two-minute participant leases. It includes 12 customer APKs and one admin APK. See [release notes](docs/RELEASE-NOTES-1.3.3.md), [relay details](docs/VOICE-RELAY.md), [phone test steps](docs/PHONE-CALL-TEST.md) and [verification](docs/VERIFICATION.md).
 
 Replies are manual. Live AI, real payments and voice cloning are disabled. Voice calls use the authenticated app relay when configured; video retains WebRTC and may need TURN. Audio passes through the app server over encrypted connections and is not recorded or end-to-end encrypted. Calls need both apps open. Physical phone audio remains untested.
 
@@ -49,6 +49,8 @@ Change a file through GitHub's pencil button, commit it, then rebuild with the s
 ## Run and rebuild
 
 Requires Node.js 24+ (the full Node distribution includes npm).
+
+The native audio tests also require JDK 17 and Android SDK 36. Set `JAVA_HOME` and `ANDROID_HOME` to those installed tools before running the complete suite.
 
 ```sh
 npm install

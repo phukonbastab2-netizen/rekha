@@ -5,9 +5,18 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Bitmap;
+import android.media.AudioAttributes;
+import android.media.AudioDeviceInfo;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.webkit.JsPromptResult;
 import android.webkit.PermissionRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
@@ -27,11 +36,14 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import org.json.JSONObject;
 
 /** Customer builds stay on their service; the owner build can open the twelve private inboxes. */
 public final class MainActivity extends Activity {
   private static final int MEDIA_PERMISSION = 41;
   private static final int FILE_PICKER = 42;
+  private static final String AUDIO_BRIDGE = "rekha-global-audio/1";
   private static final String HOST = Uri.parse(BuildConfig.LIVE_URL).getHost();
   private static final Set<String> OWNER_HOSTS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
       "rekhaastrology.in",
@@ -52,6 +64,146 @@ public final class MainActivity extends Activity {
   private PermissionRequest pendingPermission;
   private ValueCallback<Uri[]> fileCallback;
   private String fileOrigin;
+  private RoutingSession callAudio;
+  private boolean foreground;
+  private boolean destroyed;
+
+  // BEGIN TESTABLE AUDIO CORE. These classes run unchanged in the JVM verification harness.
+  interface AudioPort {
+    int mode();
+    void mode(int value);
+    boolean speaker();
+    void legacySpeaker(boolean enabled);
+    boolean modern();
+    boolean selectSpeaker();
+    void clearSelection();
+    boolean requestFocus();
+    void abandonFocus();
+  }
+
+  static final class AudioReply {
+    final boolean ok, active, speaker;
+    final String nonce, error;
+    AudioReply(boolean ok, boolean active, boolean speaker, String nonce, String error) {
+      this.ok=ok;this.active=active;this.speaker=speaker;this.nonce=nonce;this.error=error;
+    }
+  }
+
+  static final class RoutingSession {
+    private static final int COMMUNICATION_MODE = 3;
+    private static final int PHONE_CALL_MODE = 2, CALL_SCREENING_MODE = 4;
+    private final AudioPort audio;
+    private String pageOrigin, nonce, callId;
+    private boolean active, saved, priorSpeaker, changedMode, changedRoute, requestedFocus;
+    private int priorMode;
+    RoutingSession(AudioPort audio) { this.audio=audio; }
+    String nonce() { return nonce; }
+    String callId() { return callId; }
+    boolean active() { return active; }
+    void newPage(String pageOrigin) { end();this.pageOrigin=pageOrigin;nonce=UUID.randomUUID().toString(); }
+    private AudioReply reply(boolean ok, String error, boolean capability) {
+      boolean speaker=false;try { if(active) speaker=audio.speaker(); } catch(RuntimeException ignored) {}
+      return new AudioReply(ok,active,speaker,capability?nonce:null,error);
+    }
+    AudioReply request(String sourceOrigin,String currentOrigin,String command,String suppliedNonce,String id,Boolean value,boolean permission,boolean foreground) {
+      if(pageOrigin==null||!pageOrigin.equals(sourceOrigin)||!pageOrigin.equals(currentOrigin)) return reply(false,"Open call controls from this app's current page.",false);
+      if("capabilities".equals(command)) return reply(true,null,true);
+      if(nonce==null||!nonce.equals(suppliedNonce)||id==null||!id.matches("[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}")||value==null) return reply(false,"The call controls are out of date. Reopen the call.",false);
+      if("onCallState".equals(command)) {
+        if(!value) {
+          if(active&&!id.equals(callId)) return reply(false,"This call is no longer current.",false);
+          end();return reply(true,null,false);
+        }
+        if(active&&!id.equals(callId)) return reply(false,"Another call is current.",false);
+        if(!permission||!foreground) { end();return reply(false,"Allow microphone access and keep this app open.",false); }
+        if(active) return reply(true,null,false);
+        try {
+          priorMode=audio.mode();
+          if(priorMode==PHONE_CALL_MODE||priorMode==CALL_SCREENING_MODE) return reply(false,"Phone audio is busy with another call. Try again when it ends.",false);
+          priorSpeaker=audio.speaker();saved=true;requestedFocus=true;
+          if(!audio.requestFocus()) { end();return reply(false,"Phone audio is busy. Try the call audio control again.",false); }
+          if(priorMode!=COMMUNICATION_MODE) { changedMode=true;audio.mode(COMMUNICATION_MODE); }
+          callId=id;active=true;return reply(true,null,false);
+        } catch(RuntimeException ignored) { end();return reply(false,"Phone call audio could not start.",false); }
+      }
+      if(!"setSpeakerphone".equals(command)) return reply(false,"Unsupported call audio command.",false);
+      if(!active||!id.equals(callId)) return reply(false,"Answer the current call before changing phone audio.",false);
+      if(!permission||!foreground) { end();return reply(false,"Allow microphone access and keep this app open.",false); }
+      try {
+        if(audio.modern()) {
+          if(value) { changedRoute=true;if(!audio.selectSpeaker()) return reply(false,"Speaker is unavailable on this phone.",false); }
+          else { audio.clearSelection();changedRoute=false; }
+        } else { changedRoute=true;audio.legacySpeaker(value); }
+        if(value&&!audio.speaker()) return reply(false,"Speaker routing was not accepted by this phone.",false);
+        return reply(true,null,false);
+      } catch(RuntimeException ignored) { return reply(false,"Phone audio could not change. Try again.",false); }
+    }
+    void end() {
+      active=false;callId=null;
+      // Clear only this app's request. Platform routing resumes, including an existing headset.
+      if(saved) {
+        try { if(changedRoute) { if(audio.modern()) audio.clearSelection();else if(audio.mode()==COMMUNICATION_MODE) audio.legacySpeaker(priorSpeaker); } } catch(RuntimeException ignored) {}
+        try { if(changedMode&&audio.mode()==COMMUNICATION_MODE) audio.mode(priorMode); } catch(RuntimeException ignored) {}
+      }
+      if(requestedFocus) { try { audio.abandonFocus(); } catch(RuntimeException ignored) {} }
+      saved=changedMode=changedRoute=requestedFocus=false;
+    }
+  }
+  // END TESTABLE AUDIO CORE.
+
+  private final class AndroidAudioPort implements AudioPort {
+    private final AudioManager manager=(AudioManager)getSystemService(AUDIO_SERVICE);
+    private AudioFocusRequest focus;
+    private long focusGeneration;
+    public int mode() { return manager.getMode(); }
+    public void mode(int value) { manager.setMode(value); }
+    public boolean modern() { return Build.VERSION.SDK_INT>=31; }
+    public boolean speaker() {
+      if(!modern()) return manager.isSpeakerphoneOn();
+      AudioDeviceInfo device=manager.getCommunicationDevice();
+      return device!=null&&device.getType()==AudioDeviceInfo.TYPE_BUILTIN_SPEAKER;
+    }
+    public void legacySpeaker(boolean enabled) { manager.setSpeakerphoneOn(enabled); }
+    public boolean selectSpeaker() {
+      for(AudioDeviceInfo device:manager.getAvailableCommunicationDevices()) {
+        if(device.isSink()&&device.getType()==AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) return manager.setCommunicationDevice(device);
+      }
+      return false;
+    }
+    public void clearSelection() { manager.clearCommunicationDevice(); }
+    public boolean requestFocus() {
+      final long generation=++focusGeneration;
+      focus=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+          .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+          .setAcceptsDelayedFocusGain(false).setOnAudioFocusChangeListener(change->{
+            if(generation==focusGeneration&&(change==AudioManager.AUDIOFOCUS_LOSS||change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT||change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK)) interruptCallAudio();
+          },new Handler(Looper.getMainLooper())).build();
+      return manager.requestAudioFocus(focus)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+    }
+    public void abandonFocus() { focusGeneration++;if(focus!=null) { AudioFocusRequest previous=focus;focus=null;manager.abandonAudioFocusRequest(previous); } }
+  }
+
+  private String audioOrigin(Uri uri) {
+    String result=origin(uri);
+    return result!=null&&OWNER_HOSTS.contains(uri.getHost())&&!"rekhaastrology.in".equals(uri.getHost())?result:null;
+  }
+
+  private String audioReply(AudioReply reply) {
+    JSONObject data=new JSONObject();
+    try { data.put("ok",reply.ok);data.put("active",reply.active);data.put("speaker",reply.speaker);if(reply.nonce!=null)data.put("nonce",reply.nonce);if(reply.error!=null)data.put("error",reply.error); }
+    catch(Exception ignored) { return "{\"ok\":false}"; }
+    return data.toString();
+  }
+
+  private void interruptCallAudio() {
+    if(callAudio==null||!callAudio.active()) return;
+    String nonce=callAudio.nonce(),id=callAudio.callId(),page=currentOrigin();callAudio.end();
+    if(destroyed||page==null) return;
+    JSONObject detail=new JSONObject();
+    try { detail.put("nonce",nonce);detail.put("callId",id);detail.put("active",false);detail.put("speaker",false);detail.put("error","Call audio was interrupted. Tap Phone audio or Speaker to resume."); }
+    catch(Exception ignored) { return; }
+    web.evaluateJavascript("if(location.origin==="+JSONObject.quote(page)+")document.dispatchEvent(new CustomEvent('rekha-native-audio',{detail:"+detail+"}));",null);
+  }
 
   private static boolean allowedUrl(Uri uri) {
     if (uri == null || !"https".equals(uri.getScheme()) || uri.getUserInfo() != null
@@ -65,7 +217,7 @@ public final class MainActivity extends Activity {
   }
 
   private String currentOrigin() {
-    return web.getUrl() == null ? null : origin(Uri.parse(web.getUrl()));
+    return web == null || web.getUrl() == null ? null : origin(Uri.parse(web.getUrl()));
   }
 
   private boolean permissionOriginAllowed(PermissionRequest request) {
@@ -87,19 +239,36 @@ public final class MainActivity extends Activity {
     }
     // Grant only recognized resources; a future WebView capability is never implicitly approved.
     if (allowed.size() == request.getResources().length) request.grant(allowed.toArray(new String[0]));
-    else request.deny();
+    else { request.deny();interruptCallAudio(); }
   }
 
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
+    callAudio=new RoutingSession(new AndroidAudioPort());
     web = new WebView(this);
     web.getSettings().setJavaScriptEnabled(true);
+    web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" "+AUDIO_BRIDGE);
     web.getSettings().setDomStorageEnabled(false);
     web.getSettings().setAllowFileAccess(false);
     web.getSettings().setAllowContentAccess(false);
     web.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW);
     web.getSettings().setMediaPlaybackRequiresUserGesture(false);
     web.setWebChromeClient(new WebChromeClient() {
+      @Override public boolean onJsPrompt(WebView view,String url,String message,String value,JsPromptResult result) {
+        if(!AUDIO_BRIDGE.equals(message)) return false;
+        AudioReply reply;
+        try {
+          if(destroyed||view!=web||value==null||value.length()>512) throw new IllegalArgumentException();
+          String source=audioOrigin(Uri.parse(url)),current=web.getUrl()==null?null:audioOrigin(Uri.parse(web.getUrl()));
+          JSONObject data=new JSONObject(value);
+          Object command=data.opt("command"),nonce=data.opt("nonce"),id=data.opt("callId");
+          if(!(command instanceof String)) throw new IllegalArgumentException();
+          Object flag=data.opt("onCallState".equals(command)?"active":"speaker");
+          reply=callAudio.request(source,current,(String)command,nonce instanceof String?(String)nonce:null,id instanceof String?(String)id:null,flag instanceof Boolean?(Boolean)flag:null,checkSelfPermission(Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED,foreground);
+        } catch(Exception ignored) { reply=new AudioReply(false,false,false,null,"Invalid call audio request."); }
+        result.confirm(audioReply(reply));return true;
+      }
+
       @Override public void onPermissionRequest(PermissionRequest request) {
         runOnUiThread(() -> {
           if (!permissionOriginAllowed(request) || pendingPermission != null) { request.deny(); return; }
@@ -117,7 +286,7 @@ public final class MainActivity extends Activity {
       }
 
       @Override public void onPermissionRequestCanceled(PermissionRequest request) {
-        if (pendingPermission == request) pendingPermission = null;
+        if (pendingPermission == request) { pendingPermission = null;interruptCallAudio(); }
       }
 
       @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
@@ -136,6 +305,11 @@ public final class MainActivity extends Activity {
       }
     });
     web.setWebViewClient(new WebViewClient() {
+      @Override public void onPageStarted(WebView view,String url,Bitmap favicon) {
+        callAudio.newPage(audioOrigin(Uri.parse(url)));
+        if(pendingPermission!=null) { pendingPermission.deny();pendingPermission=null; }
+        super.onPageStarted(view,url,favicon);
+      }
       @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
         return !allowedUrl(request.getUrl());
       }
@@ -189,6 +363,10 @@ public final class MainActivity extends Activity {
 
   @Override public void onBackPressed() { if (web.canGoBack()) web.goBack(); else super.onBackPressed(); }
 
+  @Override protected void onResume() { super.onResume();foreground=true; }
+
+  @Override protected void onStop() { foreground=false;interruptCallAudio();super.onStop(); }
+
   @Override public void onRequestPermissionsResult(int code, String[] permissions, int[] results) {
     super.onRequestPermissionsResult(code, permissions, results);
     if (code == MEDIA_PERMISSION) completePermission();
@@ -206,6 +384,8 @@ public final class MainActivity extends Activity {
   }
 
   @Override public void onDestroy() {
+    destroyed=true;foreground=false;
+    if(callAudio!=null)callAudio.end();
     if (pendingPermission != null) pendingPermission.deny();
     if (fileCallback != null) fileCallback.onReceiveValue(null);
     web.destroy();

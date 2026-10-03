@@ -1,8 +1,10 @@
-# Android 1.3.2-connected
+# Android 1.3.3-connected
 
-Version 1.3.2-connected (versionCode 6) includes 12 customer APKs and one **Rekha Global Admin** APK. Customer apps load their own live HTTPS services and preserve existing package IDs and the signing key. The admin package is `in.rekha.global.owner`; it opens [the owner control centre](https://rekhaastrology.in/global-apps/preview/control.html), where the owner chooses one of 12 inboxes and signs in with that app's existing private password. Its **Apps** button returns to the collection list. No password is bundled in an APK.
+Version 1.3.3-connected (versionCode 7) includes 12 customer APKs and one **Rekha Global Admin** APK. Customer apps load their own live HTTPS services and preserve existing package IDs and the signing key. The admin package is `in.rekha.global.owner`; it opens [the owner control centre](https://rekhaastrology.in/global-apps/preview/control.html), where the owner chooses one of 12 inboxes and signs in with that app's existing private password. Its **Apps** button returns to the collection list. No password is bundled in an APK.
 
-Build and signature-check results are recorded in [verification](VERIFICATION.md). Runtime device validation remains outstanding; builds and signature checks do not establish phone permission behavior or a successful call. See [release notes](RELEASE-NOTES-1.3.2.md).
+Build and signature-check results are recorded in [verification](VERIFICATION.md). Runtime device validation remains outstanding; builds and signature checks do not establish phone permission behavior or a successful call. See [release notes](RELEASE-NOTES-1.3.3.md).
+
+The latest call panel exposes Phone audio and Speaker on these APKs. The narrow native command checks the exact current app origin, a per-page nonce and current call ID; it requires foreground microphone permission. Navigation, call end and focus loss release this app's route/focus request and restore its prior mode. Ordinary browsers and older APKs do not invoke the native command. Android communication-device and audio-focus behavior still needs handset verification. See [Android routing documentation](https://developer.android.com/reference/android/media/AudioManager#setCommunicationDevice(android.media.AudioDeviceInfo)) and [audio focus](https://developer.android.com/media/optimize/audio-focus).
 
 ## Build customer and admin APKs
 

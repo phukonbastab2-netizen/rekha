@@ -20,7 +20,7 @@ export function bundleWorker(c,files){
  .replace("['en','hi','hinglish'].includes(data.language)",'APP_CONFIG.languages.includes(data.language)')
  .replace("generateReply({aiMode:'demo'},chat,await messages(id))","generateReply({aiMode:env.AI_MODE||'manual',aiBase:env.AI_BASE_URL,aiKey:env.AI_API_KEY,aiModel:env.AI_MODEL},chat,await messages(id))")
  .replace("{aiMode:'demo',paymentMode:'demo',freeTurns:3,amount:4900,retentionDays:30,rewardsEnabled:false}","{aiMode:env.AI_MODE||'manual',paymentMode:'demo',freeTurns:3,amount:0,currency:APP_CONFIG.currency,retentionDays:30,rewardsEnabled:false}")
- .replace("build:'rekha-workflow-0.5.1'","build:'global-1.3.2-connected',app:APP_CONFIG.id")
+ .replace("build:'rekha-workflow-0.5.1'","build:'global-1.3.3-connected',app:APP_CONFIG.id")
  .replace("const downloadHost=url.hostname==='rekhaastrology.in';","const downloadHost=false;")
  .replace("let asset=url.pathname;","let asset=url.pathname==='/'?'/index.html':url.pathname;")
  .replace('env.ASSETS.fetch(new Request(target,request))','staticAssetFetch(new Request(target,request))');

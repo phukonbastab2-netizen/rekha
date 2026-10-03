@@ -1,6 +1,6 @@
 # Connected deployment — 3 October 2026
 
-The 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`, with each owner inbox at `/admin`. The collection hub links to all services. Android 1.3.2-connected (versionCode 6) has 12 customer builds using their compiled HTTPS addresses and one Rekha Global Admin build opening the owner control centre. Original customer package IDs and the signing certificate are preserved for updates. Physical-device validation remains outstanding.
+The 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`, with each owner inbox at `/admin`. The collection hub links to all services. Android 1.3.3-connected (versionCode 7) has 12 customer builds using their compiled HTTPS addresses and one Rekha Global Admin build opening the owner control centre. Original customer package IDs and the signing certificate are preserved for updates. Physical-device validation remains outstanding.
 
 ## Infrastructure
 

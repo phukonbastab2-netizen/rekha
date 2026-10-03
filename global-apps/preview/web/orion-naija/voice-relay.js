@@ -1,16 +1,20 @@
 // Audio travels only through the current app's authenticated private call socket.
-export function createVoiceRelay({stream,url,onState=()=>{},onError=()=>{},timeoutMs=5000}) {
+export function createVoiceRelay({stream,url,onState=()=>{},onError=()=>{},onEnded=()=>{},timeoutMs=5000}) {
   const deadline=Number.isFinite(timeoutMs)?Math.max(40,timeoutMs):5000;
-  let context=null,socket=null,processor=null,source=null,closed=false,closePromise=null,readySettled=false,peerConnected=false;
-  let desiredStream=stream,sourceGeneration=0,heartbeat=null,startupTimer=null,connectionState='waiting';
+  let context=null,socket=null,processor=null,source=null,output=null,closed=false,ending=false,closePromise=null,readySettled=false,peerConnected=false;
+  let desiredStream=stream,desiredVolume=1,sourceGeneration=0,heartbeat=null,startupTimer=null,connectionState=null,targetHref=null;
+  let socketGeneration=0,socketRetryClosing=false,retryTimer=null,retryWindowTimer=null,socketTimer=null,retryUntil=0,retryAttempts=0;
+  let lastCaptureAt=-Infinity;
+  const retryDelays=[250,750,1500,3000],joinTimes=[],transientCodes=new Set([1001,1005,1006,1011,1012,1013]);
+  const endReasons=new Set(['completed','cancelled','declined','expired','blocked','connection-failed']);
   const subscribers=new Set(),pending=new Set(),received=[];
   let resolveReady,rejectReady;
   const readyPromise=new Promise((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});
   readyPromise.catch(()=>{});
   const error=(code,message)=>Object.assign(new Error(message),{code});
   const audioState=()=>closed?'closed':context?.state||'suspended';
-  const notifyState=value=>{connectionState=value;try{onState(value);}catch{}};
-  const updateProcessor=()=>{if(processor&&!closed){processor.port.postMessage({type:'state',active:peerConnected,paused:context.state!=='running'});if(context.state==='running')for(const pcm of received.splice(0))processor.port.postMessage({type:'playback',pcm},[pcm]);}};
+  const notifyState=value=>{if(connectionState===value)return;connectionState=value;try{onState(value);}catch{}};
+  const updateProcessor=()=>{if(processor&&!closed){processor.port.postMessage({type:'state',active:peerConnected,paused:context.state!=='running'});if(peerConnected&&context.state==='running')for(const pcm of received.splice(0))processor.port.postMessage({type:'playback',pcm},[pcm]);}};
   const audioChanged=()=>{if(closed)return;updateProcessor();for(const listener of [...subscribers]){try{listener(audioState());}catch{}}};
   function bounded(operation,code,message) {
     return new Promise((resolve,reject)=>{
@@ -49,15 +53,33 @@ export function createVoiceRelay({stream,url,onState=()=>{},onError=()=>{},timeo
     if(generation!==sourceGeneration)return;
     attachStream(value);
   }
+  function setVolume(value) {
+    if(closed)return desiredVolume;
+    if(typeof value!=='number'||!Number.isFinite(value))throw new TypeError('Call volume must be a finite number.');
+    desiredVolume=Math.max(0,Math.min(1,value));
+    if(output)output.gain.value=desiredVolume;
+    return desiredVolume;
+  }
+  function clearRecovery() {
+    clearTimeout(retryTimer);clearTimeout(retryWindowTimer);clearTimeout(socketTimer);
+    retryTimer=retryWindowTimer=socketTimer=null;retryUntil=0;retryAttempts=0;
+  }
+  function detachSocket(value,shouldClose=false) {
+    if(!value)return;
+    value.onopen=value.onmessage=value.onerror=value.onclose=null;
+    if(shouldClose)try{value.close(1000,'Call closed');}catch{}
+  }
   function close() {
     if(closed)return closePromise||Promise.resolve();
-    closed=true;sourceGeneration++;clearTimeout(startupTimer);clearInterval(heartbeat);subscribers.clear();received.length=0;
+    closed=true;sourceGeneration++;socketGeneration++;clearTimeout(startupTimer);clearInterval(heartbeat);clearRecovery();subscribers.clear();received.length=0;
     if(context){try{context.removeEventListener('statechange',audioChanged);}catch{}}
     for(const cancel of [...pending])cancel();
+    openedReject(error('VOICE_RELAY_CLOSED','The call audio relay has closed.'));
     if(!readySettled){readySettled=true;rejectReady(error('VOICE_RELAY_CLOSED','The call audio relay has closed.'));}
     if(processor){processor.port.onmessage=null;try{processor.port.postMessage({type:'close'});}catch{}try{processor.disconnect();}catch{}try{processor.port.close();}catch{}}
+    try{output?.disconnect();}catch{}
     try{source?.disconnect();}catch{}
-    if(socket){socket.onopen=socket.onmessage=socket.onerror=socket.onclose=null;try{socket.close(1000,'Call closed');}catch{}}
+    detachSocket(socket,true);socket=null;
     notifyState('disconnected');
     closePromise=new Promise(resolve=>{let settled=false;const finish=()=>{if(settled)return;settled=true;clearTimeout(timer);resolve();};const timer=setTimeout(finish,deadline);let result;try{result=context?.close();}catch{finish();return;}Promise.resolve(result).then(finish,finish);});
     return closePromise;
@@ -74,6 +96,102 @@ export function createVoiceRelay({stream,url,onState=()=>{},onError=()=>{},timeo
     if(processor&&context.state==='running')processor.port.postMessage({type:'playback',pcm},[pcm]);
     else{received.push(pcm);if(received.length>6)received.shift();}
   }
+  function pauseTransport() {
+    peerConnected=false;received.length=0;lastCaptureAt=-Infinity;clearInterval(heartbeat);heartbeat=null;
+    // active:false clears both partial capture and queued remote playback in
+    // the existing worklet; no old audio is replayed after a new socket joins.
+    updateProcessor();notifyState('waiting');
+  }
+  function startHeartbeat() {
+    if(closed||heartbeat!==null)return;
+    heartbeat=setInterval(()=>{
+      if(!closed&&socket?.readyState===1&&socket.bufferedAmount<65536)try{socket.send('ping');}catch{transportError(socket);}
+    },15000);
+  }
+  function beginRecovery() {
+    if(closed)return false;
+    if(!retryUntil){
+      retryUntil=Date.now()+15000;retryAttempts=0;
+      retryWindowTimer=setTimeout(()=>fail(error('VOICE_RELAY_RECONNECT','The call could not reconnect. Check the network and call again.')),15000);
+    }
+    pauseTransport();return !closed;
+  }
+  function retrySocket() {
+    if(!beginRecovery()||retryTimer!==null)return;
+    if(retryAttempts>=retryDelays.length||Date.now()>=retryUntil){fail(error('VOICE_RELAY_RECONNECT','The call could not reconnect. Check the network and call again.'));return;}
+    const delay=retryDelays[retryAttempts++];
+    if(Date.now()+delay>=retryUntil)return; // the fixed window timer finishes it
+    retryTimer=setTimeout(()=>{retryTimer=null;if(!closed)openSocket(false);},delay);
+  }
+  function transportError(value) {
+    if(closed||value!==socket)return;
+    if(!readySettled){fail(error('VOICE_RELAY_SOCKET','The private call audio connection failed.'));return;}
+    if(!beginRecovery())return;
+    // Browser errors hide upgrade HTTP status. Wait for CLOSED before another
+    // socket: that prevents two sockets claiming the same private call role.
+    socketRetryClosing=true;
+    clearTimeout(socketTimer);
+    socketTimer=setTimeout(()=>{if(!closed&&socket===value)fail(error('VOICE_RELAY_RECONNECT','The call audio connection stopped responding. Please call again.'));},Math.max(1,Math.min(3000,retryUntil-Date.now())));
+    if(value.readyState<2)try{value.close(1000,'Reconnect call audio');}catch{}
+  }
+  let openedResolve,openedReject;
+  const opened=new Promise((resolve,reject)=>{openedResolve=resolve;openedReject=reject;});
+  opened.catch(()=>{});
+  function openSocket(initial) {
+    if(closed)return;
+    if(socket&&socket.readyState!==3){fail(error('VOICE_RELAY_RECONNECT','The previous call audio connection has not closed.'));return;}
+    const now=Date.now();while(joinTimes.length&&now-joinTimes[0]>=60000)joinTimes.shift();
+    // Match the server's six joins per minute, including the initial join.
+    if(joinTimes.length>=6){fail(error('VOICE_RELAY_RECONNECT','The call connection changed too often. Wait a moment and call again.'));return;}
+    joinTimes.push(now);
+    let value;
+    try{value=new WebSocket(targetHref);}catch{
+      if(initial)fail(error('VOICE_RELAY_SOCKET','The private call audio connection failed.'));else retrySocket();
+      return;
+    }
+    socket=value;socketRetryClosing=false;const generation=++socketGeneration;
+    const current=()=>!closed&&socket===value&&socketGeneration===generation;
+    value.binaryType='arraybuffer';
+    value.onopen=()=>{
+      if(!current())return;clearTimeout(socketTimer);socketTimer=null;
+      if(initial)openedResolve();else startHeartbeat();
+    };
+    value.onerror=()=>{if(current())transportError(value);};
+    value.onclose=event=>{
+      if(!current())return;
+      clearTimeout(socketTimer);socketTimer=null;
+      const code=Number.isInteger(event?.code)?event.code:1006;
+      const retryable=transientCodes.has(code)||socketRetryClosing&&code===1000;
+      detachSocket(value);socket=null;socketGeneration++;
+      if(initial&&!readySettled){openedReject(error('VOICE_RELAY_SOCKET','The private call audio connection closed.'));fail(error('VOICE_RELAY_SOCKET','The private call audio connection closed.'));}
+      else if(!retryable)close();
+      else retrySocket();
+    };
+    value.onmessage=event=>{
+      if(!current()||value.readyState!==1)return;
+      if(event.data instanceof ArrayBuffer){receiveFrame(event.data);return;}
+      if(event.data==='pong')return;
+      if(typeof event.data!=='string'){fail(error('VOICE_RELAY_FRAME','The call relay received an invalid audio frame.'));return;}
+      let message;try{message=JSON.parse(event.data);}catch{fail(error('VOICE_RELAY_CONTROL','The private call audio connection returned an invalid response.'));return;}
+      if(message.type==='peer'&&typeof message.connected==='boolean'){
+        peerConnected=message.connected;
+        if(peerConnected)clearRecovery();else{received.length=0;lastCaptureAt=-Infinity;}
+        updateProcessor();notifyState(peerConnected?'connected':'waiting');
+      } else if(message.type==='ended'&&!ending){
+        ending=true;const reason=typeof message.reason==='string'&&endReasons.has(message.reason)?message.reason:'completed';
+        // Let the call UI finish normally before disconnected triggers cleanup.
+        // Its callback may close this helper reentrantly or throw; either way
+        // socket and audio teardown must still happen exactly once.
+        try{onEnded(reason);}catch{}finally{close();}
+      }
+    };
+    if(!initial)socketTimer=setTimeout(()=>{
+      if(!current())return;
+      socketRetryClosing=true;
+      try{value.close(1000,'Reconnect call audio');}catch{}
+      // Wait for its close event; the overall window remains the hard bound.
+    },Math.max(1,Math.min(deadline,3000,retryUntil-Date.now())));
+  }
   try {
     const current=new URL(location.href),target=new URL(url,current);
     const local=['localhost','127.0.0.1','[::1]'].includes(current.hostname);
@@ -85,32 +203,29 @@ export function createVoiceRelay({stream,url,onState=()=>{},onError=()=>{},timeo
     running.catch(()=>{});
     const module=bounded(()=>context.audioWorklet.addModule(new URL('./voice-relay-worklet.js',import.meta.url)),'VOICE_RELAY_MODULE','Call audio support could not load. Check the connection and try again.');
     module.catch(()=>{});
-    let openedResolve,openedReject;const opened=new Promise((resolve,reject)=>{openedResolve=resolve;openedReject=reject;});
-    opened.catch(()=>{});
-    socket=new WebSocket(target.href);socket.binaryType='arraybuffer';
-    socket.onopen=()=>{if(!closed)openedResolve();};
-    socket.onerror=()=>{if(closed)return;openedReject(error('VOICE_RELAY_SOCKET','The private call audio connection failed.'));fail(error('VOICE_RELAY_SOCKET','The private call audio connection failed.'));};
-    socket.onclose=()=>{if(closed)return;openedReject(error('VOICE_RELAY_SOCKET','The private call audio connection closed.'));if(!readySettled)fail(error('VOICE_RELAY_SOCKET','The private call audio connection closed.'));else close();};
-    socket.onmessage=event=>{
-      if(closed)return;
-      if(event.data instanceof ArrayBuffer){receiveFrame(event.data);return;}
-      if(event.data==='pong')return;
-      if(typeof event.data!=='string'){fail(error('VOICE_RELAY_FRAME','The call relay received an invalid audio frame.'));return;}
-      let message;try{message=JSON.parse(event.data);}catch{fail(error('VOICE_RELAY_CONTROL','The private call audio connection returned an invalid response.'));return;}
-      if(message.type==='peer'&&typeof message.connected==='boolean'){peerConnected=message.connected;if(!peerConnected)received.length=0;updateProcessor();notifyState(peerConnected?'connected':'waiting');}
-      else if(message.type==='ended')close();
-    };
-    startupTimer=setTimeout(()=>fail(error('VOICE_RELAY_TIMEOUT','The private call audio connection did not start. Try the call again.')),deadline);
-    notifyState('waiting');
+    targetHref=target.href;openSocket(true);
+    if(!closed){
+      startupTimer=setTimeout(()=>fail(error('VOICE_RELAY_TIMEOUT','The private call audio connection did not start. Try the call again.')),deadline);
+      notifyState('waiting');
+    }
     Promise.all([running,module,opened]).then(()=>{
       if(closed)return;
       processor=new AudioWorkletNode(context,'rekha-voice-relay',{numberOfInputs:1,numberOfOutputs:1,outputChannelCount:[1],channelCount:1,channelCountMode:'explicit'});
-      processor.port.onmessage=event=>{const pcm=event.data?.type==='capture'?event.data.pcm:null;if(!closed&&peerConnected&&context.state==='running'&&socket.readyState===1&&pcm instanceof ArrayBuffer&&pcm.byteLength===1280&&socket.bufferedAmount+1280<=65536){try{socket.send(pcm);}catch{fail(error('VOICE_RELAY_SOCKET','The private call audio connection failed.'));}}};
-      processor.connect(context.destination);attachStream(desiredStream);updateProcessor();
+      processor.port.onmessage=event=>{
+        const pcm=event.data?.type==='capture'?event.data.pcm:null;
+        if(closed||!peerConnected||context.state!=='running'||socket?.readyState!==1||!(pcm instanceof ArrayBuffer)||pcm.byteLength!==1280||socket.bufferedAmount+1280>65536)return;
+        // Worklet messages can bunch up after a busy main thread. Drop those
+        // captures instead of sending a stale burst or keeping a replay queue.
+        // Healthy capture produces one frame every 40 ms; this generous 30 ms
+        // floor remains below the private server's 40-frame-per-second limit.
+        const now=performance.now();if(now-lastCaptureAt<30)return;lastCaptureAt=now;
+        try{socket.send(pcm);}catch{transportError(socket);}
+      };
+      output=context.createGain();output.gain.value=desiredVolume;processor.connect(output);output.connect(context.destination);attachStream(desiredStream);updateProcessor();
       for(const pcm of received.splice(0))processor.port.postMessage({type:'playback',pcm},[pcm]);
-      heartbeat=setInterval(()=>{if(!closed&&socket.readyState===1&&socket.bufferedAmount<65536)socket.send('ping');},15000);
+      startHeartbeat();
       clearTimeout(startupTimer);readySettled=true;resolveReady();
     }).catch(failure=>fail(failure?.code?failure:error('VOICE_RELAY_START','Call audio could not start. Check microphone access and try again.')));
   } catch(failure) {fail(failure?.code?failure:error('VOICE_RELAY_START','Call audio could not start. Check microphone access and try again.'));}
-  return {readyPromise,setStream,resume,get state(){return audioState();},subscribeState,close};
+  return {readyPromise,setStream,setVolume,resume,get state(){return audioState();},subscribeState,close};
 }

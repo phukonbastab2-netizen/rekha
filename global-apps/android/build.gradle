@@ -5,7 +5,7 @@ android {
     namespace 'in.rekha.global'
     compileSdk 36
     defaultConfig {
-        applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 6; versionName '1.3.2-connected'
+        applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 7; versionName '1.3.3-connected'
         buildConfigField 'boolean', 'IS_OWNER', 'false'
     }
     sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs = ['src']; res.srcDirs = ['res'] } }

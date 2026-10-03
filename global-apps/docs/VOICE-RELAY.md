@@ -1,8 +1,12 @@
 # Private voice relay
 
+Release 1.3.3 keeps the same transport and adds client recovery. A brief transport failure allows up to four retries within 15 seconds, with at most six joins per rolling minute. The old socket must close before a successor opens. AudioContext, microphone mute and receive volume persist; captured fragments and queued incoming audio are cleared. Server hang-up or a policy/protocol rejection ends immediately. The receive-only volume gain never changes sent microphone audio.
+
 Release 1.3.2 includes an authenticated voice-only WebSocket relay in each country app. It lets voice calls use the existing HTTPS service without requiring a direct peer connection or a TURN key. Video calls continue to use WebRTC and may still require TURN. Ordinary telephone-number dialing and background ringing are not included.
 
 The customer and owner must start and accept the same voice call and grant microphone permission. The browser sends mono 16 kHz, 16-bit PCM audio in 40 ms batches over same-origin WSS. A per-call Durable Object forwards each batch only to the other authenticated role. There is one customer connection and one owner connection per call. The owner effects process the microphone before forwarding.
+
+Healthy capture produces 25 frames per second. If a busy browser delivers several worklet messages at once, the sender allows at least 30 ms between audio frames and drops frames that arrive sooner. This prevents a delayed burst from exceeding the server's 40-frame-per-second limit. Dropped captures are not queued for replay, so a browser stall can still cause a short gap in sound.
 
 Audio is transmitted over encrypted connections to the app server. The server can read forwarded audio; this path is not end-to-end encrypted. The implementation does not record audio or write audio frames to D1, R2, logs or Durable Object storage. The relay stores only minimal call lifecycle metadata, checks call authorization against D1 at least every five seconds while forwarding, and closes on revocation, expiry or authenticated hang-up.
 

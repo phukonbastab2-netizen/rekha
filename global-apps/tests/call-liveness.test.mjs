@@ -67,6 +67,21 @@ test('active call leases require both authenticated participants without a schem
       assert.equal((await markers(current.id)).length, 2);
     });
 
+    await t.test('peer cleanup and repeated hangups preserve the first completed, blocked or expired reason', async () => {
+      const completed=await active();
+      assert.equal((await call('/api/admin/calls/'+completed.id+'/end','POST',{reason:'completed'},owner)).status,200);
+      const first=await db.prepare('SELECT reason,updated,expires FROM calls WHERE id=?').bind(completed.id).first();
+      assert.equal((await call('/api/calls/'+completed.id+'/end','POST',{reason:'connection-failed'})).status,200);
+      assert.deepEqual(await db.prepare('SELECT reason,updated,expires FROM calls WHERE id=?').bind(completed.id).first(),first);
+      for(const reason of ['blocked','expired']){
+        const current=await active();
+        await db.prepare("UPDATE calls SET status='ended',reason=? WHERE id=?").bind(reason,current.id).run();
+        assert.equal((await call('/api/calls/'+current.id+'/end','POST',{reason:'connection-failed'})).status,200);
+        assert.equal((await db.prepare('SELECT reason FROM calls WHERE id=?').bind(current.id).first()).reason,reason);
+        assert.deepEqual(await markers(current.id),[]);
+      }
+    });
+
     await t.test('fresh markers keep an old accepted call active, renew only the caller and preserve its hard expiry', async () => {
       const current = await active(), old = Date.now() - 30000;
       await db.prepare("UPDATE calls SET updated=? WHERE id=?").bind(Date.now() - 300000, current.id).run();

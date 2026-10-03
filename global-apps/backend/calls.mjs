@@ -76,9 +76,12 @@ export async function callsRoutes(ctx){
   }
   if(match[2]==='end'&&method==='POST'){
     const data=await body(),reason=['declined','cancelled','completed','connection-failed'].includes(data.reason)?data.reason:'completed';
-    await stmt("UPDATE calls SET status='ended',reason=?,updated=?,expires=? WHERE id=?",reason,Date.now(),Date.now(),call.id).run();await stmt('DELETE FROM call_signals WHERE call_id=?',call.id).run();
+    // The first ending wins. A peer's acknowledgement must not replace a
+    // completed, expired or blocked reason with its local cleanup reason.
+    await stmt("UPDATE calls SET status='ended',reason=?,updated=?,expires=? WHERE id=? AND status!='ended'",reason,Date.now(),Date.now(),call.id).run();await stmt('DELETE FROM call_signals WHERE call_id=?',call.id).run();
+    const storedEnd=await one('SELECT reason FROM calls WHERE id=?',call.id);
     // If transport closure is temporarily unavailable, its next DB authorization check still revokes audio.
-    await endAudioRelay(env,call,reason).catch(()=>{});return result({ok:true});
+    await endAudioRelay(env,call,storedEnd?.reason||reason).catch(()=>{});return result({ok:true});
   }
   if(match[2]==='signals'&&method==='GET'){
     const after=Number(new URL(request.url).searchParams.get('after')||0);if(!Number.isSafeInteger(after)||after<0)throw fail(400,'Invalid cursor.');

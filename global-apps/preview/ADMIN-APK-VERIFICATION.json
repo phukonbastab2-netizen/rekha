@@ -2,11 +2,11 @@
   "id": "rekha-global-admin",
   "name": "Rekha Global Admin",
   "package": "in.rekha.global.owner",
-  "versionCode": 6,
-  "versionName": "1.3.2-connected",
+  "versionCode": 7,
+  "versionName": "1.3.3-connected",
   "minAndroid": 26,
-  "bytes": 17031,
-  "sha256": "48363c85c6832376544ec7b6e5922f53ecc5ae40e3a58a21bced3477fea659da",
+  "bytes": 25223,
+  "sha256": "5d82e0f726221c865499de3a71ae998f38b90faf19e6d83f779df8d3d14753e3",
   "permissions": [
     "android.permission.INTERNET",
     "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -30,6 +30,10 @@
     "https://rekha-csillag-ut.phukonbastab2.workers.dev"
   ],
   "nativeAppsActionPresent": true,
+  "nativeAudioMarker": "rekha-global-audio/1",
+  "nativePromptBridgePresent": true,
+  "modernCommunicationRoutingPresent": true,
+  "originBlindJavascriptInterfaceAbsent": true,
   "expectedBundledAssets": [],
   "actualBundledAssets": [],
   "assetsMatch": true,
@@ -43,6 +47,6 @@
     "comparedCustomer": "luna-harbor"
   },
   "customerChecksumEntriesPreserved": 12,
-  "verifiedAtUtc": "2026-10-03T04:45:55.4214340Z",
+  "verifiedAtUtc": "2026-10-03T05:43:48.1583335Z",
   "deviceRuntimeTested": false
 }

@@ -1,4 +1,4 @@
-# Voice and optional device features — 1.3.2-connected
+# Voice and optional device features — 1.3.3-connected
 
 The connected owner panel offers Natural, Warm, Bright, Radio and Robot microphone effects, before or during a voice/video call. The effects alter the outgoing audio track locally; no voice identity model is trained or recorded. Both call panels disclose that admin voices may be altered. This is not voice cloning.
 
@@ -8,6 +8,6 @@ Android requests microphone or camera permission when the corresponding feature 
 
 If Android permanently denies a permission, enable it in Android Settings → Apps → the app → Permissions, then retry. Android does not offer one consent that grants unrestricted phone access. A voice clone would require the speaker's explicit consent, a suitable model/service and clear disclosure; it is not enabled by this release.
 
-Incoming calls are checked while the customer chat stays open. Call cleanup keeps the listener active, cancellation rejects late permission results, and an established call that remains disconnected ends after a 15-second recovery deadline. Hidden pages pause call polling and resume when visible. A missing participant also expires the server's active call after two minutes. If remote playback is blocked, tap Play call audio to retry. Android 1.3.1 includes MODIFY_AUDIO_SETTINGS for communication routing; it adds no runtime approval dialog. These changes do not add background ringing or guarantee network connectivity. See [real-phone testing](PHONE-CALL-TEST.md).
+Incoming calls are checked while the customer chat stays open. Call cleanup keeps the listener active, cancellation rejects late permission results, and an established call that remains disconnected ends after a 15-second recovery deadline. Hidden pages pause call polling and resume when visible. A missing participant also expires the server's active call after two minutes. For paused voice audio, tap Resume call audio; for blocked video-call playback, tap Play call audio. Android 1.3.3 includes Phone audio/Speaker controls and restores its previous audio settings when the call ends or the page changes. MODIFY_AUDIO_SETTINGS adds no runtime approval dialog. These changes do not add background ringing or guarantee network connectivity. See [real-phone testing](PHONE-CALL-TEST.md).
 
 Chat polling prevents overlapping refreshes and sends read receipts only when a newer message arrives. No measured speed claim is made.
