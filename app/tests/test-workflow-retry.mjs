@@ -8,10 +8,10 @@ import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 const root = './';
 const files = ['cloudflare/rewards.mjs', 'cloudflare/messaging.mjs', 'cloudflare/calls.mjs', 'cloudflare/workflow.mjs', 'cloudflare/app-settings.mjs', 'cloudflare/owner.mjs', 'src/ai.mjs', 'cloudflare/worker.mjs'];
 let source = files.map(file => fs.readFileSync(root + file, 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/export (async function|function|const)/g, '$1')).join('\n');
-const hook = 'async function onCustomerMessage(chat,message){await flowOnCustomer';
-assert.ok(source.includes(hook), 'The current worker must have the customer workflow hook.');
+const hook = 'async function onCustomerMessage(chat,message){if(automationEnabled)await flowOnCustomer(workflowCtx,chat,message);}';
+assert.equal(source.split(hook).length - 1, 1, 'The current worker must have one guarded customer workflow hook.');
 source = 'let fixtureHookFailed=false,fixtureBackgroundFailed=false;\n' + source.replace(hook,
-  "async function onCustomerMessage(chat,message){if(!fixtureHookFailed){fixtureHookFailed=true;throw Error('Local injected transient hook failure');}await flowOnCustomer");
+  "async function onCustomerMessage(chat,message){if(!automationEnabled)return;if(!fixtureHookFailed){fixtureHookFailed=true;throw Error('Local injected transient hook failure');}await flowOnCustomer(workflowCtx,chat,message);}");
 const backgroundHook='const run=async()=>{';assert.ok(source.includes(backgroundHook),'The current worker must have its deferred background callback.');
 source=source.replace(backgroundHook,"const run=async()=>{if(!fixtureBackgroundFailed){fixtureBackgroundFailed=true;throw Error('Local interrupted background fixture');}");
 const mf = new Miniflare(convertV4MiniflareOptions({
