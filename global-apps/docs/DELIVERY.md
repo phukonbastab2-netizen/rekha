@@ -5,7 +5,7 @@
 - [Download Rekha Global Admin for Android](https://rekhaastrology.in/global-apps/preview/apks/rekha-global-admin.apk)
 - [Manage the source on GitHub](https://github.com/phukonbastab2-netizen/rekha/tree/main/global-apps)
 
-The collection hub is online under the existing Rekha website and links to 12 connected customer services and private owner inboxes. It also retains separate offline sample-chat demos. Release 1.3.3 includes 12 connected customer APKs and one admin APK, versionCode 7, signed with the existing key. All 158 local tests passed. Recorded live checks and their scope are in [VERIFICATION.md](VERIFICATION.md).
+The collection hub is online under the existing Rekha website and links to 12 connected customer services and private owner inboxes. It also retains separate offline sample-chat demos. Release 1.3.3 includes 12 connected customer APKs and one admin APK, versionCode 7, signed with the existing key. All 158 local tests, all 12 live generated-audio relay checks and all 13 public APK hash checks passed. Recorded live checks and their scope are in [VERIFICATION.md](VERIFICATION.md).
 
 The admin app opens `control.html`. Choose **Owner inbox** for a country, then sign in using that app's existing private owner password. Its **Apps** button returns to the 12-app list. Owner credentials remain outside GitHub and APKs.
 

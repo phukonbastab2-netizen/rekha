@@ -1,0 +1,16 @@
+{
+  "release": "1.3.3-connected",
+  "date": "2026-10-03",
+  "runner": "Node.js 24 node:test; serial test files",
+  "tests": 158,
+  "passed": 158,
+  "failed": 0,
+  "cancelled": 0,
+  "skipped": 0,
+  "durationMs": 148437.0514,
+  "androidRoutingTests": 10,
+  "androidCompilation": "JDK 17, Android SDK 36",
+  "androidRoutingHarness": "The same routing core exercised on a JVM with a test audio port; complete MainActivity compiled against Android SDK 36.",
+  "physicalPhoneAudioVerified": false,
+  "crossNetworkPhoneCallVerified": false
+}
