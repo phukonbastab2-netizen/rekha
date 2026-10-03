@@ -1,0 +1,1 @@
+import {mountDeviceFeatures} from './device-features.js';mountDeviceFeatures(document.querySelector('#voice-demo'),()=>{},true);
