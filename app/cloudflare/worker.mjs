@@ -2,7 +2,7 @@ import { rewardCallback } from './rewards.mjs';
 import { ownerRoutes, mediaResponse } from './owner.mjs';
 import { messagingRoutes, messagingView, messagingAcknowledgment, messagingDeleteAttachments, messagingHistory } from './messaging.mjs';
 import { callsRoutes } from './calls.mjs';
-import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowRecoverMessages } from './workflow.mjs';
+import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowGetConfig, workflowRecoverMessages } from './workflow.mjs';
 import { appSettingsRoutes, appSettingsPublic, appSettingsDefaults } from './app-settings.mjs';
 import { generateReply } from '../src/ai.mjs';
 const fail=(status,message)=>Object.assign(new Error(message),{status});
@@ -120,7 +120,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-fast-chat-0.9.2'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-video-kundli-0.9.2'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
@@ -132,9 +132,27 @@ export async function handleApi(request,env,executionContext){
     if(route==='/api/start'&&method==='POST'){
       await rate(`signup:${request.headers.get('CF-Connecting-IP')||'unknown'}`,12,3600000);const data=await body();
       if(typeof data.name!=='string'||!data.name.trim()||data.name.trim().length>60||!validDate(data.dob)||!['en','hi','hinglish'].includes(data.language)||data.consent!==true)throw fail(400,'Enter a valid name, adult birth date and consent.');
+      if('onboarding' in data&&data.onboarding!=='video-kundli-v1')throw fail(400,'This signup version is unavailable. Please refresh.');
       if(cookies.ar_session&&await one('SELECT 1 FROM conversations WHERE token_hash=?',await hash(cookies.ar_session)))throw fail(409,'You already have a chat. Reload to continue.');
       const id=crypto.randomUUID(),session=token(),preferences=prefs(data.preferences);
-      await db.batch([stmt('INSERT INTO conversations(id,token_hash,name,dob,language,preferences,created,updated) VALUES(?,?,?,?,?,?,?,?)',id,await hash(session),data.name.trim(),data.dob,data.language,JSON.stringify(preferences),Date.now(),Date.now()),insert(id,'assistant','welcome',welcome[data.language])]);
+      let kundli=null;
+      if(data.onboarding==='video-kundli-v1'){
+        // Reuse the configured, shared image from the private owner library.
+        // A complete calculated chart still needs birth time and birthplace.
+        const config=await workflowGetConfig(workflowCtx),mediaId=config.assets?.kundli;
+        kundli=typeof mediaId==='string'&&/^[a-f0-9-]{36}$/.test(mediaId)?await one("SELECT id,type,object_key,mime,size FROM media_items WHERE id=? AND type='image' AND archived=0",mediaId):null;
+        if(!kundli?.object_key||!['image/jpeg','image/png','image/webp'].includes(kundli.mime)||!env.MEDIA||!(await env.MEDIA.head(kundli.object_key))?.size)throw fail(503,'The kundli image is temporarily unavailable. Please try again later.');
+      }
+      const now=Date.now(),createSql='INSERT INTO conversations(id,token_hash,name,dob,language,preferences,created,updated) '+(kundli?"SELECT ?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM media_items WHERE id=? AND type='image' AND archived=0 AND object_key=? AND mime=?)":'VALUES(?,?,?,?,?,?,?,?)');
+      const startBatch=[stmt(createSql,id,await hash(session),data.name.trim(),data.dob,data.language,JSON.stringify(preferences),now,now,...(kundli?[kundli.id,kundli.object_key,kundli.mime]:[]))];
+      if(kundli){
+        const payload=JSON.stringify({text:'Your kundli',title:'',items:[{id:kundli.id,title:'Shared kundli image',type:'image',url:'/api/media/'+kundli.id,mime:kundli.mime,size:kundli.size}]});
+        // One transaction stores both the first message and its private grant.
+        // A concurrent library archive causes rollback rather than a half-profile.
+        startBatch.push(insert(id,'assistant','media',payload,'sent','onboarding:kundli-v1'),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,kundli.id));
+      }
+      startBatch.push(insert(id,'assistant','welcome',welcome[data.language]));
+      await db.batch(startBatch);
       // A missing or archived library item must not prevent a customer signing up.
       try{await flowOnStart(workflowCtx,await get(id));}catch{}
       return result(await view(await get(id)),201,{'Set-Cookie':cookie('ar_session',session,preferences.remember)});
@@ -157,7 +175,7 @@ export async function handleApi(request,env,executionContext){
     if(route==='/api/admin/login'&&method==='POST'){await rate(`login:${request.headers.get('CF-Connecting-IP')||'unknown'}`,6,300000);const data=await body();if(typeof data.password!=='string'||await hash(data.password)!==env.ADMIN_PASSWORD_HASH)throw fail(401,'Incorrect owner password.');const session=token();await stmt('INSERT INTO admin_sessions(token_hash,expires) VALUES(?,?)',await hash(session),Date.now()+8*3600000).run();return result({ok:true},200,{'Set-Cookie':cookie('ar_admin',session)});}
     if(route.startsWith('/api/admin/')){
       await owner();
-      const intro=route.match(/^\/api\/admin\/intro\/(welcome|introduction|testimonials)$/);
+      const intro=route.match(/^\/api\/admin\/intro\/(welcome|introduction|testimonials|onboarding)$/);
       if(intro&&method==='PUT'){
         if(request.headers.get('Content-Type')!=='video/mp4')throw fail(415,'MP4 required.');
         const reader=request.body?.getReader();if(!reader)throw fail(400,'Video required.');
@@ -207,7 +225,7 @@ export default {
       const object=await env.MEDIA.get(item.object_key);if(!object)return new Response('Logo unavailable',{status:404,headers});
       return new Response(request.method==='HEAD'?null:object.body,{headers:{...headers,'Content-Type':item.mime,'Content-Length':String(object.size)}});
     }
-    if(/^\/intro\/(welcome|introduction|testimonials)\.mp4$/.test(url.pathname)){
+    if(/^\/intro\/(welcome|introduction|testimonials|onboarding)\.mp4$/.test(url.pathname)){
       if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405});
       const key=url.pathname.slice(1),meta=await env.MEDIA.head(key);
       if(!meta)return new Response('Video unavailable',{status:404});

@@ -7,10 +7,12 @@ import { createAdaptivePoll } from './adaptive-poll.js';
 import { createChatHistory,historyHeaders,compactAcknowledgement,captureThreadAnchor,restoreThreadAnchor } from './chat-history.js';
 import { chatIcon } from './chat-icons.js';
 import { createChatSounds } from './chat-sounds.js';
+import { mountVideoSignup,renderKundliPreparation,waitForPreparation } from './video-onboarding.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
 let calls, configReadAt=0, sessionEnded=false,chatMutation=0,outboxChatId=null;
+let onboarding=null,releaseOnboarding=()=>{};
 const history=createChatHistory();let olderLoading=false;
 const messageMarkup=new Map(),dateFormatters=new Map();
 let drawFrame=null,releaseChatLayout=()=>{},forceLatest=false,incomingHighWater=0,unreadIncoming=0,networkOffline=navigator.onLine===false;
@@ -163,6 +165,7 @@ async function start(skip) {
   finally { busy = false; if(stage==='chat'){fingerprint='';drawChat();}else app.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
 }
 function renderChat() {
+  releaseOnboarding();
   releaseChatLayout();forceLatest=true;unreadIncoming=0;incomingHighWater=Math.max(0,...chat.messages.filter(message=>message.role==='assistant').map(message=>Number(message.id)||0));
   if(outboxChatId&&outboxChatId!==chat.id){outbox.clear();composerDraft=null;}outboxChatId=chat.id;
   if(history.state().id!==chat.id)history.reset(chat);
@@ -310,9 +313,31 @@ function privacy(editable) {
 function confirmDelete() {
   dialog.innerHTML = `<h2 id="privacy-title">${t('deleteTitle')}</h2><p>${t('deleteText')}</p><div class="dialog-actions"><button class="secondary" id="cancel-delete">${t('cancel')}</button><button class="secondary danger" id="confirm-delete">${t('confirmDelete')}</button></div>`;
   dialog.querySelector('#cancel-delete').onclick = () => privacy(true);
-  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});chatPoll.stop();stage='language';outbox.clear();composerDraft=null;chat=null;history.reset();sounds.reset();dialog.close();chooseLanguage();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
+  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});chatPoll.stop();outbox.clear();composerDraft=null;chat=null;history.reset();sounds.reset();dialog.close();videoSignup();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
+}
+function videoSignup(progress={}){
+  releaseOnboarding();releaseChatLayout();calls?.destroy();calls=null;messaging?.destroy();messaging=null;chatPoll.stop();outbox.pause();
+  document.body.classList.remove('chat-mode');stage='onboarding';
+  onboarding=mountVideoSignup(app,{brandName:brandName(),language:lang,profile,progress,onLanguage:updateLanguage,onSubmit:createKundliChat});
+  releaseOnboarding=()=>{onboarding?.dispose();onboarding=null;releaseOnboarding=()=>{};};
+}
+async function createKundliChat(details,progress){
+  if(busy||stage!=='onboarding')return;busy=true;profile={...details};updateLanguage(details.language);
+  releaseOnboarding();stage='preparing';renderKundliPreparation(app,lang);const started=performance.now();
+  try{
+    let next;
+    try{next=await api('/api/start','POST',{...details,onboarding:'video-kundli-v1',preferences:{remember:false,location:null}});}
+    catch(error){
+      // A lost response may already have set the private session cookie.
+      // Recover that conversation before allowing another signup attempt.
+      if(!error.status||error.status>=500||error.status===409){const existing=await api('/api/chat').catch(()=>null);if(existing)next=existing;else throw error;}else throw error;
+    }
+    await waitForPreparation(started);chat=next;profile={};renderChat();
+  }catch(error){videoSignup(progress);onboarding.setError(error.message);}
+  finally{busy=false;}
 }
 function introduction() {
+  if(!chat){videoSignup();return;}
   if(!introEnabled()){if(stage==='chat'){toast(lang==='hi'?'परिचय अभी उपलब्ध नहीं है।':'The introduction is currently unavailable.');return;}if(chat)renderChat();else chooseLanguage();return;}
   if(messaging?.hasLiveCapture?.()){toast('Finish or cancel your recording or permission request first.');return;}
   releaseChatLayout();
@@ -332,13 +357,12 @@ function introduction() {
 async function boot() {
   try {
     const [nextConfig,nextChat]=await Promise.all([api('/api/config'),api('/api/chat').catch(error=>{if(error.status===401)return null;throw error;})]);applyPublishedConfig(nextConfig);chat=nextChat;
-    let seen=false;try{seen=localStorage.getItem('rekha-intro-v1')==='seen';}catch{}
-    if(chat&&(seen||!introEnabled()))renderChat();else if(introEnabled())introduction();else chooseLanguage();
+    if(chat)renderChat();else videoSignup();
   }catch(error){app.innerHTML=`<section class="loading"><h1>A quiet pause.</h1><p>${esc(error.message)}</p><button class="primary" id="reload">Try again</button></section>`;app.querySelector('#reload').onclick=boot;}
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&stage==='chat')outbox.resume({retryUncertain:true});});
 window.addEventListener('offline',()=>{networkOffline=true;offline=true;updateConnection();requestChatDraw();});
 window.addEventListener('online',()=>{networkOffline=false;if(stage==='chat'){updateConnection();outbox.resume({retryUncertain:true});chatPoll.poke({immediate:true});}});
-window.addEventListener('beforeunload',event=>{if(outbox.isPending()||messaging?.hasContent()||messaging?.hasLiveCapture?.()||composerDraft&&(composerDraft.body||composerDraft.attachments?.length)){event.preventDefault();event.returnValue='';}});
+window.addEventListener('beforeunload',event=>{if(stage==='preparing'||stage==='onboarding'&&onboarding?.draft().name||outbox.isPending()||messaging?.hasContent()||messaging?.hasLiveCapture?.()||composerDraft&&(composerDraft.body||composerDraft.attachments?.length)){event.preventDefault();event.returnValue='';}});
 boot();

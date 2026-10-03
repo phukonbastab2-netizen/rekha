@@ -10,3 +10,37 @@
 .intro h1{font:42px Georgia,serif;color:#652f2c;margin:16px 0}.intro video{width:100%;max-height:48vh;aspect-ratio:4/5;background:#251c14;object-fit:contain;border-radius:22px;border:1px solid #c9ab70;box-shadow:0 12px 36px #652f2c18}.intro-choices{display:flex;gap:8px;margin:18px 0 24px}.intro-choice{flex:1;border:1px solid #d8c7a6;border-radius:14px;padding:12px 6px;background:#fffaf0;color:#652f2c;cursor:pointer}.intro-choice small{display:block;margin-bottom:5px;opacity:.65}.intro-choice.selected{background:#652f2c;color:#fffaf0}.intro .footnote{text-align:center}.wordmark{font-size:16px;flex-wrap:wrap}.chat-name{font-size:27px}.rani-portrait{object-fit:contain!important;border-radius:28px}.intro{animation:rekha-arrive .5s ease both}@keyframes rekha-arrive{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.intro{animation:none}}
 .screen h2{white-space:pre-line}.brand-wordmark-label{margin-left:0!important;letter-spacing:1px;overflow-wrap:anywhere}.small-brand{overflow-wrap:anywhere}.story-copy p,.intro .subtitle,.kundli-note strong,.kundli-note small{white-space:pre-line}
 .primary,.intro-choice.selected{color:var(--brand-on-primary,#fff3da)}.primary:hover{background:color-mix(in srgb,var(--wine) 86%,black)}.intro h1,.intro-choice{color:var(--wine)}.intro-choice.selected{background:var(--wine);color:var(--brand-on-primary,#fffaf0)}
+
+/* One video, two details, then the existing private conversation. */
+.kundli-onboarding{max-width:520px;padding:24px 28px 30px;animation:page-in .25s ease}
+.onboarding-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.onboarding-heading strong{font-size:16px;color:var(--wine);overflow-wrap:anywhere}
+.onboarding-language select{min-height:44px;max-width:116px;border:1px solid var(--line);border-radius:10px;background:#fffaf0;padding:8px;color:var(--ink);font:inherit;font-size:13px}
+.onboarding-language .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.kundli-onboarding h1{font:600 24px/1.3 system-ui,sans-serif;margin:0 0 18px;color:var(--ink)}
+.onboarding-video{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#111;border-radius:14px;border:1px solid var(--line)}
+.onboarding-progress{display:flex;align-items:center;gap:10px;margin-top:12px;color:var(--muted);font-size:12px}
+.onboarding-progress progress{flex:1;min-width:0;height:6px;accent-color:var(--wine)}
+.onboarding-status{font-size:13px;line-height:1.5;min-height:39px;margin:10px 0 14px;color:var(--muted)}
+#reload-onboarding-video{min-height:44px;margin-bottom:14px;padding:10px 16px}
+#signup-details{border:0;margin:0;padding:0;min-width:0}
+#signup-details .field{margin-bottom:16px}
+#signup-details .field>span{display:block;margin-bottom:7px}
+#signup-details input{width:100%;min-height:52px;font-size:16px}
+#signup-details:disabled{opacity:.55}
+.onboarding-use,.onboarding-consent{font-size:11px;line-height:1.65;color:var(--muted);margin:12px 0}
+.onboarding-consent a{color:var(--wine);text-underline-offset:3px}
+#kundli-send{width:100%;min-height:52px;margin-top:0;font-size:16px;touch-action:manipulation}
+#kundli-send:disabled{opacity:.5;cursor:default}
+#signup-error:empty{display:none}
+.kundli-preparation{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;min-height:78dvh;padding:30px;text-align:center}
+.kundli-preparation h1{font:600 26px/1.4 system-ui,sans-serif;margin:0;color:var(--wine)}
+.kundli-preparation p{font-size:14px;color:var(--muted);line-height:1.6;margin:0}
+.kundli-wheel{width:136px;height:136px;margin-bottom:10px;color:var(--wine);animation:kundli-turn 10s linear infinite}
+.kundli-wheel svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.5}
+.kundli-progress{width:200px;height:5px;background:#d8cbb8;border-radius:8px;overflow:hidden;margin-top:8px}
+.kundli-progress span{display:block;width:100%;height:100%;background:var(--wine);transform-origin:left;animation:kundli-fill 5s linear both}
+@keyframes kundli-turn{to{transform:rotate(360deg)}}
+@keyframes kundli-fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@media(max-width:380px){.kundli-onboarding{padding:20px 20px 24px}.kundli-onboarding h1{font-size:22px}.onboarding-heading{gap:8px}.onboarding-heading strong{font-size:14px}}
+@media(prefers-reduced-motion:reduce){.kundli-wheel,.kundli-progress span{animation:none}.kundli-progress span{transform:none}}
