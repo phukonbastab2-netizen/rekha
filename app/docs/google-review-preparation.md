@@ -8,7 +8,7 @@ Website pages describe the current preview. They do not certify legal compliance
 - Privacy policy: https://rekhaastrology.in/astrorani/privacy-policy.html
 - Outside-app data deletion: https://rekhaastrology.in/astrorani/data-deletion.html
 - Support: https://rekhaastrology.in/astrorani/support.html
-- Contact: chat@rekhaastrology.in
+- Planned email contact: chat@rekhaastrology.in. DNS checks on 3 October 2026 found no MX records; incoming delivery needs setup and verification before using this address as a working store support contact. Public pages direct current requests to the official WhatsApp link.
 - Operator name supplied and confirmed by the owner: Rekha Astrology Pvt Ltd.
 - No business address has been supplied. Use the actual registered/contact address wherever Google asks for one; do not invent one.
 
