@@ -2,7 +2,7 @@
 
 This directory contains the customer app, private owner panel, Cloudflare backend and two Android WebView projects. The website in the repository root is separate and stays unchanged. That static website can be hosted separately; the authenticated chat needs the Cloudflare Worker.
 
-Web and Android source package: **0.9.0-preview**, including bounded chat updates, searchable customer pages, adaptive polling, reliable message retries, the owner app editor, feature-specific permission prompts and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
+Web and Android source package: **0.9.1-preview**, including direct feature permission requests and in-app retry, bounded chat updates, searchable customer pages, adaptive polling, reliable message retries, the owner app editor and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
 
 Customers have one private conversation with Rekha. The owner can send text, images, video, audio, PDFs and ordered collections without waiting for a customer reply. Ads are disabled. Payments remain a preview with no real charges. No passwords, payment-card collection, OTP access or private-device scraping is implemented.
 
@@ -104,7 +104,7 @@ The provided PowerShell `build.ps1` scripts accept your JDK, SDK, Gradle executa
 
 ## Current boundaries
 
-Tap Voice or Camera to request only that feature's Android permission. Use **Feature access** to set up microphone, camera and optional message alerts. If Android has stopped showing a denied prompt, the recovery button opens app settings. Files are chosen through the phone's picker; the app does not request SMS, full-gallery or all-files access.
+Tap Voice or Camera to request only that feature's Android permission inside the app. Use **Feature access** to set up microphone, camera and optional message alerts directly. A dismissed or retryable denied request offers an in-app retry. Only a confirmed permanent denial offers Android app settings; the APK does not send customers to browser site settings. Files are chosen through the phone's picker; the app does not request SMS, full-gallery or all-files access.
 
 Admin calls offer Natural, Lower pitch, Higher pitch, Warm and Robot effects. Audio processing stays on the device and does not clone another person's voice. Install the updated Android APK to receive the native permission bridge.
 

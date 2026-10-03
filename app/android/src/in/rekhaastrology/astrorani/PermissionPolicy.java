@@ -30,5 +30,21 @@ final class PermissionPolicy {
   static boolean validRequestId(String id) {
     return id != null && id.matches("[A-Za-z0-9_-]{1,80}");
   }
+  static boolean covers(String[] approved,String[] required) {
+    if(approved==null||required==null||required.length==0)return false;
+    for(String permission:required){boolean found=false;for(String allowed:approved)if(permission.equals(allowed)){found=true;break;}if(!found)return false;}
+    return true;
+  }
+  // Android can revoke a previously granted permission or dismiss a prompt.
+  // Only a matching, explicit denial in this result can identify a blocked request.
+  static String resultStatus(String[] required,String[] returned,int[] results,boolean[] granted,boolean[] rationale) {
+    if(required==null||returned==null||results==null||granted==null||rationale==null||granted.length!=required.length||rationale.length!=required.length)return "denied";
+    String status="granted";
+    for(int i=0;i<required.length;i++)if(!granted[i]){
+      if(!"blocked".equals(status))status="denied";
+      for(int j=0;j<returned.length&&j<results.length;j++)if(required[i].equals(returned[j])&&results[j]==-1&&!rationale[i])status="blocked";
+    }
+    return status;
+  }
 }
 

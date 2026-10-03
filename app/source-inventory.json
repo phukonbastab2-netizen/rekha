@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.0-preview",
+  "version": "0.9.1-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -103,6 +103,7 @@
     "src/server.mjs",
     "tests/app.test.mjs",
     "tests/editor-integration.mjs",
+    "tests/permissions.test.mjs",
     "tests/rewards.test.mjs",
     "tests/scaling-ui.test.mjs",
     "tests/send-queue.test.mjs",

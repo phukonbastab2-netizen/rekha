@@ -36,6 +36,7 @@ public final class MainActivity extends Activity {
   private boolean destroyed;
   private long lastInteraction;
   private long captureApprovalUntil;
+  private String[] captureApprovedPermissions;
   private ValueCallback<Uri[]> fileCallback;
   private View fullScreen;
   private WebChromeClient.CustomViewCallback fullScreenCallback;
@@ -49,7 +50,7 @@ public final class MainActivity extends Activity {
     web=new WebView(this);web.setBackgroundColor(Color.rgb(239,234,226));WebSettings settings=web.getSettings();
     settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(true);
     settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setSafeBrowsingEnabled(true);settings.setGeolocationEnabled(true);settings.setMediaPlaybackRequiresUserGesture(false);
-    settings.setUserAgentString(settings.getUserAgentString()+" Rekha"+(OWNER?"Admin":"Astrology")+"Android/0.9.0");
+    settings.setUserAgentString(settings.getUserAgentString()+" Rekha"+(OWNER?"Admin":"Astrology")+"Android/0.9.1");
     CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);WebView.setWebContentsDebuggingEnabled(false);
     web.addJavascriptInterface(new DeviceOptions(),"RekhaDevice");
     web.setWebViewClient(new WebViewClient(){
@@ -76,11 +77,10 @@ public final class MainActivity extends Activity {
       }
       @Override public void onPermissionRequest(PermissionRequest request){runOnUiThread(()->{
         String[] permissions=PermissionPolicy.forResources(request.getResources());
-        if(destroyed||!trusted(request.getOrigin().toString())||!trusted(web.getUrl())||permissions==null||mediaRequest!=null||!recentInteraction()&&SystemClock.elapsedRealtime()>captureApprovalUntil){request.deny();return;}
+        if(destroyed||!trusted(request.getOrigin().toString())||!trusted(web.getUrl())||permissions==null||mediaRequest!=null||!recentInteraction()&&!captureApproved(permissions)){request.deny();return;}
         String[] missing=missingPermissions(permissions);
         if(missing.length==0){mediaRequest=request;grantMedia();return;}
         if(permissionPromptCode!=0){request.deny();return;}
-        for(String permission:missing)if(blocked(permission)){request.deny();return;}
         mediaRequest=request;startPermissionPrompt(missing,50);
       });}
       @Override public void onPermissionRequestCanceled(PermissionRequest request){if(mediaRequest==request)mediaRequest=null;}
@@ -101,11 +101,13 @@ public final class MainActivity extends Activity {
     request.grant(granted.toArray(new String[0]));
   }
   private boolean recentInteraction(){return lastInteraction>0&&SystemClock.elapsedRealtime()-lastInteraction<60000;}
+  private boolean captureApproved(String[] permissions){return SystemClock.elapsedRealtime()<=captureApprovalUntil&&PermissionPolicy.covers(captureApprovedPermissions,permissions);}
   @Override public void onUserInteraction(){super.onUserInteraction();lastInteraction=SystemClock.elapsedRealtime();}
   private String[] missingPermissions(String[] permissions){ArrayList<String> missing=new ArrayList<>();for(String permission:permissions)if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED)missing.add(permission);return missing.toArray(new String[0]);}
-  private boolean blocked(String permission){return checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED&&getSharedPreferences("permissions",MODE_PRIVATE).getBoolean(permission,false)&&!shouldShowRequestPermissionRationale(permission);}
   private void startPermissionPrompt(String[] permissions,int code){
-    permissionPromptCode=code;for(String permission:permissions)getSharedPreferences("permissions",MODE_PRIVATE).edit().putBoolean(permission,true).apply();
+    // Always let Android decide whether a new explicit request can show a prompt.
+    // Historical requests must not suppress one-time or auto-reset permissions.
+    permissionPromptCode=code;
     try{requestPermissions(permissions,code);}catch(Exception ignored){permissionPromptCode=0;if(code==50)grantMedia();else if(code==54)finishFeature("denied");else if(code==49&&locationCallback!=null){locationCallback.invoke(locationOrigin,false,false);locationCallback=null;locationOrigin=null;}else if(code==52)alertsRequested=false;}
   }
   private void permissionEvent(String id,String feature,String status){
@@ -114,8 +116,8 @@ public final class MainActivity extends Activity {
     web.evaluateJavascript(script,null);
   }
   private void finishFeature(String status){
-    String id=nativeRequestId,feature=nativeFeature;nativeRequestId=null;nativeFeature=null;nativePermissions=null;
-    if(id==null)return;if("granted".equals(status)){if("notifications".equals(feature))enableAlerts();else captureApprovalUntil=SystemClock.elapsedRealtime()+60000;}
+    String id=nativeRequestId,feature=nativeFeature;String[] approved=nativePermissions;nativeRequestId=null;nativeFeature=null;nativePermissions=null;
+    if(id==null)return;if("granted".equals(status)){if("notifications".equals(feature))enableAlerts();else{captureApprovalUntil=SystemClock.elapsedRealtime()+60000;captureApprovedPermissions=approved;}}
     permissionEvent(id,feature,status);
   }
   private void requestFeature(String id,String feature){
@@ -125,15 +127,14 @@ public final class MainActivity extends Activity {
     if(permissionPromptCode!=0||nativeRequestId!=null){permissionEvent(id,feature,"busy");return;}
     if(!recentInteraction()){permissionEvent(id,feature,"denied");return;}
     String[] missing=missingPermissions(permissions);
-    if(missing.length==0){if("notifications".equals(feature)){if(!((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).areNotificationsEnabled()){permissionEvent(id,feature,"blocked");return;}enableAlerts();}else captureApprovalUntil=SystemClock.elapsedRealtime()+60000;permissionEvent(id,feature,"granted");return;}
-    for(String permission:missing)if(blocked(permission)){permissionEvent(id,feature,"blocked");return;}
+    if(missing.length==0){if("notifications".equals(feature)){if(!((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).areNotificationsEnabled()){permissionEvent(id,feature,"blocked");return;}enableAlerts();}else{captureApprovalUntil=SystemClock.elapsedRealtime()+60000;captureApprovedPermissions=permissions;}permissionEvent(id,feature,"granted");return;}
     nativeRequestId=id;nativeFeature=feature;nativePermissions=permissions;startPermissionPrompt(missing,54);
   }
   private void cancelPagePermissions(){
     if(mediaRequest!=null){mediaRequest.deny();mediaRequest=null;}
     if(locationCallback!=null){locationCallback.invoke(locationOrigin,false,false);locationCallback=null;locationOrigin=null;}
     nativeRequestId=null;nativeFeature=null;nativePermissions=null;alertsRequested=false;
-    captureApprovalUntil=0;
+    captureApprovalUntil=0;captureApprovedPermissions=null;
   }
   private void hideFullScreen(){if(fullScreen==null)return;root.removeView(fullScreen);fullScreen=null;web.setVisibility(View.VISIBLE);if(fullScreenCallback!=null)fullScreenCallback.onCustomViewHidden();fullScreenCallback=null;}
   private void showOffline(String message){if(offline!=null)root.removeView(offline);offline=new LinearLayout(this);offline.setOrientation(LinearLayout.VERTICAL);offline.setGravity(Gravity.CENTER);offline.setPadding(36,40,36,40);offline.setBackgroundColor(Color.rgb(239,234,226));TextView title=new TextView(this);title.setText(OWNER?"Rekha Admin":"Rekha Astrology");title.setTextSize(30);title.setGravity(Gravity.CENTER);offline.addView(title);TextView text=new TextView(this);text.setText(message);text.setTextSize(16);text.setGravity(Gravity.CENTER);text.setPadding(0,28,0,28);offline.addView(text);Button retry=new Button(this);retry.setText("Try again");retry.setOnClickListener(v->{root.removeView(offline);offline=null;web.loadUrl(HOME);});offline.addView(retry);root.addView(offline,new FrameLayout.LayoutParams(-1,-1));}
@@ -147,7 +148,7 @@ public final class MainActivity extends Activity {
     @JavascriptInterface public void saveChatExport(String text){runOnUiThread(()->{if(!trusted(web.getUrl())||text==null||text.length()>2*1024*1024)return;saveText=text.getBytes(StandardCharsets.UTF_8);saveUrl=null;chooseSave("text/plain","Rekha-chat.txt");});}
     @JavascriptInterface public void showAlertSettings(){runOnUiThread(()->{if(!trusted(web.getUrl()))return;boolean enabled=getSharedPreferences("alerts",MODE_PRIVATE).getBoolean("enabled",false);
       new AlertDialog.Builder(MainActivity.this).setTitle("Message alerts").setMessage("Optional background checks can notify you about new messages. Android runs these periodically, usually 15 minutes or longer. Open the app for live chat and calls. Message text stays out of notifications.")
-        .setPositiveButton(enabled?"Turn off":"Enable",(d,w)->{if(enabled){getSharedPreferences("alerts",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();((JobScheduler)getSystemService(JOB_SCHEDULER_SERVICE)).cancel(49);}else{if(permissionPromptCode!=0){Toast.makeText(MainActivity.this,"Finish the current permission request first.",Toast.LENGTH_SHORT).show();return;}alertsRequested=true;if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){if(blocked(Manifest.permission.POST_NOTIFICATIONS)){alertsRequested=false;Toast.makeText(MainActivity.this,"Notifications are turned off. You can change them from App permissions.",Toast.LENGTH_LONG).show();}else startPermissionPrompt(new String[]{Manifest.permission.POST_NOTIFICATIONS},52);}else enableAlerts();}}).setNegativeButton("Cancel",null).show();
+        .setPositiveButton(enabled?"Turn off":"Enable",(d,w)->{if(enabled){getSharedPreferences("alerts",MODE_PRIVATE).edit().putBoolean("enabled",false).apply();((JobScheduler)getSystemService(JOB_SCHEDULER_SERVICE)).cancel(49);}else{if(permissionPromptCode!=0){Toast.makeText(MainActivity.this,"Finish the current permission request first.",Toast.LENGTH_SHORT).show();return;}alertsRequested=true;if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)startPermissionPrompt(new String[]{Manifest.permission.POST_NOTIFICATIONS},52);else enableAlerts();}}).setNegativeButton("Cancel",null).show();
     });}
   }
   private void enableAlerts(){alertsRequested=false;getSharedPreferences("alerts",MODE_PRIVATE).edit().putBoolean("enabled",true).apply();MessageAlerts.checkpoint(this,OWNER);JobInfo job=new JobInfo.Builder(49,new ComponentName(this,MessageAlerts.class)).setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY).setPeriodic(15*60*1000L).build();((JobScheduler)getSystemService(JOB_SCHEDULER_SERVICE)).schedule(job);}
@@ -166,7 +167,7 @@ public final class MainActivity extends Activity {
     if(code==49&&locationCallback!=null){locationCallback.invoke(locationOrigin,trusted(web.getUrl())&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED,false);locationCallback=null;locationOrigin=null;}
     if(code==50)grantMedia();
     if(code==52){if(alertsRequested&&trusted(web.getUrl())&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)enableAlerts();else alertsRequested=false;}
-    if(code==54&&nativePermissions!=null){String status="granted";for(String permission:nativePermissions)if(checkSelfPermission(permission)!=PackageManager.PERMISSION_GRANTED){if(results.length!=0&&blocked(permission))status="blocked";else if(!"blocked".equals(status))status="denied";}finishFeature(status);}
+    if(code==54&&nativePermissions!=null){boolean[] granted=new boolean[nativePermissions.length],rationale=new boolean[nativePermissions.length];for(int i=0;i<nativePermissions.length;i++){granted[i]=checkSelfPermission(nativePermissions[i])==PackageManager.PERMISSION_GRANTED;rationale[i]=shouldShowRequestPermissionRationale(nativePermissions[i]);}finishFeature(PermissionPolicy.resultStatus(nativePermissions,permissions,results,granted,rationale));}
   }
   @Override public void onBackPressed(){if(fullScreen!=null)hideFullScreen();else if(web.canGoBack())web.goBack();else super.onBackPressed();}
   @Override protected void onPause(){CookieManager.getInstance().flush();web.onPause();super.onPause();}

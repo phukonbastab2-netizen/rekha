@@ -29,6 +29,19 @@ public final class PermissionPolicyTest {
     check(PermissionPolicy.validRequestId("mic_123-abc"),"Supported callback ID");
     for(String invalid:new String[]{"",null,"<script>","a b","x".repeat(81)})
       check(!PermissionPolicy.validRequestId(invalid),"Unsafe or excessive callback ID is ignored");
+    String mic="android.permission.RECORD_AUDIO",cam="android.permission.CAMERA";
+    check(PermissionPolicy.covers(new String[]{mic,cam},new String[]{cam}),"Video consent covers its camera resource");
+    check(!PermissionPolicy.covers(new String[]{mic},new String[]{cam}),"A completed microphone prompt cannot approve camera access");
+    check(!PermissionPolicy.covers(null,new String[]{mic}),"No completed prompt supplies capture approval");
+    check(!PermissionPolicy.covers(new String[]{mic},new String[0]),"Empty capture requests remain invalid");
+    check("granted".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[]{mic},new int[]{0},new boolean[]{true},new boolean[]{false})),"Actual Android grant completes the feature request");
+    check("denied".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[]{mic},new int[]{-1},new boolean[]{false},new boolean[]{true})),"First denial stays retryable when Android permits another prompt");
+    check("blocked".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[]{mic},new int[]{-1},new boolean[]{false},new boolean[]{false})),"Confirmed denial without rationale identifies Android blocking");
+    check("denied".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[0],new int[0],new boolean[]{false},new boolean[]{false})),"Dismissed or cancelled prompt never records permanent denial");
+    check("denied".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[]{cam},new int[]{-1},new boolean[]{false},new boolean[]{false})),"Unrelated callback cannot mark microphone permanently denied");
+    check("denied".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[]{mic},new int[]{0},new boolean[]{false},new boolean[]{false})),"Revoked or auto-reset permission stays retryable without a fresh denial");
+    check("blocked".equals(PermissionPolicy.resultStatus(new String[]{mic,cam},new String[]{cam,mic},new int[]{-1,0},new boolean[]{true,false},new boolean[]{false,false})),"Video call requires both grants and maps reordered callback results safely");
+    check("denied".equals(PermissionPolicy.resultStatus(new String[]{mic},new String[]{mic},new int[0],new boolean[]{false},new boolean[]{false})),"Truncated result cannot record permanent denial");
     System.out.println("Permission policy: "+checks+" checks passed.");
   }
 }
