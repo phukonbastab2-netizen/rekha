@@ -1,9 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createSendQueue,mergeServerChat} from '../public/send-queue.js';
+import {compactAcknowledgement,createChatHistory} from '../public/chat-history.js';
 const id='private-conversation-fixture',snapshot=(clientId,body='A private question')=>({clientId,body,attachments:[]});
 const view=(records,version=1)=>({id,version,messages:records.map((r,index)=>({id:index+1,role:'user',clientId:r.clientId,body:r.snapshot.body}))});
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('compact send ACK confirms one saved row without skipping concurrent history changes',async()=>{
+  const old={id,version:4,updated:100,inboxRevision:1,blocked:false,changeRevision:10,page:{oldestId:1,hasOlder:true},messages:[{id:1,role:'assistant',body:'Earlier reply',changeRevision:10}]};
+  const history=createChatHistory();history.reset(old);let chat=old;
+  const saved={id:2,role:'user',clientId:'compact-first',body:'First',changeRevision:12,readByOther:false};
+  const ack={ack:'saved-v1',id,version:5,updated:101,inboxRevision:1,blocked:false,acknowledgedMessage:saved};
+  const queue=createSendQueue({send:async()=>compactAcknowledgement(chat,ack,'compact-first'),onAck:next=>{chat=history.accept(chat,next);}});
+  queue.enqueue({snapshot:snapshot('compact-first','First'),conversationId:id});await tick();
+  assert.equal(queue.isPending(),false);assert.deepEqual(chat.messages.map(message=>message.id),[1,2]);assert.equal(chat.version,5);
+  assert.equal(history.state().revision,10);assert.equal(history.state().hasOlder,true);assert.match(history.route('/api/chat'),/afterRevision=10/);
+  chat=history.accept(chat,{...chat,version:5,changeRevision:13,messages:[{...old.messages[0],body:'Concurrent edited reply',changeRevision:11},{id:3,role:'assistant',body:'Another reply',changeRevision:13}]},{kind:'delta'});
+  assert.equal(chat.messages[0].body,'Concurrent edited reply');assert.equal(history.state().revision,13);assert.deepEqual(chat.messages.map(message=>message.id),[1,2,3]);
+});
+
+test('compact retry cannot rewind newer access controls or confirm another message/chat',()=>{
+  const current={id,version:8,updated:200,inboxRevision:3,blocked:true,messages:[{id:1,role:'assistant',body:'New reply',changeRevision:20}]};
+  const message={id:2,role:'user',clientId:'same-id',body:'Captured text',changeRevision:19};
+  const ack={ack:'saved-v1',id,version:8,updated:200,inboxRevision:2,blocked:false,acknowledgedMessage:message};
+  const merged=mergeServerChat(current,compactAcknowledgement(current,ack,'same-id'));
+  assert.equal(merged.blocked,true);assert.equal(merged.inboxRevision,3);assert.equal(merged.version,8);assert.equal(merged.messages[1].body,'Captured text');
+  assert.throws(()=>compactAcknowledgement(current,ack,'wrong-id'),/could not be confirmed/);
+  assert.throws(()=>compactAcknowledgement({...current,id:'another-chat'},ack,'same-id'),/could not be confirmed/);
+  assert.equal(compactAcknowledgement(current,current,'ignored'),current,'Legacy full response remains supported');
+});
 test('queued messages appear before a slow acknowledgement; later messages retain their own content',async()=>{
   const requests=[],pending=[];const queue=createSendQueue({send:record=>new Promise(resolve=>{requests.push(record);pending.push(resolve);})});
   queue.enqueue({snapshot:snapshot('message-first','First'),conversationId:id});queue.enqueue({snapshot:snapshot('message-second','Second'),conversationId:id});

@@ -1,5 +1,14 @@
 import {mergeServerChat} from './send-queue.js';
 export const historyHeaders={'X-Rekha-History':'bounded-v1'};
+// Send ACKs carry one persisted row, never a history/delta cursor. Merge their
+// current access metadata while retaining already loaded conversation rows.
+export function compactAcknowledgement(previous,next,clientId){
+  if(next?.ack!=='saved-v1')return next;
+  const message=next.acknowledgedMessage;
+  if(!previous||next.id!==previous.id||!Number.isSafeInteger(message?.id)||message.id<1||message.role!=='user'||message.clientId!==clientId)throw new Error('The saved message could not be confirmed. Retry safely.');
+  const {ack,acknowledgedMessage,changeRevision,page,hasMoreChanges,messages,...metadata}=next;
+  return {...previous,...metadata,messages:[message],historyComplete:false};
+}
 export function applyReceiptCursors(messages,cursors){return messages.map(message=>['user','assistant'].includes(message.role)&&!message.readByOther&&Number(message.id)<=Number(cursors?.[message.role==='user'?'ownerRead':'customerRead'])?{...message,readByOther:true}:message);}
 // A mutation acknowledgement is not a delta cursor: advancing it could skip a
 // concurrent edit/reaction on an older loaded page. Only fetched deltas advance.
@@ -30,6 +39,6 @@ export function createChatHistory(){
 // retained image/video changes the thread height during layout.
 export function captureThreadAnchor(scroller){
   const top=scroller.getBoundingClientRect().top,anchor=[...scroller.querySelectorAll('[data-message]')].find(node=>node.getBoundingClientRect().bottom>top);
-  return{node:anchor,offset:anchor?anchor.getBoundingClientRect().top-top:0,height:scroller.scrollHeight,scroll:scroller.scrollTop};
+  return{node:anchor,id:anchor?.dataset.message,offset:anchor?anchor.getBoundingClientRect().top-top:0,height:scroller.scrollHeight,scroll:scroller.scrollTop};
 }
-export function restoreThreadAnchor(scroller,anchor){if(anchor?.node?.isConnected)scroller.scrollTop+=anchor.node.getBoundingClientRect().top-scroller.getBoundingClientRect().top-anchor.offset;else if(anchor)scroller.scrollTop=anchor.scroll+scroller.scrollHeight-anchor.height;}
+export function restoreThreadAnchor(scroller,anchor){const node=anchor?.node?.isConnected?anchor.node:anchor?.id?[...scroller.querySelectorAll('[data-message]')].find(item=>item.dataset.message===anchor.id):null;if(node)scroller.scrollTop+=node.getBoundingClientRect().top-scroller.getBoundingClientRect().top-anchor.offset;else if(anchor)scroller.scrollTop=anchor.scroll+scroller.scrollHeight-anchor.height;}

@@ -90,6 +90,21 @@ export async function messagingView({chat,messages,admin,one,all,bounded=false,a
   const decorate=m=>{const d=byId.get(m.id)||{};return{...m,body:d.deleted?'':m.body,replyTo:d.reply_to??null,edited:d.edited??null,deleted:!!d.deleted,starred:starred.has(m.id),reactions:d.deleted?[]:byReaction.get(m.id)||[],readByOther:m.role==='user'?m.id<=(settings.owner_read||0):m.role==='assistant'?m.id<=(settings.customer_read||0):false};};
   return {messages:rows.map(decorate),...(ack?{acknowledgedMessage:decorate(ack)}:{}),...(bounded?{receiptCursors:{ownerRead:settings.owner_read||0,customerRead:settings.customer_read||0}}:{}),typing:{customer:(settings.customer_typing||0)>now,owner:(settings.owner_typing||0)>now},blocked:!!settings.blocked,...(admin?{pinned:!!settings.pinned,archived:!!settings.archived,labels:JSON.parse(settings.labels||'[]'),notes:settings.notes||''}:{})};
 }
+export async function messagingAcknowledgment({chat,acknowledgedId,one}){
+  // Send acknowledgments need only the saved row, not another history page.
+  // Read current decoration as well: a replay may follow an edit, deletion,
+  // reaction or owner read. The indexed subqueries stay scoped to this row.
+  const row=await one(`SELECT m.id,m.role,m.kind,m.body,m.status,m.created,m.change_revision AS changeRevision,m.client_id AS clientId,
+    d.reply_to AS replyTo,d.edited,d.deleted,COALESCE(s.owner_read,0) AS ownerRead,COALESCE(s.customer_read,0) AS customerRead,
+    COALESCE(s.customer_typing,0) AS customerTyping,COALESCE(s.owner_typing,0) AS ownerTyping,COALESCE(s.blocked,0) AS blocked,
+    EXISTS(SELECT 1 FROM message_stars WHERE message_id=m.id AND side='customer') AS starred,
+    (SELECT json_group_array(json_object('emoji',emoji,'by',side)) FROM message_reactions WHERE message_id=m.id) AS reactions
+    FROM messages m LEFT JOIN message_messaging d ON d.message_id=m.id LEFT JOIN chat_messaging s ON s.conversation_id=m.conversation_id
+    WHERE m.conversation_id=? AND m.id=? AND m.role='user'`,chat.id,acknowledgedId);
+  if(!row)return null;
+  const {ownerRead,customerRead,customerTyping,ownerTyping,blocked,...message}=row,now=Date.now();
+  return{acknowledgedMessage:{...message,body:message.deleted?'':message.body,deleted:!!message.deleted,starred:!!message.starred,reactions:message.deleted?[]:JSON.parse(message.reactions||'[]'),readByOther:message.id<=ownerRead},receiptCursors:{ownerRead,customerRead},typing:{customer:customerTyping>now,owner:ownerTyping>now},blocked:!!blocked};
+}
 export async function messagingDeleteAttachments({env,all,chatId}){
   const files=await all('SELECT object_key FROM chat_attachments WHERE conversation_id=?',chatId);
   for(const file of files)await env.MEDIA.delete(file.object_key);
@@ -109,8 +124,10 @@ export async function messagingAttachmentResponse({request,env,route,one,owner,c
   return new Response(request.method==='HEAD'?null:object.body,{status:range?206:200,headers:h});
 }
 export async function messagingRoutes(ctx){
-  const {request,env,route,method,stmt,one,all,result,body,get,view,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided}=ctx;
+  const {request,env,route,method,stmt,one,all,result,body,get,view,acknowledge,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided}=ctx;
   const schedule=scheduleChatWork||generate;
+  const compactAck=request.headers.get('X-Rekha-Ack')==='compact-v1'&&typeof acknowledge==='function';
+  const savedView=async(chatId,messageId)=>{const current=await get(chatId);return compactAck?acknowledge(current,messageId):view(current,false,{acknowledgedId:messageId});};
   const appChat=ctx.appSettings?.chat||{},freeTurns=ctx.appSettings?.service?.freeReplies??3,unlockPrice=ctx.appSettings?.service?.unlockPriceRupees??49;
   const customerMayWrite=()=>{if(appChat.customerMessagingEnabled===false)throw fail(403,'Customer messages are currently paused.');};
   const ensure=chatId=>stmt('INSERT OR IGNORE INTO chat_messaging(conversation_id) VALUES(?)',chatId).run();
@@ -136,7 +153,7 @@ export async function messagingRoutes(ctx){
     const chat=await customer(),data=await body();
     if(!messagingClient(data.clientId)||typeof data.body!=='string'||data.body.length>2000)throw fail(400,'Write a message of up to 2,000 characters.');
     const existingMessage=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);
-    if(existingMessage){try{await onCustomerMessage?.(await get(chat.id),existingMessage);}catch{}await schedule(chat.id);return result(await view(await get(chat.id),false,{acknowledgedId:existingMessage.id}));}
+    if(existingMessage){try{await onCustomerMessage?.(await get(chat.id),existingMessage);}catch{}await schedule(chat.id);return result(await savedView(chat.id,existingMessage.id));}
     customerMayWrite();const guided=!!await isGuided?.(chat.id);await rate('chat:'+chat.id,guided?60:48);
     if(data.mediaIds?.length&&appChat.attachmentsEnabled===false)throw fail(403,'Customer attachments are currently unavailable.');
     const selected=await attachments(data.mediaIds||[],chat.id);
@@ -158,7 +175,7 @@ export async function messagingRoutes(ctx){
     // A stored message is acknowledged even if subsequent scheduling is interrupted.
     // The pending row and missing workflow event are recovered by polls and cron.
     try{await onCustomerMessage?.(await get(chat.id),saved);}catch{}
-    await schedule(chat.id);return result(await view(await get(chat.id),false,{acknowledgedId:saved.id}),batch[0].meta.changes?202:200);
+    await schedule(chat.id);return result(await savedView(chat.id,saved.id),batch[0].meta.changes?202:200);
   }
   const ownerPath=route.match(/^\/api\/admin\/conversations\/([a-f0-9-]{36})\/(settings|read|typing|send)$/),customerPath=route.match(/^\/api\/chat\/(read|typing)$/);
   if(ownerPath||customerPath){

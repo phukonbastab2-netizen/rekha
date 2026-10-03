@@ -1,6 +1,6 @@
 import { rewardCallback } from './rewards.mjs';
 import { ownerRoutes, mediaResponse } from './owner.mjs';
-import { messagingRoutes, messagingView, messagingDeleteAttachments, messagingHistory } from './messaging.mjs';
+import { messagingRoutes, messagingView, messagingAcknowledgment, messagingDeleteAttachments, messagingHistory } from './messaging.mjs';
 import { callsRoutes } from './calls.mjs';
 import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowRecoverMessages } from './workflow.mjs';
 import { appSettingsRoutes, appSettingsPublic, appSettingsDefaults } from './app-settings.mjs';
@@ -86,7 +86,16 @@ export async function handleApi(request,env,executionContext){
   async function view(chat,admin=false,options={}){
     const bounded=request.headers.get('X-Rekha-History')==='bounded-v1',history=bounded?await messagingHistory({request,chat,all,fail,options}):{rows:messages(chat.id)};
     const [guidedConversation,messaging,draft]=await Promise.all([workflowIsEnrolled(one,chat.id),messagingView({chat,messages:history.rows,admin,one,all,bounded,acknowledgedId:options.acknowledgedId}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;
-    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,...(admin?{mode:chat.mode,inboxRevision:chat.inbox_revision||0}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
+    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
+  }
+  async function acknowledge(chat,acknowledgedId){
+    if(!chat)throw fail(409,'The chat changed. Please refresh.');
+    const [guidedConversation,messaging]=await Promise.all([workflowIsEnrolled(one,chat.id),messagingAcknowledgment({chat,acknowledgedId,one})]);
+    if(!messaging)throw fail(409,'The saved message is unavailable. Please refresh.');
+    const freeTurns=appSettings.service.freeReplies;
+    // An ACK is a partial snapshot, never a history/delta cursor. A client must
+    // retain its previous cursor so concurrent incoming messages and edits sync.
+    return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
   }
   async function customer(){const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));if(!c)throw fail(401,'Your chat session has ended. Please start again.');return c;}
   async function owner(){if(!cookies.ar_admin||!await one('SELECT 1 FROM admin_sessions WHERE token_hash=? AND expires>?',await hash(cookies.ar_admin),Date.now()))throw fail(401,'Please sign in to the owner panel.');}
@@ -111,14 +120,14 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-policies-0.9.2'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-fast-chat-0.9.2'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
     if(['POST','PUT','PATCH','DELETE'].includes(method)){if(request.headers.get('Origin')!==url.origin)throw fail(403,'Request origin not allowed.');await rate(`write:${request.headers.get('CF-Connecting-IP')||'unknown'}`,240);}
     const edited=await appSettingsRoutes(workflowCtx);if(edited)return edited;
     const workflow=await workflowRoutes(workflowCtx);if(workflow)return workflow;
-    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>workflowIsEnrolled(one,id),appSettings});if(messaging)return messaging;
+    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,acknowledge,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>workflowIsEnrolled(one,id),appSettings});if(messaging)return messaging;
     const calls=await callsRoutes({request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate,appSettings});if(calls)return calls;
     if(route==='/api/start'&&method==='POST'){
       await rate(`signup:${request.headers.get('CF-Connecting-IP')||'unknown'}`,12,3600000);const data=await body();
