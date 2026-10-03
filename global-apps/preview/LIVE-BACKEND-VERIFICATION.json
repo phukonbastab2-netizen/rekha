@@ -1,0 +1,134 @@
+[
+  {
+    "id": "luna-harbor",
+    "url": "https://rekha-luna-harbor.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-luna-harbor.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "willow-moon",
+    "url": "https://rekha-willow-moon.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-willow-moon.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "southern-star",
+    "url": "https://rekha-southern-star.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-southern-star.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "siam-dao",
+    "url": "https://rekha-siam-dao.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-siam-dao.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "nyota-path",
+    "url": "https://rekha-nyota-path.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-nyota-path.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "tala-guide",
+    "url": "https://rekha-tala-guide.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-tala-guide.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "orion-naija",
+    "url": "https://rekha-orion-naija.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-orion-naija.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "byeol-saju",
+    "url": "https://rekha-byeol-saju.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-byeol-saju.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "serendib-stars",
+    "url": "https://rekha-serendib-stars.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-serendib-stars.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "hoshi-note",
+    "url": "https://rekha-hoshi-note.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-hoshi-note.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "xing-light",
+    "url": "https://rekha-xing-light.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-xing-light.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  },
+  {
+    "id": "csillag-ut",
+    "url": "https://rekha-csillag-ut.phukonbastab2.workers.dev/",
+    "owner": "https://rekha-csillag-ut.phukonbastab2.workers.dev/admin",
+    "signup": true,
+    "reply": true,
+    "media": true,
+    "privacy": true,
+    "signaling": true,
+    "relayConfigured": false
+  }
+]

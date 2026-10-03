@@ -1,3 +1,14 @@
+# Connected release verification — 3 October 2026
+
+- All 18 local tests passed, including fixed namespace isolation.
+- All 12 deployed services passed real HTTPS customer signup, owner authentication, customer message → owner reply → customer receipt, private attachment upload/download and cross-customer denial, and call create/accept/signal/end checks. Disposable test conversations and uploads were removed.
+- A deployed customer browser journey reached the connected conversation with Voice and Video controls; no console errors were reported.
+- All 12 versionCode 3 / 1.2.0-connected APKs passed signature, package, compiled live URL, allowed-permission and embedded-asset checks. All public APK hashes matched.
+- Physical phone permission behavior and two-device audio/video calls remain unverified. TURN is not configured. AI, real payments and voice cloning remain disabled.
+- Source readback matched all 242 text files; existing repository files outside global-apps were preserved.
+
+The older baseline records follow for history.
+
 # Verification — 3 October 2026
 
 ## Update 1.1.0
