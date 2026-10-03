@@ -41,7 +41,8 @@
 
 /* Notices remain readable in the conversation and scroll with its history. */
 .chat-mode .chat-notices { max-width: 100%; margin: 0 auto 12px; }
-.chat-mode .conversation-security { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 12px; border-radius: 7px; background: #fff4ce; color: #665b40; font-size: 10.5px; line-height: 1.5; text-align: center; }
+.chat-mode .conversation-security { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 12px; border-radius: 7px; background: #e9f5ec; color: #167348; font-size: 10.5px; line-height: 1.5; text-align: center; }
+.chat-mode .conversation-security .chat-icon { flex: 0 0 12px; width: 12px; height: 12px; }
 .chat-mode .chat-ribbon { width: fit-content; max-width: 100%; margin: 6px auto 0; padding: 5px 11px; border: 0; border-radius: 7px; background: #fffffff0; color: #53655a; font-size: 11px; line-height: 1.4; text-align: center; }
 .chat-mode .conversation-security:empty, .chat-mode .chat-ribbon:empty { display: none; }
 .chat-mode .chat-notices:has(.conversation-security:empty):has(.chat-ribbon:empty) { display: none; }

@@ -14,6 +14,7 @@ const icons={
   image:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/>',
   check:'<path d="m4 12 5 5L20 6"/>',
   checks:'<path d="m2 12 5 5L18 6m-5 11L23 7"/>',
+  lock:'<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 15v2"/>',
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'
 };
 const aliases={emoji:'smile',attachment:'attach',microphone:'mic',document:'file',gallery:'image'};
