@@ -2,7 +2,9 @@
 
 Twelve independently branded astrology-themed web apps and signed Android **offline previews**, adapted from the Rekha Astrology messaging project. Includes a connected server package and private owner web inbox for each app.
 
-**Start here:** [Open the preview collection](preview/index.html) · [Owner control centre](preview/control.html) · [Android APK downloads](preview/apks) · [Deployment guide](docs/DEPLOYMENT.md)
+**Start here:** [Open the online preview collection](https://rekhaastrology.in/global-apps/preview/) · [Owner control centre](https://rekhaastrology.in/global-apps/preview/control.html) · [Android APK downloads](preview/apks) · [Deployment guide](docs/DEPLOYMENT.md)
+
+Published and checked on 3 October 2026: all 12 web preview URLs and APK downloads returned successfully; every downloaded APK matched its locally verified SHA-256. See [delivery status](docs/DELIVERY.md).
 
 The preview collection is static and can be hosted on GitHub Pages or another static host. A file shown on GitHub is source/download content; it is not proof that a web server is live.
 
