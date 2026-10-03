@@ -18,7 +18,7 @@ node scripts/build.mjs
 node scripts/android.mjs
 ```
 
-The outputs are `dist/apks/<app-id>.apk`. The script checks APK v2/v3 signatures. The generated apps use only the INTERNET permission; camera, contacts, location, SMS and microphone access are not requested in these offline builds.
+The outputs are `dist/apks/<app-id>.apk`. The script checks APK v2/v3 signatures. Version 1.1.0 (versionCode 2) declares INTERNET, RECORD_AUDIO and CAMERA. Microphone and camera runtime permission requests begin only after a feature tap. File selection uses the system picker; no SMS, contacts, location or broad gallery permission is requested. See VOICE-AND-PERMISSIONS.md.
 
 The initial private signing key is stored in the creating workspace's `work/android-signing/` folder, outside the deliverables and GitHub. Back it up securely before moving to another machine. A plain copied APK is not a backup of the signing key.
 

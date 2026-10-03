@@ -1,6 +1,13 @@
 # Verification — 3 October 2026
 
-## Passed
+## Update 1.1.0
+
+- The original 15 checks passed after the permission and call changes; an additional audio-routing/preset/cleanup test passed. Final generated JavaScript syntax checks passed for 91 distinct files.
+- Browser checks confirmed the new feature dialog and selectable admin effect presets, with no browser console errors. Microphone capture and live two-device calls were not exercised.
+- All 12 APKs rebuilt and passed v2/v3 signature, package, version, allowed-permission and expanded bundled-asset checks. Public downloads matched the rebuilt SHA-256 hashes.
+- Reduced overlapping polling and repeated read receipts; no measured latency benchmark was run.
+
+## Initial baseline checks
 
 - Final test run: **15 tests passed, 0 failed**. Covers all 12 country bundles, supported locale validation and translated welcome messages, adult/consent checks, origin rejection, owner authentication, cross-customer isolation, duplicate-message handling, manual replies, localized sample replies, private notes and conversation deletion.
 - **89 distinct generated JavaScript files** passed syntax validation, including customer screens, owner screens and server bundles.
