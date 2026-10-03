@@ -41,10 +41,10 @@
 
 /* Notices remain readable in the conversation and scroll with its history. */
 .chat-mode .chat-notices { max-width: 100%; margin: 0 auto 12px; }
-.chat-mode .demo-ribbon { padding: 7px 12px; border-radius: 7px; background: #fff4ce; color: #665b40; font-size: 10.5px; line-height: 1.5; text-align: center; }
+.chat-mode .conversation-security { display: flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 12px; border-radius: 7px; background: #fff4ce; color: #665b40; font-size: 10.5px; line-height: 1.5; text-align: center; }
 .chat-mode .chat-ribbon { width: fit-content; max-width: 100%; margin: 6px auto 0; padding: 5px 11px; border: 0; border-radius: 7px; background: #fffffff0; color: #53655a; font-size: 11px; line-height: 1.4; text-align: center; }
-.chat-mode .demo-ribbon:empty, .chat-mode .chat-ribbon:empty { display: none; }
-.chat-mode .chat-notices:has(.demo-ribbon:empty):has(.chat-ribbon:empty) { display: none; }
+.chat-mode .conversation-security:empty, .chat-mode .chat-ribbon:empty { display: none; }
+.chat-mode .chat-notices:has(.conversation-security:empty):has(.chat-ribbon:empty) { display: none; }
 
 /* Original, quiet line doodles. No artwork or interface assets copied from WhatsApp. */
 .chat-mode .chat-scroll { min-height: 0; flex: 1; padding: 12px 18px 10px; background-color: var(--chat-wallpaper); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='260' viewBox='0 0 280 260'%3E%3Cg fill='none' stroke='%23858c80' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round' opacity='.12'%3E%3Cpath d='M25 35c-11-12-21 1-13 10l13 13 13-13c8-9-2-22-13-10zM191 33l25-7-11 24-4-12zM201 38l15-12M74 118c8-14 21-17 29-9-1 13-13 22-25 17M78 126l18-14M209 186l20-7 15 10v24l-15-8-20 7zM229 179v26M33 206a13 13 0 1 0 18-18 14 14 0 0 1-18 18zM124 32l4-9 4 9 10 3-10 4-4 9-4-9-10-4zM143 199c0-8 14-8 14 0 0 8-14 8-14 0zM150 192v-7M150 206v7M143 199h-7M157 199h7M48 160l5-5 5 5-5 5zM249 113l5-5 5 5-5 5zM136 95h21a6 6 0 0 1 6 6v9a6 6 0 0 1-6 6h-8l-7 6v-6h-6a6 6 0 0 1-6-6v-9a6 6 0 0 1 6-6zM139 106h14M113 245l8-4M266 231l-7-5M62 53l4 5M7 110l5-5'/%3E%3C/g%3E%3C/svg%3E"); scrollbar-width: thin; scrollbar-color: #b6c0b8 transparent; overscroll-behavior: contain; scroll-padding: 12px; }
