@@ -1,6 +1,8 @@
-# Optional call relay setup
+# Optional TURN setup for video calls
 
-TURN helps a voice or video call connect when the two devices cannot establish a direct connection. It is separate from the deployed chat service. The current collection has **no activated TURN relay**: the available Cloudflare management credential returned HTTP 403 when checking TURN management. A credential that can deploy Workers may not have permission to manage Realtime TURN. No paid relay activation or plan change was performed automatically.
+Release **1.3.2-connected** uses an active private, same-origin WSS relay for voice calls. Voice calls do not need TURN. Voice audio passes through this app's server and is not recorded; admin voices may use effects. If voice-call audio pauses, use **Resume call audio**. If altered microphone audio pauses, use **Resume microphone** or **Use Natural**. The 117 automated tests do not verify physical-phone sound or cross-network device calls; those checks remain pending.
+
+Video calls continue to use WebRTC. TURN helps a video call connect when the two devices cannot establish a direct connection. The current collection has **no activated TURN relay**: the available Cloudflare management credential returned HTTP 403 when checking TURN management. A credential that can deploy Workers may not have permission to manage Realtime TURN. No paid relay activation or plan change was performed automatically. If incoming video-call sound is blocked, use **Play call audio**.
 
 The source includes server-side generation of temporary Cloudflare TURN credentials. Follow [Cloudflare's Generate Credentials guide](https://developers.cloudflare.com/realtime/turn/generate-credentials/) to obtain a TURN key in your own account. Review the account's applicable service terms and billing before enabling it. The long-term key must remain on the server; only the generated, expiring connection credentials belong in a client.
 
@@ -40,10 +42,10 @@ Only the documented standard Cloudflare STUN/TURN hosts are accepted. Requests h
 
 ## Fallback and verification
 
-- With neither TURN secret configured, the existing connection settings are used. The current default is STUN-only, so restrictive mobile or workplace networks can still prevent calls.
-- With a missing, invalid or rejected configured secret, or a provider timeout, call configuration returns HTTP 503 with an understandable message. It does not silently claim a relay is working or downgrade the configured provider to STUN.
+- With neither TURN secret configured, video calls use the existing STUN-only settings, so restrictive mobile or workplace networks can still prevent video calls. Voice calls with the private WSS relay configured use that relay independently of TURN.
+- With a missing, invalid or rejected configured TURN secret, or a provider timeout, video-call configuration returns HTTP 503 with an understandable message. It does not silently claim a TURN relay is working or downgrade the configured provider to STUN.
 - Unauthenticated requests fail; unknown, expired or unrelated call IDs are rejected. Excess credential requests are rate limited.
 
-After configuration, use two actual devices on different networks with both app pages open. Start and answer a call, verify audio in both directions, mute/unmute, voice effects and clean call ending. Confirm a selected ICE candidate pair uses a relay before calling TURN traversal verified. Check only non-secret status and connection statistics; do not log complete credential responses.
+After configuration, use two actual devices on different networks with both app pages open. Start and answer a video call, verify audio in both directions, mute/unmute, voice effects and clean call ending. Confirm a selected ICE candidate pair uses a relay before calling TURN traversal verified. Check only non-secret status and connection statistics; do not log complete credential responses.
 
-The silent synthetic browser test verifies local WebRTC audio delivery, all five effects and mute/unmute. It is **not evidence of cross-network calling, TURN traversal, Android permission behavior or background ringing**. Those checks remain separate from code and signaling tests.
+Synthetic browser audio checks are **not evidence of physical-phone sound, cross-network device calling, TURN traversal, Android permission behavior or background ringing**. Those checks remain separate from code, signaling and relay tests.

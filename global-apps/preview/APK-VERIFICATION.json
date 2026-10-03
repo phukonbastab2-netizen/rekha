@@ -4,8 +4,8 @@
     "name": "Luna Harbor",
     "country": "United States",
     "package": "in.rekha.global.lunaharbor",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -13,8 +13,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "6e2966350602064b00ef46b9ec44712ea8b5f2ccd7b89c50b45b772526dce511",
-    "bytes": 50754,
+    "sha256": "e3de839263bae3a1637ed40c232736909bf8c1481661999c9ff47613e795c363",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-luna-harbor.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -24,8 +24,8 @@
     "name": "Willow Moon",
     "country": "United Kingdom",
     "package": "in.rekha.global.willowmoon",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -33,8 +33,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "23bade5173487bb7b162871198301b63533e39d3ab9d02a26bf0d4c1e5d609bc",
-    "bytes": 50754,
+    "sha256": "748a199590133edfacab82bd9c76f8fa66152816198003c5cb7f1b8716ca271a",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-willow-moon.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -44,8 +44,8 @@
     "name": "Southern Star",
     "country": "South Africa",
     "package": "in.rekha.global.southernstar",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -53,8 +53,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "b8a36016cd43c974ac25340f31cdd665834e21111a7e19b717e32536d2e81f26",
-    "bytes": 50754,
+    "sha256": "1f5c80e7719d1495c99a0a17f1f3e468341b54748e20cb0a2f4400f48bf6b68e",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-southern-star.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -64,8 +64,8 @@
     "name": "Siam Dao",
     "country": "Thailand",
     "package": "in.rekha.global.siamdao",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -73,8 +73,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "9e61f7a73c21929d4f2bc1cb8e084c80e7230e04c67ba555bfcabd613f231a50",
-    "bytes": 54850,
+    "sha256": "82be7982ff34a9e586e514bb0d1b3e7ceca6fd7ec4235c990926f61bd03570f4",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-siam-dao.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -84,8 +84,8 @@
     "name": "Nyota Path",
     "country": "Kenya",
     "package": "in.rekha.global.nyotapath",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -93,8 +93,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "453d2717a1bfcfa14f0961cb7b864d226b3c055f4ce3585ee5f9a54b312024ff",
-    "bytes": 50754,
+    "sha256": "81a24edcb7e1df690702f3a74946f7b3dab0f9faff8a1509f22ff9f886365990",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-nyota-path.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -104,8 +104,8 @@
     "name": "Tala Guide",
     "country": "Philippines",
     "package": "in.rekha.global.talaguide",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -113,8 +113,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "21a762b967f04dedca9ef94a71e180408472898a0f17ea5198eef6e40e154b03",
-    "bytes": 50754,
+    "sha256": "121c5a6939c00de3f1a6165ccb1526790494f8320ed3dca0124e2fddd95dbace",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-tala-guide.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -124,8 +124,8 @@
     "name": "Orion Naija",
     "country": "Nigeria",
     "package": "in.rekha.global.orionnaija",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -133,8 +133,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "ffceb8712debf133a4aab84f770129a8c0ebf98c7f682d72fa189398b626713a",
-    "bytes": 50754,
+    "sha256": "4f4b49bccc91519ffe28ee8a07c10517e05b4be364e5ad4d82105229934bbcfb",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-orion-naija.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -144,8 +144,8 @@
     "name": "Byeol Saju",
     "country": "South Korea",
     "package": "in.rekha.global.byeolsaju",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -153,8 +153,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "3c19d82dc11608a2d89aa3bf724758ceec33423f38468bc7774a7dc5e5186372",
-    "bytes": 54850,
+    "sha256": "9aec23526a78f786e11f837f43441347e09f1a5ee2efd792970fe849ab39430d",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-byeol-saju.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -164,8 +164,8 @@
     "name": "Serendib Stars",
     "country": "Sri Lanka",
     "package": "in.rekha.global.serendibstars",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -173,8 +173,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "518e56411a917febbb514ce2a4856e3df0c76c79474d8e9c51becac4394154b4",
-    "bytes": 54850,
+    "sha256": "95e07fc34539b43dd883867318154f22a15b4f11412dd29b4afc3d42535f52bc",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-serendib-stars.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -184,8 +184,8 @@
     "name": "Hoshi Note",
     "country": "Japan",
     "package": "in.rekha.global.hoshinote",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -193,8 +193,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "2a6f7b305fd841be9c3fddbca12f41486188ed2981e6fea5c01ecd2b561db978",
-    "bytes": 54850,
+    "sha256": "82f4187f03f756d9607c283933aea146207682466cb0f26b33e294f8f8708096",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-hoshi-note.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -204,8 +204,8 @@
     "name": "Xing Light",
     "country": "Singapore",
     "package": "in.rekha.global.xinglight",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -213,8 +213,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "24153346634633777a0b67cb3e56dd79ef2daf271172c0a8ecb37fe5ce710014",
-    "bytes": 54850,
+    "sha256": "e8d13ec51669512fc4da0bb04f873f62a2268cc3fd8d73b057f67cd43825aa20",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-xing-light.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
@@ -224,8 +224,8 @@
     "name": "Csillag Út",
     "country": "Hungary",
     "package": "in.rekha.global.csillagut",
-    "version": "1.3.1-connected",
-    "versionCode": 5,
+    "version": "1.3.2-connected",
+    "versionCode": 6,
     "permissions": [
       "android.permission.INTERNET",
       "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -233,8 +233,8 @@
       "android.permission.CAMERA"
     ],
     "minAndroid": 26,
-    "sha256": "c1fa52e1ec6bed124375b8389b275f25932be4e716b5e55f51db7b58f4af906e",
-    "bytes": 54850,
+    "sha256": "c688f2811e8e1bdb4b9105b23941725f5ebd918c0316520249684a87643487ae",
+    "bytes": 59088,
     "assetsMatch": true,
     "connectedUrl": "https://rekha-csillag-ut.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"

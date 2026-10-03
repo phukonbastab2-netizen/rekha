@@ -10,7 +10,7 @@ const moduleBody = file => fs.readFileSync(file, 'utf8').replace(/^import [^\n]*
 async function withFixture(run) {
   const {Miniflare, convertV4MiniflareOptions} = await import(process.env.MINIFLARE_MODULE || 'miniflare');
   const customerA = randomUUID(), customerB = randomUUID();
-  const script = moduleBody('backend/turn.mjs') + '\n' + moduleBody('backend/calls.mjs') + `
+  const script = moduleBody('backend/turn.mjs') + '\n' + moduleBody('backend/audio-relay.mjs') + '\n' + moduleBody('backend/calls.mjs') + `
     export default {async fetch(request,env){
       const url=new URL(request.url),cookie=request.headers.get('Cookie')||'';
       const stmt=(sql,...values)=>env.DB.prepare(sql).bind(...values);

@@ -4,11 +4,11 @@ Twelve independently branded astrology-themed web apps and connected Android cus
 
 **Start here:** [Apps and customer APKs](https://rekhaastrology.in/global-apps/preview/) · [Owner control centre](https://rekhaastrology.in/global-apps/preview/control.html) · [Admin Android APK](https://rekhaastrology.in/global-apps/preview/apks/rekha-global-admin.apk) · [Connected deployment](docs/CONNECTED-DEPLOYMENT.md)
 
-All 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`; their owner panels are at `/admin`. The collection also keeps separate offline web demos. APK 1.3.1-connected (versionCode 5) loads the live service, so messaging needs an internet connection. Preserve existing customer package IDs and the signing key for updates.
+All 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`; their owner panels are at `/admin`. The collection also keeps separate offline web demos. APK 1.3.2-connected (versionCode 6) loads the live service, so messaging needs an internet connection. Preserve existing customer package IDs and the signing key for updates.
 
-Release 1.3.1 adds the Android communication-audio permission, a Play call audio recovery button and a two-minute server lease for abandoned calls. It retains incoming-call polling, permission cancellation and connection recovery. It includes 12 customer APKs and one admin APK. See [release notes](docs/RELEASE-NOTES-1.3.1.md), [phone test steps](docs/PHONE-CALL-TEST.md) and [verification](docs/VERIFICATION.md).
+Release 1.3.2 adds a private voice relay through the existing backend, bounded audio startup and recovery controls for interrupted audio. It retains the communication-audio permission, playback recovery and two-minute participant leases. It includes 12 customer APKs and one admin APK. See [release notes](docs/RELEASE-NOTES-1.3.2.md), [relay details](docs/VOICE-RELAY.md), [phone test steps](docs/PHONE-CALL-TEST.md) and [verification](docs/VERIFICATION.md).
 
-Replies are manual. Live AI, real payments and voice cloning are disabled. A TURN relay has not been activated: the current Cloudflare credential received HTTP 403 from TURN management. Calls need both apps open and may fail on restrictive networks. Real device and cross-network calls remain untested.
+Replies are manual. Live AI, real payments and voice cloning are disabled. Voice calls use the authenticated app relay when configured; video retains WebRTC and may need TURN. Audio passes through the app server over encrypted connections and is not recorded or end-to-end encrypted. Calls need both apps open. Physical phone audio remains untested.
 
 ## Use the admin app
 
@@ -67,7 +67,7 @@ To refresh the committed static previews after a build, copy `dist/` into `previ
 - **Connected services:** server-side sessions, owner-to-customer chat, private submitted attachments and owner tools. The 12 deployed Workers use fixed database namespaces and private storage prefixes. Owner controls and advanced call/media labels use English.
 - **Android:** 12 customer APKs and one admin APK; Android 8+ required. They load their live HTTPS pages and require internet access. Physical phone/emulator runtime behavior remains unverified.
 - No live payments, AI-provider credentials, birth-chart calculations, calendar conversion, auspicious-time calculation, app-store listing, practitioner certification or cloned testimonials are supplied. Prices are not invented for new markets.
-- Voice/video signaling and local microphone effects are included. Optional short-lived TURN configuration is supported in source but no relay is active. Successful call signaling does not establish audible two-device calls. Background ringing and instant push are not implemented; end-to-end encryption is not claimed.
+- Voice calls can use the private app relay; video signaling and local microphone effects are included. Optional TURN is supported but inactive. Successful signaling or generated-audio tests do not establish audible two-phone speech. Background ringing and instant push are not implemented; end-to-end encryption is not claimed.
 - Translations and cultural wording are drafts for native-speaker/cultural review before a commercial launch. Country selection uses a comparable survey proxy, not a global ranking of astrology belief. See [research notes](docs/COUNTRIES.md).
 
 Existing Rekha website files and customer data are outside this folder and were not changed.

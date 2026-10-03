@@ -1,0 +1,581 @@
+[
+  {
+    "app": "luna-harbor",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:53:11.119Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "retryOfTimestamp": "2026-10-03T04:50:09.657Z",
+    "passed": true,
+    "elapsedMilliseconds": 21695
+  },
+  {
+    "app": "willow-moon",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:53:28.231Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "retryOfTimestamp": "2026-10-03T04:50:08.680Z",
+    "passed": true,
+    "elapsedMilliseconds": 17110
+  },
+  {
+    "app": "southern-star",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:53:50.380Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "retryOfTimestamp": "2026-10-03T04:50:08.628Z",
+    "passed": true,
+    "elapsedMilliseconds": 22149
+  },
+  {
+    "app": "siam-dao",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:17.759Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 9130
+  },
+  {
+    "app": "nyota-path",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:17.099Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 8419
+  },
+  {
+    "app": "tala-guide",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:17.870Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 8213
+  },
+  {
+    "app": "orion-naija",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:28.202Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 11103
+  },
+  {
+    "app": "byeol-saju",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:29.319Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 11560
+  },
+  {
+    "app": "serendib-stars",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:29.584Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 11714
+  },
+  {
+    "app": "hoshi-note",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:36.955Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 8753
+  },
+  {
+    "app": "xing-light",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:38.180Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 8861
+  },
+  {
+    "app": "csillag-ut",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:50:37.805Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 8221
+  }
+]

@@ -1,8 +1,8 @@
-# Voice and optional device features — 1.3.1-connected
+# Voice and optional device features — 1.3.2-connected
 
-The connected owner panel offers Natural, Warm, Bright, Radio and Robot microphone effects, before or during a WebRTC call. The effects alter the outgoing audio track locally; no voice identity model is trained or recorded. Both call panels disclose that admin voices may be altered. This is not voice cloning.
+The connected owner panel offers Natural, Warm, Bright, Radio and Robot microphone effects, before or during a voice/video call. The effects alter the outgoing audio track locally; no voice identity model is trained or recorded. Both call panels disclose that admin voices may be altered. This is not voice cloning.
 
-The connected services are deployed, and real calls require two reachable clients with both app pages open. A TURN relay may be required on restrictive networks. No relay has been activated: the current credential received HTTP 403 from Cloudflare TURN management. Optional short-lived TURN support is present in source, but signaling checks, local tests and builds do not establish a successful two-device call. Separate offline web demos offer a local microphone/camera/file setup test.
+Voice calls can use a private same-origin WebSocket relay; video retains WebRTC and may need TURN. The TURN management credential still returns HTTP 403. Both apps must remain open. Relay audio is readable by the app server and is not recorded or end-to-end encrypted. Physical phone audio remains unverified. See [relay details](VOICE-RELAY.md). Separate offline web demos offer a local microphone/camera/file setup test.
 
 Android requests microphone or camera permission when the corresponding feature is tapped. Customer builds permit their own live HTTPS service; the admin build permits the collection and its 12 service hosts, with the requesting origin required to match the current page. Unknown WebView resources are denied. Android file selection uses the system document picker; no broad storage, SMS, contact or gallery-reading permission is requested. Admin access covers conversations and files deliberately submitted to the connected app, not the contents of a customer's phone.
 

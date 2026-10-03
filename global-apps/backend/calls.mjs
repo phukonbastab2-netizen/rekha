@@ -1,5 +1,6 @@
-// Private foreground call signaling. Media travels between the two devices.
+// Private foreground calls. Voice can use the authenticated app relay; video uses WebRTC.
 import { generateTurnConfig } from './turn.mjs';
+import { handleAudioRelay, endAudioRelay } from './audio-relay.mjs';
 const CALL_HEARTBEAT_LEASE_MS = 120000;
 export async function callsRoutes(ctx){
   const {request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate}=ctx;
@@ -17,6 +18,15 @@ export async function callsRoutes(ctx){
   await stmt("UPDATE calls SET status='ended',reason='blocked',updated=? WHERE status!='ended' AND conversation_id IN (SELECT conversation_id FROM chat_messaging WHERE blocked=1)",Date.now()).run();
   await stmt("DELETE FROM call_signals WHERE call_id IN (SELECT id FROM calls WHERE status='ended')").run();
   if(route===prefix+'/config'&&method==='GET'){
+    if(env.CALL_AUDIO_RELAY){
+      const callId=new URL(request.url).searchParams.get('callId');
+      if(callId){
+        if(!/^[a-f0-9-]{36}$/.test(callId))throw fail(400,'Start or answer a call first.');
+        const permitted=await one("SELECT * FROM calls WHERE id=? AND status!='ended' AND expires>?",callId,Date.now());
+        if(!permitted||actor==='customer'&&permitted.conversation_id!==chat.id)throw fail(404,'Call not found.');
+        if(permitted.type==='voice')return result({enabled:true,voiceRelayConfigured:true,relayConfigured:false,iceServers:[],foregroundOnly:true});
+      }
+    }
     if(env.TURN_KEY_ID||env.TURN_API_TOKEN){
       const callId=new URL(request.url).searchParams.get('callId');
       if(!/^[a-f0-9-]{36}$/.test(callId||''))throw fail(400,'Start or answer a call before requesting its connection settings.');
@@ -45,9 +55,14 @@ export async function callsRoutes(ctx){
     if(!insert.meta.changes)throw fail(409,'A call is already in progress.');
     return result(view(await one(callQuery+' WHERE id=?',id)),201);
   }
-  const match=route.slice(prefix.length).match(/^\/([a-f0-9-]{36})(?:\/(accept|end|signals))?$/);
+  const match=route.slice(prefix.length).match(/^\/([a-f0-9-]{36})(?:\/(accept|end|signals|audio))?$/);
   if(!match)throw fail(404,'Call not found.');
   const call=await one(callQuery+' WHERE id=?',match[1]);if(!call||actor==='customer'&&call.conversation_id!==chat.id)throw fail(404,'Call not found.');
+  if(match[2]==='audio'&&method==='GET'){
+    if(call.status!=='active'||call.type!=='voice'||call.expires<=Date.now())throw fail(409,'Start and answer a voice call first.');
+    await rate('voice-socket:'+actor+':'+call.id,6,60000);
+    return handleAudioRelay(request,env,{actor,call});
+  }
   if(!match[2]&&method==='GET')return result(view(call));
   if(match[2]==='accept'&&method==='POST'){
     if(call.caller===actor)throw fail(403,'Only the recipient can accept.');
@@ -61,7 +76,9 @@ export async function callsRoutes(ctx){
   }
   if(match[2]==='end'&&method==='POST'){
     const data=await body(),reason=['declined','cancelled','completed','connection-failed'].includes(data.reason)?data.reason:'completed';
-    await stmt("UPDATE calls SET status='ended',reason=?,updated=?,expires=? WHERE id=?",reason,Date.now(),Date.now(),call.id).run();await stmt('DELETE FROM call_signals WHERE call_id=?',call.id).run();return result({ok:true});
+    await stmt("UPDATE calls SET status='ended',reason=?,updated=?,expires=? WHERE id=?",reason,Date.now(),Date.now(),call.id).run();await stmt('DELETE FROM call_signals WHERE call_id=?',call.id).run();
+    // If transport closure is temporarily unavailable, its next DB authorization check still revokes audio.
+    await endAudioRelay(env,call,reason).catch(()=>{});return result({ok:true});
   }
   if(match[2]==='signals'&&method==='GET'){
     const after=Number(new URL(request.url).searchParams.get('after')||0);if(!Number.isSafeInteger(after)||after<0)throw fail(400,'Invalid cursor.');

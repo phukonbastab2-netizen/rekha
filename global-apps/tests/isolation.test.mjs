@@ -9,7 +9,7 @@ test('two connected apps share infrastructure without sharing customer or owner 
  const {Miniflare,convertV4MiniflareOptions}=await import(process.env.MINIFLARE_MODULE||'miniflare');
  const dir=process.env.CONNECTED_OUTPUT||path.resolve('connected');if(!fs.existsSync(path.join(dir,'schema.sql')))execFileSync(process.execPath,['scripts/connected.mjs'],{env:{...process.env,CONNECTED_OUTPUT:dir}});
  const ids=['luna-harbor','willow-moon'];const password='local-isolation-fixture';
- const script=fs.readFileSync(path.join(dir,ids[0],'worker.mjs'),'utf8').replace('scopeEnvironment(env,"g01_",','scopeEnvironment(env,new URL(request.url).hostname.startsWith("luna")?"g01_":"g02_",');
+ const script=fs.readFileSync(path.join(dir,ids[0],'worker.mjs'),'utf8').replace('return connectedWorker.fetch(request,scopeEnvironment(env,"g01_",','return connectedWorker.fetch(request,scopeEnvironment(env,new URL(request.url).hostname.startsWith("luna")?"g01_":"g02_",');
  const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'shared-test'},r2Buckets:{MEDIA:'shared-test'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex'),AI_MODE:'manual'}}));
  try{const db=await mf.getD1Database('DB');for(const sql of fs.readFileSync(path.join(dir,'schema.sql'),'utf8').split(';').filter(s=>s.trim()))await db.prepare(sql).run();
 

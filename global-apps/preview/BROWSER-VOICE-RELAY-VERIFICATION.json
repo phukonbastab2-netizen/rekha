@@ -1,0 +1,108 @@
+{
+  "test": "generated audio over the real private Cloudflare WebSocket relay",
+  "productionOrigin": "https://rekha-luna-harbor.phukonbastab2.workers.dev",
+  "credentialProxy": "Private localhost proxy; production cookies remain in the local server process.",
+  "usesRealCloudflareWebSockets": true,
+  "usesBrowserMicrophone": false,
+  "physicalSpeakersUsed": false,
+  "actualPhoneAudioVerified": false,
+  "crossNetworkPhoneCallVerified": false,
+  "checks": {
+    "bidirectional": {
+      "adminRms": 0.17623352424722066,
+      "customerRms": 0.17679402247542858,
+      "passed": true
+    },
+    "presets": [
+      {
+        "choice": "natural",
+        "customerRms": 0.012914692692089282,
+        "passed": true
+      },
+      {
+        "choice": "warm",
+        "customerRms": 0.18204464173745782,
+        "passed": true
+      },
+      {
+        "choice": "bright",
+        "customerRms": 0.20819237395408063,
+        "passed": true
+      },
+      {
+        "choice": "radio",
+        "customerRms": 0.09135627119067351,
+        "passed": true
+      },
+      {
+        "choice": "robot",
+        "customerRms": 0.10529396899647625,
+        "passed": true
+      }
+    ],
+    "mute": {
+      "customerRms": 0,
+      "oppositeDirectionRms": 0.1754315002682586,
+      "passed": true
+    },
+    "unmute": {
+      "customerRms": 0.1757465962411535,
+      "passed": true
+    },
+    "pauseResume": {
+      "passed": true
+    },
+    "serverHangup": {
+      "contextsClosed": true,
+      "passed": true
+    },
+    "inputOwnership": {
+      "tracksRemainLiveUntilOwnerCleanup": true,
+      "passed": true
+    }
+  },
+  "passed": true,
+  "cleanup": {
+    "cleanup": true,
+    "ended": true,
+    "customerDeleted": true,
+    "ownerLoggedOut": true,
+    "statistics": {
+      "admin": {
+        "localAccepted": true,
+        "opened": true,
+        "sentFrames": 101,
+        "receivedFrames": 108,
+        "handshakeStatus": null,
+        "upstreamCloseCode": 1000,
+        "upstreamError": null
+      },
+      "customer": {
+        "localAccepted": true,
+        "opened": true,
+        "sentFrames": 112,
+        "receivedFrames": 97,
+        "handshakeStatus": null,
+        "upstreamCloseCode": 1000,
+        "upstreamError": null
+      }
+    }
+  },
+  "peerStates": {
+    "admin": [
+      "waiting",
+      "waiting",
+      "connected",
+      "disconnected"
+    ],
+    "customer": [
+      "waiting",
+      "connected",
+      "disconnected"
+    ]
+  },
+  "errors": [],
+  "inputOwnerCleanup": true,
+  "elapsedMs": 8746,
+  "checkedAt": "2026-10-03T04:43:41.099Z"
+}

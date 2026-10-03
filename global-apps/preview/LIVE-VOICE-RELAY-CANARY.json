@@ -1,0 +1,50 @@
+[
+  {
+    "app": "luna-harbor",
+    "build": "global-1.3.2-connected",
+    "auth": true,
+    "voiceRelayConfigured": true,
+    "pcmBothDirections": true,
+    "noSelfEcho": true,
+    "hangup": true,
+    "cleanup": true,
+    "physicalPhoneAudioTested": false,
+    "generatedAudioOnly": true,
+    "scope": "Live HTTPS and WSS relay with generated PCM only. No microphone capture, speaker playback, or physical-phone audio test.",
+    "timestamp": "2026-10-03T04:43:04.199Z",
+    "checks": {
+      "unauthenticatedStatus": 401,
+      "wrongOriginStatus": 403,
+      "otherCustomerStatus": 404,
+      "pcm": {
+        "sampleRate": 16000,
+        "channels": 1,
+        "sampleFormat": "PCM16LE",
+        "frameBytes": 1280,
+        "frameMilliseconds": 40,
+        "exactFramesPerDirection": 2,
+        "customerReceivedRms": [
+          0.22652,
+          0.14812
+        ],
+        "ownerReceivedRms": [
+          0.16929,
+          0.11298
+        ]
+      },
+      "reconnectStatus": 409,
+      "endedConfigStatus": 404,
+      "cleanup": {
+        "pendingCallEnded": true,
+        "deleteCustomerAStatus": 200,
+        "deleteCustomerBStatus": 200,
+        "ownerLogoutStatus": 200,
+        "deletedCustomerAStatus": 401,
+        "deletedCustomerBStatus": 401,
+        "loggedOutOwnerStatus": 401
+      }
+    },
+    "passed": true,
+    "elapsedMilliseconds": 8844
+  }
+]
