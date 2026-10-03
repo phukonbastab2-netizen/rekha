@@ -1,0 +1,16 @@
+node_modules/
+dist/
+live/
+.env*
+!.env.example
+.wrangler/
+*.jks
+*.keystore
+*.pem
+*.log
+private/
+data/
+android/build/
+android/.gradle/
+android/local.properties
+android/flavors/

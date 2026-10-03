@@ -1,0 +1,389 @@
+[
+  {
+    "id": "luna-harbor",
+    "name": "Luna Harbor",
+    "country": "United States",
+    "code": "US",
+    "locale": "en",
+    "languages": [
+      "en"
+    ],
+    "currency": "USD",
+    "zone": "America/New_York",
+    "percent": 9,
+    "color": "#526998",
+    "accent": "#d8bc8b",
+    "symbol": "☾",
+    "native": "Luna Harbor",
+    "tradition": "Western astrology · intention journaling",
+    "intro": "Find a little room for possibility.",
+    "culture": {
+      "en": [
+        "A personal relationship with the stars",
+        "Western natal astrology, sun-sign horoscopes and tarot are distinct practices. This app offers a space to discuss your interests; it does not calculate a natal chart or perform a tarot reading.",
+        "An intention, in your own words",
+        "Write one intention and one achievable action. Moon-themed journaling is optional; the app does not claim a ritual can guarantee love, money or health."
+      ]
+    }
+  },
+  {
+    "id": "willow-moon",
+    "name": "Willow Moon",
+    "country": "United Kingdom",
+    "code": "GB",
+    "locale": "en",
+    "languages": [
+      "en"
+    ],
+    "currency": "GBP",
+    "zone": "Europe/London",
+    "percent": 8,
+    "color": "#5c6b59",
+    "accent": "#d2c29c",
+    "symbol": "☽",
+    "native": "Willow Moon",
+    "tradition": "Western astrology · seasonal reflection",
+    "intro": "A thoughtful moment, just for you.",
+    "culture": {
+      "en": [
+        "Your own way of looking at the stars",
+        "This app uses Western astrology as a conversation theme. The UK has many beliefs; seasonal customs and modern astrology do not form one shared British ritual system.",
+        "A seasonal pause",
+        "Notice what is changing around you and write one thing you would like to nurture. This is a journaling suggestion, not a historical Druidic or other sacred rite."
+      ]
+    }
+  },
+  {
+    "id": "southern-star",
+    "name": "Southern Star",
+    "country": "South Africa",
+    "code": "ZA",
+    "locale": "en",
+    "languages": [
+      "en",
+      "af"
+    ],
+    "currency": "ZAR",
+    "zone": "Africa/Johannesburg",
+    "percent": 47,
+    "color": "#20776b",
+    "accent": "#e1b770",
+    "symbol": "✺",
+    "native": "Southern Star",
+    "tradition": "Western zodiac · personal reflection",
+    "intro": "A little space beneath a very big sky.",
+    "culture": {
+      "en": [
+        "Your own tradition",
+        "Choose the traditions that matter to you. South African communities have diverse beliefs; a country or birthday does not determine your religion.",
+        "A moment of gratitude",
+        "If it fits your own practice, take a quiet moment to thank someone who has supported you. This is an optional reflection, not an ancestral consultation."
+      ],
+      "af": [
+        "Jou eie tradisie",
+        "Kies die tradisies wat vir jou saak maak. Suid-Afrikaanse gemeenskappe het uiteenlopende oortuigings; jou land of verjaarsdag bepaal nie jou geloof nie.",
+        "ʼn Oomblik van dankbaarheid",
+        "As dit by jou eie gebruik pas, bedank iemand wat jou ondersteun het. Dit is opsionele nadenke, nie ʼn voorouerraadpleging nie."
+      ]
+    }
+  },
+  {
+    "id": "siam-dao",
+    "name": "Siam Dao",
+    "country": "Thailand",
+    "code": "TH",
+    "locale": "th",
+    "languages": [
+      "th",
+      "en"
+    ],
+    "currency": "THB",
+    "zone": "Asia/Bangkok",
+    "percent": 29,
+    "color": "#805132",
+    "accent": "#e1b567",
+    "symbol": "✧",
+    "native": "สยามดาว",
+    "tradition": "Thai birth-day traditions · reflection",
+    "intro": "A quiet moment for a brighter day.",
+    "culture": {
+      "en": [
+        "Birth-day traditions",
+        "Some Thai practices connect the day of birth with colours and Buddha images. Customs vary; the app does not calculate auspicious times or prescribe worship.",
+        "Kindness today",
+        "If meaningful to you, make time for a simple act of kindness. Merit-making is a religious practice, not a guaranteed way to change an outcome."
+      ],
+      "th": [
+        "ความเชื่อเรื่องวันเกิด",
+        "บางประเพณีไทยเชื่อมโยงวันเกิดกับสีและพระประจำวันเกิด แต่ละชุมชนมีธรรมเนียมต่างกัน แอปนี้ไม่คำนวณฤกษ์หรือกำหนดวิธีบูชา",
+        "ความเมตตาในวันนี้",
+        "หากสอดคล้องกับความเชื่อของคุณ ลองทำความดีเล็ก ๆ การทำบุญเป็นการปฏิบัติทางศาสนา ไม่ใช่การรับประกันผลลัพธ์"
+      ]
+    }
+  },
+  {
+    "id": "nyota-path",
+    "name": "Nyota Path",
+    "country": "Kenya",
+    "code": "KE",
+    "locale": "sw",
+    "languages": [
+      "sw",
+      "en"
+    ],
+    "currency": "KES",
+    "zone": "Africa/Nairobi",
+    "percent": 23,
+    "color": "#98583c",
+    "accent": "#e4c997",
+    "symbol": "✷",
+    "native": "Njia ya Nyota",
+    "tradition": "Zodiac conversation · individual traditions",
+    "intro": "Your questions. Your path. Your pace.",
+    "culture": {
+      "en": [
+        "Many communities, many traditions",
+        "Kenya has many cultural and religious communities. This app offers zodiac-themed reflection; it does not claim a single Kenyan divination system.",
+        "A grounded intention",
+        "Write down one intention for the day and one practical step toward it. Add a personal prayer only if it belongs to your own practice."
+      ],
+      "sw": [
+        "Jamii nyingi, mila nyingi",
+        "Kenya ina jamii nyingi za kitamaduni na kidini. Programu hii hutoa tafakari kuhusu nyota; haidai kuwa kuna mfumo mmoja wa utabiri wa Kenya.",
+        "Nia ya leo",
+        "Andika lengo moja la siku na hatua moja ya kulifikia. Ongeza sala binafsi ikiwa tu ni sehemu ya imani yako."
+      ]
+    }
+  },
+  {
+    "id": "tala-guide",
+    "name": "Tala Guide",
+    "country": "Philippines",
+    "code": "PH",
+    "locale": "fil",
+    "languages": [
+      "fil",
+      "en"
+    ],
+    "currency": "PHP",
+    "zone": "Asia/Manila",
+    "percent": 22,
+    "color": "#435b91",
+    "accent": "#eac787",
+    "symbol": "✹",
+    "native": "Gabay ng Tala",
+    "tradition": "Western zodiac · Chinese zodiac context",
+    "intro": "A conversation under familiar stars.",
+    "culture": {
+      "en": [
+        "Different zodiac traditions",
+        "Western horoscopes and Chinese zodiac traditions are distinct. Chinese New Year does not start on January 1; this app does not assign an animal using a simple calendar-year shortcut.",
+        "A wish, a next step",
+        "Write a hope for the coming season and a realistic action you can take. Family customs and religious practices remain your personal choice."
+      ],
+      "fil": [
+        "Iba’t ibang tradisyon ng zodiac",
+        "Magkaiba ang Kanluraning horoscope at Chinese zodiac. Hindi Enero 1 ang simula ng Chinese New Year; hindi gumagamit ang app ng simpleng taon lamang para tukuyin ang hayop.",
+        "Isang hangarin, isang hakbang",
+        "Isulat ang iyong pag-asa at isang makatotohanang hakbang na kaya mong gawin. Nasa iyo ang pagpili ng tradisyon at paniniwala."
+      ]
+    }
+  },
+  {
+    "id": "orion-naija",
+    "name": "Orion Naija",
+    "country": "Nigeria",
+    "code": "NG",
+    "locale": "en",
+    "languages": [
+      "en"
+    ],
+    "currency": "NGN",
+    "zone": "Africa/Lagos",
+    "percent": 20,
+    "color": "#346248",
+    "accent": "#d0b67a",
+    "symbol": "✵",
+    "native": "Orion Naija",
+    "tradition": "Western zodiac · personal reflection",
+    "intro": "Make room for the question on your mind.",
+    "culture": {
+      "en": [
+        "Respecting distinct traditions",
+        "Nigeria has diverse traditions. Ifá is a Yoruba divination tradition with its own trained practitioners; it is not interchangeable with Western astrology and this app does not perform an Ifá consultation.",
+        "Reflection in your own words",
+        "Set aside a moment to reflect on a question, then choose a practical next step. Prayer or other rituals are optional and belong to your own beliefs."
+      ]
+    }
+  },
+  {
+    "id": "byeol-saju",
+    "name": "Byeol Saju",
+    "country": "South Korea",
+    "code": "KR",
+    "locale": "ko",
+    "languages": [
+      "ko",
+      "en"
+    ],
+    "currency": "KRW",
+    "zone": "Asia/Seoul",
+    "percent": 20,
+    "color": "#555286",
+    "accent": "#cbbcec",
+    "symbol": "✦",
+    "native": "별사주",
+    "tradition": "Saju cultural context · reflection",
+    "intro": "A little pause between life’s chapters.",
+    "culture": {
+      "en": [
+        "Four pillars, not a sun sign",
+        "Saju uses the year, month, day and hour of birth. An accurate chart needs calendar and time conventions. This preview does not calculate the four pillars or compatibility.",
+        "A new chapter",
+        "At a new beginning, write what you hope to nurture and what you can change. This reflection is not a prediction or a prescribed Korean ritual."
+      ],
+      "ko": [
+        "별자리와 다른 사주",
+        "사주는 태어난 연·월·일·시를 살펴봅니다. 정확한 명식에는 달력과 시간 기준이 필요합니다. 이 미리보기는 사주나 궁합을 계산하지 않습니다.",
+        "새로운 시작",
+        "새로운 시작에 키우고 싶은 것과 바꿀 수 있는 것을 적어 보세요. 이 성찰은 예언이나 정해진 한국 의례가 아닙니다."
+      ]
+    }
+  },
+  {
+    "id": "serendib-stars",
+    "name": "Serendib Stars",
+    "country": "Sri Lanka",
+    "code": "LK",
+    "locale": "si",
+    "languages": [
+      "si",
+      "en"
+    ],
+    "currency": "LKR",
+    "zone": "Asia/Colombo",
+    "percent": 20,
+    "color": "#89622e",
+    "accent": "#e6cb8d",
+    "symbol": "✺",
+    "native": "සෙරන්ඩිබ් තරු",
+    "tradition": "Lagna · auspicious-time cultural context",
+    "intro": "A gentle space for your next question.",
+    "culture": {
+      "en": [
+        "Lagna and auspicious times",
+        "Some Sri Lankan traditions consult horoscopes and auspicious times. A full chart requires birth time, place and a calculation method. This preview does not calculate a lagna or nekath.",
+        "Personal observance",
+        "Choose a quiet reflection that fits your own faith. Buddhist, Hindu, Muslim, Christian and other Sri Lankan traditions should not be treated as one ritual system."
+      ],
+      "si": [
+        "ලග්නය සහ සුබ වේලාවන්",
+        "ශ්‍රී ලංකාවේ ඇතැම් සම්ප්‍රදායන් කේන්දර සහ සුබ වේලාවන් භාවිත කරයි. සම්පූර්ණ කේන්දරයකට උපන් වේලාව, ස්ථානය සහ ගණනය කිරීමේ ක්‍රමයක් අවශ්‍යය. මෙම පෙරදසුන ලග්නය හෝ නැකැත් ගණනය නොකරයි.",
+        "ඔබේම පිළිවෙත",
+        "ඔබේ විශ්වාසයට ගැළපෙන නිහඬ මොහොතක් තෝරන්න. ශ්‍රී ලංකාවේ විවිධ ආගමික සම්ප්‍රදායන් එකම චාරිත්‍ර පද්ධතියක් ලෙස නොසැලකිය යුතුය."
+      ]
+    }
+  },
+  {
+    "id": "hoshi-note",
+    "name": "Hoshi Note",
+    "country": "Japan",
+    "code": "JP",
+    "locale": "ja",
+    "languages": [
+      "ja",
+      "en"
+    ],
+    "currency": "JPY",
+    "zone": "Asia/Tokyo",
+    "percent": 19,
+    "color": "#974f61",
+    "accent": "#e9b7c5",
+    "symbol": "✧",
+    "native": "星ノート",
+    "tradition": "Seiza · eto · omikuji cultural context",
+    "intro": "Small reflections, beneath a quiet sky.",
+    "culture": {
+      "en": [
+        "Distinct ways of reflecting",
+        "Seiza horoscopes, eto zodiac traditions and omikuji fortune slips are different practices. Omikuji are associated with shrines and temples; this app is not an official shrine service.",
+        "A note for today",
+        "Write a short intention and revisit it this evening. It is a journal prompt, not an omikuji drawn at a shrine or a guaranteed forecast."
+      ],
+      "ja": [
+        "それぞれの文化を大切に",
+        "星座占い、干支、おみくじは異なるものです。おみくじは神社や寺院に関わる文化で、このアプリは公式の神社サービスではありません。",
+        "今日のひとこと",
+        "今日の目標を短く書き、夜に振り返ってみましょう。これは日記のヒントであり、神社のおみくじや確実な予言ではありません。"
+      ]
+    }
+  },
+  {
+    "id": "xing-light",
+    "name": "Xing Light",
+    "country": "Singapore",
+    "code": "SG",
+    "locale": "zh",
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "currency": "SGD",
+    "zone": "Asia/Singapore",
+    "percent": 19,
+    "color": "#356d72",
+    "accent": "#c6d9ae",
+    "symbol": "✥",
+    "native": "星光小语",
+    "tradition": "Chinese zodiac context · multicultural reflection",
+    "intro": "A thoughtful pause in a busy city.",
+    "culture": {
+      "en": [
+        "A multicultural conversation",
+        "Singapore has many faiths and languages. Chinese zodiac celebrations form one cultural context, not a belief shared by everyone. Zodiac animals, BaZi and feng shui are different systems.",
+        "An intention for the season",
+        "Take a moment to record a hope for the season. The app does not calculate BaZi, recommend paid remedies or choose auspicious dates."
+      ],
+      "zh": [
+        "尊重多元文化",
+        "新加坡拥有多种信仰和语言。生肖庆祝活动是一种文化背景，并非所有人都持有相同信念。生肖、八字和风水是不同的体系。",
+        "为新阶段写下心愿",
+        "花一点时间记录你的心愿。本应用不排八字、不推荐付费改运服务，也不选择吉日。"
+      ]
+    }
+  },
+  {
+    "id": "csillag-ut",
+    "name": "Csillag Út",
+    "country": "Hungary",
+    "code": "HU",
+    "locale": "hu",
+    "languages": [
+      "hu",
+      "en"
+    ],
+    "currency": "HUF",
+    "zone": "Europe/Budapest",
+    "percent": 17,
+    "color": "#715442",
+    "accent": "#d6bb8c",
+    "symbol": "✶",
+    "native": "Csillag Út",
+    "tradition": "Western zodiac · reflective journaling",
+    "intro": "A quiet conversation, a clearer next step.",
+    "culture": {
+      "en": [
+        "Your own relationship with astrology",
+        "This app uses a Western-zodiac theme. It does not claim that astrology is a national religion or that all Hungarians share the same rituals.",
+        "A moment to reflect",
+        "Write down a question and separate what you know from what you hope. This optional journaling exercise is not a historical Hungarian rite."
+      ],
+      "hu": [
+        "A saját kapcsolatod az asztrológiával",
+        "Az alkalmazás a nyugati állatöv témáját használja. Nem állítja, hogy az asztrológia nemzeti vallás, vagy hogy minden magyar ugyanazokat a rítusokat követi.",
+        "Egy pillanat az elmélkedésre",
+        "Írj le egy kérdést, és válaszd külön, amit tudsz, attól, amit remélsz. Ez választható naplógyakorlat, nem történelmi magyar szertartás."
+      ]
+    }
+  }
+]

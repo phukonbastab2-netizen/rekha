@@ -1,0 +1,25 @@
+import groovy.json.JsonSlurper
+plugins { id 'com.android.application' version '8.9.1' }
+def catalog = new JsonSlurper().parse(file('../dist/catalog.json'))
+android {
+    namespace 'in.rekha.global'
+    compileSdk 36
+    defaultConfig { applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 1; versionName '1.0.0-preview' }
+    sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs = ['src']; res.srcDirs = ['res'] } }
+    flavorDimensions += 'country'
+    productFlavors {
+        catalog.each { country ->
+            create(country.id.replace('-','')) {
+                dimension 'country'
+                applicationId "in.rekha.global.${country.id.replace('-','')}"
+                resValue 'string', 'app_name', "${country.name} Preview"
+            }
+        }
+    }
+    catalog.each { country ->
+        sourceSets.getByName(country.id.replace('-','')).assets.srcDirs = ["../dist/web/${country.id}"]
+        sourceSets.getByName(country.id.replace('-','')).res.srcDirs = ["flavors/${country.id}/res"]
+    }
+    buildTypes { release { minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}

@@ -1,0 +1,35 @@
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,token_hash TEXT UNIQUE NOT NULL,name TEXT NOT NULL,dob TEXT NOT NULL,language TEXT NOT NULL,preferences TEXT NOT NULL,mode TEXT NOT NULL DEFAULT 'ai',version INTEGER NOT NULL DEFAULT 0,free_used INTEGER NOT NULL DEFAULT 0,entitlement TEXT NOT NULL DEFAULT 'free',created INTEGER NOT NULL,updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,role TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'sent',client_id TEXT,created INTEGER NOT NULL,UNIQUE(conversation_id,client_id));
+CREATE TABLE IF NOT EXISTS drafts(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,message_id INTEGER NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,version INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS admin_sessions(token_hash TEXT PRIMARY KEY,expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id,id);
+
+CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,title TEXT NOT NULL,type TEXT NOT NULL,category TEXT NOT NULL DEFAULT 'general',object_key TEXT,url TEXT,mime TEXT,size INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS media_collections(id TEXT PRIMARY KEY,title TEXT NOT NULL,item_ids TEXT NOT NULL,created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS media_grants(conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,media_id TEXT NOT NULL REFERENCES media_items(id) ON DELETE CASCADE,PRIMARY KEY(conversation_id,media_id));
+
+CREATE TABLE IF NOT EXISTS reward_attempts(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,created INTEGER NOT NULL,expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS reward_grants(transaction_id TEXT PRIMARY KEY,attempt_id TEXT NOT NULL UNIQUE,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS reward_grants_conversation ON reward_grants(conversation_id);
+CREATE INDEX IF NOT EXISTS reward_attempts_conversation ON reward_attempts(conversation_id,created);
+CREATE TABLE IF NOT EXISTS reward_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS chat_messaging(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,customer_read INTEGER NOT NULL DEFAULT 0,owner_read INTEGER NOT NULL DEFAULT 0,customer_typing INTEGER NOT NULL DEFAULT 0,owner_typing INTEGER NOT NULL DEFAULT 0,pinned INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0,blocked INTEGER NOT NULL DEFAULT 0,labels TEXT NOT NULL DEFAULT '[]',notes TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS message_messaging(message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,reply_to INTEGER REFERENCES messages(id) ON DELETE SET NULL,edited INTEGER,deleted INTEGER);
+CREATE TABLE IF NOT EXISTS message_stars(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,side TEXT NOT NULL CHECK(side IN ('customer','owner')),PRIMARY KEY(message_id,side));
+CREATE TABLE IF NOT EXISTS message_reactions(message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,side TEXT NOT NULL CHECK(side IN ('customer','owner')),emoji TEXT NOT NULL,PRIMARY KEY(message_id,side));
+CREATE TABLE IF NOT EXISTS chat_attachments(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,title TEXT NOT NULL,type TEXT NOT NULL,object_key TEXT NOT NULL,mime TEXT NOT NULL,size INTEGER NOT NULL,ready INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS chat_attachments_conversation ON chat_attachments(conversation_id);
+CREATE TABLE IF NOT EXISTS saved_replies(id TEXT PRIMARY KEY,title TEXT NOT NULL,body TEXT NOT NULL,created INTEGER NOT NULL,updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,caller TEXT NOT NULL,type TEXT NOT NULL,status TEXT NOT NULL,reason TEXT,created INTEGER NOT NULL,updated INTEGER NOT NULL,expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS call_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,call_id TEXT NOT NULL REFERENCES calls(id) ON DELETE CASCADE,actor TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,created INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS calls_conversation ON calls(conversation_id,created);
+CREATE UNIQUE INDEX IF NOT EXISTS calls_one_active_per_conversation ON calls(conversation_id) WHERE status!='ended';
+CREATE TABLE IF NOT EXISTS workflow_settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS chat_workflow(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,generation INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'armed',stage TEXT NOT NULL DEFAULT 'NEW',campaign TEXT NOT NULL DEFAULT 'NONE',config TEXT NOT NULL,started_at INTEGER NOT NULL,updated INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS workflow_jobs(id TEXT PRIMARY KEY,conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,generation INTEGER NOT NULL,kind TEXT NOT NULL,step INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'pending',due INTEGER NOT NULL,lease_until INTEGER,attempts INTEGER NOT NULL DEFAULT 0,payload TEXT NOT NULL,trigger_id INTEGER,created INTEGER NOT NULL,updated INTEGER NOT NULL,UNIQUE(conversation_id,generation,kind));
+CREATE INDEX IF NOT EXISTS workflow_jobs_due ON workflow_jobs(status,due,lease_until);
+CREATE INDEX IF NOT EXISTS workflow_jobs_conversation ON workflow_jobs(conversation_id,generation,status,due);
+CREATE TABLE IF NOT EXISTS workflow_events(conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,generation INTEGER NOT NULL,message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,created INTEGER NOT NULL,PRIMARY KEY(conversation_id,generation,message_id));
