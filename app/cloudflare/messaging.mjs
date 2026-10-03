@@ -58,7 +58,9 @@ export async function messagingReadUpload(request,limit,fail){
   let size=0;const chunks=[];for(;;){const next=await reader.read();if(next.done)break;size+=next.value.length;if(size>limit){await reader.cancel();throw fail(413,'Files must be 20 MB or smaller.');}chunks.push(next.value);}
   const bytes=new Uint8Array(size);let offset=0;for(const part of chunks){bytes.set(part,offset);offset+=part.length;}return bytes;
 }
-const messagingColumns="id,role,kind,body,status,created,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId";
+const messagingStartupIdsSql="'onboarding:kundli-v1','onboarding:kundli-review-v1','onboarding:testimonials-v1','onboarding:kundli-wait-v1'";
+export const messagingColumns="id,role,kind,body,status,created,CASE WHEN role='assistant' AND client_id IN ("+messagingStartupIdsSql+") THEN created ELSE NULL END AS deliveryAt,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId";
+export const messagingCustomerReadLimitSql=`SELECT MIN(COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=?),0),COALESCE((SELECT MIN(id)-1 FROM messages WHERE conversation_id=? AND client_id IN (${messagingStartupIdsSql}) AND role='assistant' AND created>?),9223372036854775807)) AS id`;
 export async function messagingHistory({request,chat,all,fail,options={}}){
   const params=new URL(request.url).searchParams,cutoff=chat.change_revision||0;
   const before=request.method==='GET'?params.get('beforeId'):null,after=request.method==='GET'?params.get('afterRevision'):null;
@@ -94,7 +96,7 @@ export async function messagingAcknowledgment({chat,acknowledgedId,one}){
   // Send acknowledgments need only the saved row, not another history page.
   // Read current decoration as well: a replay may follow an edit, deletion,
   // reaction or owner read. The indexed subqueries stay scoped to this row.
-  const row=await one(`SELECT m.id,m.role,m.kind,m.body,m.status,m.created,m.change_revision AS changeRevision,m.client_id AS clientId,
+  const row=await one(`SELECT m.id,m.role,m.kind,m.body,m.status,m.created,NULL AS deliveryAt,m.change_revision AS changeRevision,m.client_id AS clientId,
     d.reply_to AS replyTo,d.edited,d.deleted,COALESCE(s.owner_read,0) AS ownerRead,COALESCE(s.customer_read,0) AS customerRead,
     COALESCE(s.customer_typing,0) AS customerTyping,COALESCE(s.owner_typing,0) AS ownerTyping,COALESCE(s.blocked,0) AS blocked,
     EXISTS(SELECT 1 FROM message_stars WHERE message_id=m.id AND side='customer') AS starred,
@@ -197,7 +199,10 @@ export async function messagingRoutes(ctx){
     }
     if(action==='read'){
       if(!Number.isSafeInteger(data.lastId)||data.lastId<0)throw fail(400,'Invalid read position.');
-      const latest=await one('SELECT COALESCE(MAX(id),0) AS id FROM messages WHERE conversation_id=?',chat.id),read=Math.min(data.lastId,latest.id);
+      // Later customer messages can have higher IDs than undisplayed startup
+      // rows. Do not let a read-through cursor mark those rows read early.
+      // The four explicit private IDs use the existing conversation/client index.
+      const latest=isOwner?await one('SELECT COALESCE(MAX(id),0) AS id FROM messages WHERE conversation_id=?',chat.id):await one(messagingCustomerReadLimitSql,chat.id,chat.id,Date.now()),read=Math.min(data.lastId,latest.id);
       await stmt(`UPDATE chat_messaging SET ${isOwner?'owner_read':'customer_read'}=MAX(${isOwner?'owner_read':'customer_read'},?) WHERE conversation_id=?`,read,chat.id).run();return result({ok:true});
     }
     if(action==='typing'){

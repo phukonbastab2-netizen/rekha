@@ -25,6 +25,7 @@ function bodyOf(message){
 function rowOf(value){
   const id=messageId(value?.id);if(!id||!['user','assistant','system'].includes(value.role))return null;
   const row={id,role:value.role,kind:typeof value.kind==='string'?value.kind:'',body:bodyOf(value),status:typeof value.status==='string'?value.status:'',created:number(value.created),changeRevision:number(value.changeRevision??value.change_revision),deleted:value.deleted===true,readByOther:value.readByOther===true,starred:value.starred===true};
+  if(value.role==='assistant'&&Number.isSafeInteger(value.deliveryAt)&&value.deliveryAt>0&&value.deliveryAt<=8640000000000000)row.deliveryAt=value.deliveryAt;
   if(typeof value.clientId==='string'&&value.role==='user')row.clientId=value.clientId;
   row.replyTo=messageId(value.replyTo);row.edited=messageId(value.edited);
   row.reactions=row.deleted?[]:Array.isArray(value.reactions)?value.reactions.filter(item=>item&&typeof item.emoji==='string').map(item=>({emoji:item.emoji,...(['owner','customer'].includes(item.by)?{by:item.by}:{})})):[];
@@ -43,6 +44,7 @@ function metadataOf(view){
   for(const key of ['version','updated','inboxRevision','rewardedReplies','freeUsed','freeRemaining'])if(key in data)data[key]=number(data[key]);
   for(const key of ['name','dob','language','entitlement'])if(key in data&&typeof data[key]!=='string')delete data[key];
   for(const key of ['guidedConversation','locked','blocked'])if(key in data)data[key]=data[key]===true;
+  if(Number.isSafeInteger(view.clockOffsetMs)&&Math.abs(view.clockOffsetMs)<=3660*86400000)data.clockOffsetMs=view.clockOffsetMs;
   if(view.preferences&&typeof view.preferences==='object'){
     data.preferences={remember:view.preferences.remember===true};
     if(typeof view.preferences.consentVersion==='string')data.preferences.consentVersion=view.preferences.consentVersion;
@@ -55,6 +57,7 @@ function mergeMetadata(previous,next,kind){
   if(!previous)return next;
   const newer=kind!=='older'&&(number(next.version)>number(previous.version)||number(next.version)===number(previous.version)&&number(next.updated)>=number(previous.updated));
   const data={...previous,...(newer?next:{})};
+  if(Number.isSafeInteger(next.clockOffsetMs)&&Math.abs(next.clockOffsetMs)<=3660*86400000)data.clockOffsetMs=next.clockOffsetMs;
   if(kind!=='older'){const settings=number(next.inboxRevision)>=number(previous.inboxRevision)?next:previous;for(const key of ['inboxRevision','blocked'])if(key in settings)data[key]=settings[key];}
   if(next.receiptCursors)data.receiptCursors={ownerRead:Math.max(number(previous.receiptCursors?.ownerRead),next.receiptCursors.ownerRead),customerRead:Math.max(number(previous.receiptCursors?.customerRead),next.receiptCursors.customerRead)};
   return data;
@@ -138,6 +141,7 @@ export function createDeviceChatStore({indexedDB=globalThis.indexedDB,IDBKeyRang
         // record rather than reading all conversation messages into memory.
         const chat=await requested(tx.objectStore('metadata').get('chat:'+id));
         if(!chat)return false;
+        if(Number.isSafeInteger(value?.clockOffsetMs)&&Math.abs(value.clockOffsetMs)<=3660*86400000){chat.chat.clockOffsetMs=value.clockOffsetMs;await requested(tx.objectStore('metadata').put(chat));}
         const messages=tx.objectStore('messages'),records=[];
         for(const record of pending.records){const confirmed=record.snapshot.editId?await requested(messages.get([id,record.snapshot.editId])):await requested(messages.index('client').get([id,record.clientId]));if(!confirmed||record.snapshot.editId&&(confirmed.deleted||confirmed.body.trim()!==record.snapshot.body.trim()||number(chat.chat.version)<record.baseVersion))records.push(record);}
         await requested(tx.objectStore('pending').put({id,...pending,records}));state='available';return true;

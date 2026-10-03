@@ -4,6 +4,7 @@ const remainingLabel='समय बाकी · Samay baaki';
 const completeLabel='5 मिनट पूरे · 5 minute poore';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const controllers=new WeakMap();
+const clocks=new WeakMap();
 
 export function kundliWaitDeadline(message){
   if(message?.kind!=='kundli-wait'||message.deleted)return null;
@@ -52,10 +53,10 @@ function createController(doc){
     return state;
   }
   function refresh(){
-    stop();const now=Date.now();let nextDelay=1000;
+    stop();let nextDelay=1000;
     for(const [node,record] of active){
       if(!node.isConnected){active.delete(node);continue;}
-      const state=render(record,now);
+      const state=render(record,record.now());
       if(state.complete){active.delete(node);continue;}
       nextDelay=Math.min(nextDelay,state.remainingMs%1000||1000);
     }
@@ -69,13 +70,13 @@ function createController(doc){
     const nodes=new Set(container.querySelectorAll('[data-kundli-wait]'));
     for(const previous of containers.get(container)||[])if(!nodes.has(previous))active.delete(previous);
     containers.set(container,nodes);
-    const now=Date.now();
+    const now=clocks.get(container)||Date.now;
     for(const node of nodes){
       const deadline=Number(node.dataset.kundliWait);
       if(!Number.isFinite(deadline)||deadline<0)continue;
       const record=active.get(node)||{node,deadline,seconds:null,clock:node.querySelector('[data-wait-clock]'),label:node.querySelector('[data-wait-label]'),progress:node.querySelector('[data-wait-progress]')};
-      record.deadline=deadline;
-      const state=render(record,now);
+      record.deadline=deadline;record.now=now;
+      const state=render(record,now());
       if(node.isConnected&&!state.complete)active.set(node,record);else active.delete(node);
     }
     refresh();
@@ -90,4 +91,12 @@ export function bindCountdowns(container){
   let controller=controllers.get(doc);
   if(!controller){controller=createController(doc);controllers.set(doc,controller);}
   controller.bind(container);
+}
+
+// Customer startup delivery can use a server-aligned clock. Owner threads keep
+// the default device clock; this provider applies only to this one container.
+export function setCountdownClock(container,now){
+  if(!container?.ownerDocument)return;
+  if(typeof now==='function')clocks.set(container,now);else clocks.delete(container);
+  controllers.get(container.ownerDocument)?.bind(container);
 }

@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.4-preview",
+  "version": "0.9.5-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -101,6 +101,7 @@
     "public/rekha-portrait.png",
     "public/send-queue.js",
     "public/shipping-policy.html",
+    "public/startup-delivery.js",
     "public/styles.css",
     "public/support.html",
     "public/sw.js",
@@ -129,6 +130,7 @@
     "tests/rewards.test.mjs",
     "tests/scaling-ui.test.mjs",
     "tests/send-queue.test.mjs",
+    "tests/startup-delivery.test.mjs",
     "tests/test-app-settings.mjs",
     "tests/test-attachment-quota.mjs",
     "tests/test-calls-scale.mjs",

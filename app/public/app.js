@@ -9,6 +9,8 @@ import { chatIcon } from './chat-icons.js';
 import { createChatSounds } from './chat-sounds.js';
 import { mountVideoSignup,renderKundliPreparation,waitForPreparation } from './video-onboarding.js';
 import { createDeviceChatStore } from './device-chat-store.js';
+import { createStartupDelivery,orderDeliveredMessages } from './startup-delivery.js';
+import { setCountdownClock } from './countdown.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
@@ -19,8 +21,22 @@ const deviceStore=createDeviceChatStore({onError:()=>{if(stage==='chat')toast(la
 const history=createChatHistory();let olderLoading=false;
 const messageMarkup=new Map(),dateFormatters=new Map();
 let drawFrame=null,releaseChatLayout=()=>{},forceLatest=false,incomingHighWater=0,unreadIncoming=0,networkOffline=navigator.onLine===false;
+let soundStartupIds=new Set(),incomingStartupIds=new Set(),soundChatId=null;
 function requestChatDraw(){if(stage!=='chat'||drawFrame!==null)return;drawFrame=requestAnimationFrame(()=>{drawFrame=null;if(stage==='chat')drawChat();});}
 const sounds=createChatSounds({scope:'customer',incomingRole:'assistant',canPlay:()=>stage==='chat'&&!sessionEnded&&!messaging?.hasLiveCapture?.()&&!document.querySelector('.call-panel')});
+const startupDelivery=createStartupDelivery({getChat:()=>chat,canRun:()=>stage==='chat',onReveal:()=>{if(stage!=='chat'||!chat)return;observeVisibleSounds('mutation');drawChat();messaging?.refresh();}});
+const visibleChat=()=>startupDelivery.view(chat);
+function observeVisibleSounds(kind){
+  const view=visibleChat();if(!view)return;
+  if(soundChatId!==view.id){soundChatId=view.id;soundStartupIds=new Set();}
+  const paced=view.messages.filter(message=>message.role==='assistant'&&Number.isSafeInteger(message.deliveryAt)&&message.deliveryAt>0&&!message.deleted);
+  const fresh=paced.some(message=>!soundStartupIds.has(message.id));for(const message of paced)soundStartupIds.add(message.id);
+  if(kind==='older')for(const message of paced)incomingStartupIds.add(message.id);
+  const played=sounds.observe(view,{kind});
+  // A manual reply can have an ID above already committed hidden startup rows.
+  // The ordinary high-water tracker must not swallow their later reveal tones.
+  if(fresh&&!played&&kind!=='initial'&&kind!=='older')sounds.play('received');
+}
 const outbox=createSendQueue({
   online:()=>sessionVerified&&!closingApp&&!networkOffline&&navigator.onLine!==false&&!sessionEnded&&Boolean(chat),
   send:async(record,{signal})=>{if(!chat||chat.id!==record.conversationId||sessionEnded)throw Object.assign(new Error('This chat session has ended. Your message was not sent.'),{status:401});const payload=await record.prepare(record.snapshot,{signal});if(!chat||chat.id!==record.conversationId||sessionEnded||signal.aborted)throw Object.assign(new Error('This chat session has ended. Your message was not sent.'),{status:401});if(!payload)throw Object.assign(new Error('There is no message to send.'),{status:400});if(payload.editId)return api(`/api/messages/${payload.editId}`,'PATCH',{body:payload.body},{signal});const next=await api('/api/messages','POST',payload,{signal,compactAck:true});return compactAcknowledgement(chat,next,record.clientId);},
@@ -70,8 +86,9 @@ function applyPublishedConfig(next){
   if(stage==='chat'){app.querySelector('.chat-name').textContent=astrologerName();app.querySelector('.chat-caption').textContent=chatAvailability();app.querySelector('.composer .footnote').textContent=text('reflection');fingerprint='';drawChat();updateComposePrimary();}
   window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));
 }
-// A fixed availability label for the chat, independent of owner presence.
-const chatAvailability = () => lang === 'hi' ? 'ऑनलाइन' : 'Online';
+const startupSending=()=>startupDelivery.state().pending;
+const ownerTyping=()=>Boolean(chat?.typing?.owner)&&sessionVerified&&!networkOffline&&!offline;
+const chatAvailability = () => startupSending()?'भेज रही हैं… · Bhej rahi hain…':ownerTyping()?(lang==='hi'?'लिख रही हैं…':'Typing…'):lang === 'hi' ? 'ऑनलाइन' : 'Online';
 const conversationNotice = () => lang === 'hi' ? 'सुरक्षित बातचीत' : 'Safe and secure conversation';
 async function api(route, method = 'GET', body, {signal,compactAck=false}={}) {
   if(stage==='chat'&&method!=='GET'&&!sessionVerified)throw Object.assign(new Error('Reconnect to this chat before changing it. Your saved messages are kept.'),{status:503});
@@ -85,8 +102,9 @@ function endSession(){if(sessionEnded){updateConnection();return;}sessionVerifie
 function acceptServerChat(next,{kind='mutation'}={}){
   if(!next||!Array.isArray(next.messages)||chat&&next.id!==chat.id)return false;
   chat=history.accept(chat,next,{kind});
+  startupDelivery.accept(next);chat.clockOffsetMs=startupDelivery.clockOffsetMs();
   void deviceStore.merge({...chat,messages:next.messages},{kind,history:history.state()});
-  chatMutation++;outbox.reconcile(chat);sounds.observe(chat,{kind});if(stage==='chat')drawChat();return true;
+  chatMutation++;outbox.reconcile(chat);observeVisibleSounds(kind);if(stage==='chat')drawChat();return true;
 }
 function drawHistory(){const button=app.querySelector('#load-earlier');if(!button)return;button.hidden=!localOlder&&!history.state().hasOlder;button.disabled=olderLoading;button.textContent=olderLoading?(lang==='hi'?'पुराने संदेश खुल रहे हैं…':'Loading earlier messages…'):(lang==='hi'?'पुराने संदेश देखें':'Load earlier messages');}
 function nearLatest(scroller){return !scroller||scroller.scrollHeight-scroller.scrollTop-scroller.clientHeight<96;}
@@ -119,15 +137,15 @@ async function loadEarlier(){
   catch(error){if(error.status===401)endSession();else toast(error.message);}
   finally{olderLoading=false;drawHistory();}
 }
-function pendingMessages(){return outbox.list().filter(r=>r.conversationId===chat?.id).map(record=>({id:record.snapshot.editId||'local-'+record.clientId,clientId:record.clientId,role:'user',kind:'customer',body:[record.snapshot.body,...(record.snapshot.attachments||[]).map(a=>'📎 '+(a.file?.name||a.uploaded?.title||'Attachment'))].filter(Boolean).join('\n'),created:record.created,status:'outgoing',replyTo:record.snapshot.replyTo||null,reactions:[],sendState:record.state,sendError:record.error,sendUncertain:record.uncertain,editId:record.snapshot.editId||null}));}
-function displayMessages(){const local=pendingMessages(),edits=new Map(local.filter(m=>m.editId).map(m=>[m.editId,m]));return[...chat.messages.map(m=>edits.has(m.id)?{...m,...edits.get(m.id),created:m.created}:m),...local.filter(m=>!m.editId)];}
+function pendingMessages(){return outbox.list().filter(r=>r.conversationId===chat?.id).map(record=>({id:record.snapshot.editId||'local-'+record.clientId,clientId:record.clientId,role:'user',kind:'customer',body:[record.snapshot.body,...(record.snapshot.attachments||[]).map(a=>'📎 '+(a.file?.name||a.uploaded?.title||'Attachment'))].filter(Boolean).join('\n'),created:record.created+startupDelivery.clockOffsetMs(),status:'outgoing',replyTo:record.snapshot.replyTo||null,reactions:[],sendState:record.state,sendError:record.error,sendUncertain:record.uncertain,editId:record.snapshot.editId||null}));}
+function displayMessages(){const local=pendingMessages(),edits=new Map(local.filter(m=>m.editId).map(m=>[m.editId,m]));return orderDeliveredMessages([...visibleChat().messages.map(m=>edits.has(m.id)?{...m,...edits.get(m.id),created:m.created}:m),...local.filter(m=>!m.editId)]);}
 function savedConfig(){try{return JSON.parse(localStorage.getItem('rekha-public-config-v1')||'null');}catch{return null;}}
 function erasedDeviceChat(id){try{return localStorage.getItem('rekha-erased-chat-v1')===id;}catch{return false;}}
 function showClearedDeviceChat(){stage='splash';chatPoll.stop();messaging?.destroy();messaging=null;calls?.destroy();calls=null;app.innerHTML=`<section class="loading"><h1>${lang==='hi'?'डिवाइस की चैट मिटा दी गई':'Saved device chat cleared'}</h1><p>${lang==='hi'?'सर्वर की कॉपी मिटाने के लिए सहायता लें या फिर ऑनलाइन बातचीत खोलें।':'The server copy remains. Contact support to delete it, or reopen the connected conversation.'}</p><p><a href="https://rekhaastrology.in/astrorani/data-deletion.html" target="_blank" rel="noopener noreferrer">${t('deletionHelp')}</a></p><button class="primary" id="reopen-chat">${lang==='hi'?'बातचीत खोलें':'Open conversation'}</button></section>`;app.querySelector('#reopen-chat').onclick=()=>{allowDeviceRestore=true;void boot();};}
 function persistPending(){
   clearTimeout(pendingSaveTimer);pendingSaveTimer=null;
   if(suppressDeviceSave||!chat||stage!=='chat')return Promise.resolve(false);
-  return deviceStore.savePending(chat.id,{records:outbox.list(),draft:messaging?.preserveDraft?.()||composerDraft});
+  return deviceStore.savePending(chat.id,{records:outbox.list(),draft:messaging?.preserveDraft?.()||composerDraft,clockOffsetMs:startupDelivery.clockOffsetMs()});
 }
 function schedulePendingSave(){if(suppressDeviceSave||closingApp||stage!=='chat')return;clearTimeout(pendingSaveTimer);pendingSaveTimer=setTimeout(()=>void persistPending(),120);}
 function restorePending(saved){
@@ -164,14 +182,14 @@ async function readChoices(container, skip = false) {
 }
 function renderChat() {
   releaseOnboarding();
-  releaseChatLayout();forceLatest=true;unreadIncoming=0;incomingHighWater=Math.max(0,...chat.messages.filter(message=>message.role==='assistant').map(message=>Number(message.id)||0));
+  releaseChatLayout();forceLatest=true;unreadIncoming=0;incomingHighWater=Math.max(0,...visibleChat().messages.filter(message=>message.role==='assistant').map(message=>Number(message.id)||0));incomingStartupIds=new Set(visibleChat().messages.filter(message=>Number.isSafeInteger(message.deliveryAt)&&message.deliveryAt>0).map(message=>message.id));
   if(outboxChatId&&outboxChatId!==chat.id){outbox.clear();composerDraft=null;}outboxChatId=chat.id;
   if(history.state().id!==chat.id)history.reset(chat);
   chatMutation++;
   messageMarkup.clear();
   messaging?.destroy(); messaging = null;
   stage = 'chat';sessionEnded=false; updateLanguage(chat.language); fingerprint = '';
-  sounds.observe(chat,{kind:'initial'});
+  startupDelivery.start();observeVisibleSounds('initial');
   document.body.classList.add('chat-mode');
   const securityNote = conversationNotice();
   app.innerHTML = `<section class="chat" aria-label="${esc(astrologerName())} chat"><header class="chat-head"><button type="button" class="chat-back" id="chat-back" aria-label="Conversation settings">${chatIcon('back')}</button><button type="button" class="chat-contact" id="chat-contact" aria-label="${esc(astrologerName())} conversation details"><img class="avatar" src="${esc(logo())}" alt=""><span class="chat-contact-copy"><strong class="chat-name">${esc(astrologerName())}</strong><span class="chat-caption" title="Chat availability; replies may arrive later">${esc(chatAvailability())}</span></span></button><button type="button" class="icon-button" id="chat-privacy" aria-label="Conversation menu" title="Conversation menu">${chatIcon('more')}</button></header><div class="chat-scroll" id="chat-scroll" role="log" aria-live="polite" aria-relevant="additions text"><div class="chat-notices"><div class="conversation-security">${chatIcon('lock',12)}<span class="conversation-security-text">${esc(securityNote)}</span></div><div class="chat-ribbon" id="chat-ribbon"></div></div><div class="date-divider">${t('newChapter')}</div><div id="messages"></div><div id="chat-bottom"></div></div><form class="composer" id="composer"><div class="compose-row"><div class="compose-input"><textarea id="message-input" rows="1" maxlength="2000" aria-label="${t('messagePlaceholder')}" placeholder="${esc(messagePlaceholder())}"></textarea></div><button class="send compose-primary" type="submit" aria-label="${t('send')}">${chatIcon('send')}</button></div><p class="error" id="send-error" role="alert"></p><p class="footnote">${t('reflection')}</p></form></section>`;
@@ -191,7 +209,8 @@ function renderChat() {
   app.querySelector('#composer').addEventListener('rekha:compose-state',event=>updateComposePrimary(event.detail));
   let composing=false;composerInput.addEventListener('compositionstart',()=>composing=true);composerInput.addEventListener('compositionend',()=>composing=false);
   app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing&&!composing&&event.keyCode!==229&&(!matchMedia('(pointer: coarse)').matches||event.ctrlKey||event.metaKey)) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
-  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,isBusy:()=>busy,sounds});
+  setCountdownClock(app.querySelector('#messages'),startupDelivery.now);
+  messaging=createMessagingUI({app,api,getChat:visibleChat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,isBusy:()=>busy,sounds});
   app.querySelector('#composer').addEventListener('input',schedulePendingSave);
   app.querySelector('#composer').addEventListener('rekha:compose-state',schedulePendingSave);
   if(composerDraft){messaging.restoreDraft?.(composerDraft);composerDraft=null;}
@@ -218,12 +237,12 @@ function updateComposePrimary(state){
 }
 function drawChat() {
   if (stage !== 'chat') return;
-  drawHistory();app.querySelector('.date-divider').hidden=history.state().hasOlder||chat.messages.some(message=>message.role!=='system');
-  const visibleMessages=displayMessages(),{messages,...metadata}=chat,print=JSON.stringify([metadata,visibleMessages]);if(print===fingerprint){updateJump();return;}fingerprint=print;
+  drawHistory();app.querySelector('.date-divider').hidden=history.state().hasOlder||visibleChat().messages.some(message=>message.role!=='system');
+  const visibleMessages=displayMessages(),{messages,serverTime,clockOffsetMs,...metadata}=chat,print=JSON.stringify([metadata,visibleMessages,startupSending(),ownerTyping()]);if(print===fingerprint){updateJump();return;}fingerprint=print;
   app.querySelector('.conversation-security-text').textContent = conversationNotice();
   app.querySelector('.chat-caption').textContent = chatAvailability();
   const scroller = app.querySelector('#chat-scroll'), nearBottom=nearLatest(scroller),anchor=!nearBottom&&!forceLatest?captureThreadAnchor(scroller):null;
-  const incoming=visibleMessages.filter(message=>message.role==='assistant'&&Number(message.id)>incomingHighWater);if(incoming.length){incomingHighWater=Math.max(incomingHighWater,...incoming.map(message=>Number(message.id)));if(!nearBottom&&!forceLatest)unreadIncoming+=incoming.length;}
+  const incoming=visibleMessages.filter(message=>message.role==='assistant'&&(Number(message.id)>incomingHighWater||Number.isSafeInteger(message.deliveryAt)&&message.deliveryAt>0&&!incomingStartupIds.has(message.id)));for(const message of visibleMessages)if(Number.isSafeInteger(message.deliveryAt)&&message.deliveryAt>0)incomingStartupIds.add(message.id);if(incoming.length){incomingHighWater=Math.max(incomingHighWater,...incoming.map(message=>Number(message.id)));if(!nearBottom&&!forceLatest)unreadIncoming+=incoming.length;}
   app.querySelector('#chat-ribbon').textContent = !automationEnabled() || chat.guidedConversation ? '' : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
   let lastDay='',lastRole='',lastTime=0;const format=dates(),quoteById=new Map(visibleMessages.map(m=>[m.id,m])),active=new Set();
   const renderedMessages = visibleMessages.map(m => {
@@ -243,6 +262,8 @@ function drawChat() {
   if (automationEnabled() && waiting?.status === 'failed') bottom = `<p class="error">${t('failed')}</p><button class="secondary" id="retry">${t('retry')}</button>`;
   if (automationEnabled() && chat.locked) bottom = `<section class="offer"><span class="eyebrow">${t('offerEyebrow')}</span><h3>${t('offerTitle')}</h3><p>${t('offerText')}</p><div class="price-line"><span class="price">${esc(price())}</span><span>${t('oneTime')}</span></div><button class="primary" id="unlock" ${checkoutBusy ? 'disabled' : ''}>${config.paymentMode === 'demo' ? t('demoUnlock') : t('unlock')}</button><p class="footnote">${t('offerFooter')}</p></section>`;
   if (automationEnabled() && visibleMessages.length === 1) bottom = `<div class="prompt-chips">${t('topics').map(text => `<button class="chip" data-prompt="${esc(text)}">${esc(text)}</button>`).join('')}</div>`;
+  if(startupSending())bottom=`<div class="waiting" id="startup-sending" data-startup-sending role="status"><span class="flame" aria-hidden="true"></span><span>${esc(astrologerName())} संदेश भेज रही हैं… · ${esc(astrologerName())} message bhej rahi hain…</span></div>`+bottom;
+  else if(ownerTyping())bottom=`<div class="waiting" id="owner-typing" role="status"><span class="flame" aria-hidden="true"></span>${esc(astrologerName())} ${lang==='hi'?'लिख रही हैं…':'is typing…'}</div>`+bottom;
   const bottomElement=app.querySelector('#chat-bottom');if(bottomElement.innerHTML!==bottom)bottomElement.innerHTML=bottom;
   const input = app.querySelector('#message-input'); input.disabled = chat.locked;
   input.placeholder = chat.blocked ? 'This conversation is unavailable.' : messagingPaused() ? (lang==='hi'?'संदेश भेजना अभी रोका गया है।':'Messaging is paused. You can still read your chat.') : chat.locked ? text('lockedPlaceholder') : messagePlaceholder();
@@ -320,7 +341,7 @@ function confirmDelete() {
   dialog.querySelector('#confirm-delete').onclick = async event => {const button=event.currentTarget;button.disabled=true;outbox.pause({abort:true});try{const id=chat.id;if(!localOnly&&!serverDeleted){await api('/api/chat','DELETE',{});serverDeleted=true;}suppressDeviceSave=true;clearTimeout(pendingSaveTimer);if(!await deviceStore.erase(id))throw new Error('Could not clear the saved device chat. Please retry or clear this app’s storage in your device settings.');try{localStorage.setItem('rekha-erased-chat-v1',id);}catch{}chatPoll.stop();messaging?.destroy();messaging=null;calls?.destroy();calls=null;outbox.clear();composerDraft=null;chat=null;sessionVerified=false;localOlder=false;localOldestId=null;history.reset();sounds.reset();dialog.close();suppressDeviceSave=false;if(localOnly)showClearedDeviceChat();else videoSignup();}catch(error){suppressDeviceSave=false;toast(error.message);button.disabled=false;if(!serverDeleted)outbox.resume();else endSession();} };
 }
 function videoSignup(progress={}){
-  releaseOnboarding();releaseChatLayout();calls?.destroy();calls=null;messaging?.destroy();messaging=null;chatPoll.stop();outbox.pause();
+  releaseOnboarding();releaseChatLayout();calls?.destroy();calls=null;messaging?.destroy();messaging=null;chatPoll.stop();startupDelivery.stop();outbox.pause();
   document.body.classList.remove('chat-mode');stage='onboarding';
   onboarding=mountVideoSignup(app,{brandName:brandName(),language:lang,profile,progress,onLanguage:updateLanguage,onSubmit:createKundliChat});
   releaseOnboarding=()=>{onboarding?.dispose();onboarding=null;releaseOnboarding=()=>{};};
@@ -336,14 +357,14 @@ async function createKundliChat(details,progress){
       // Recover that conversation before allowing another signup attempt.
       if(!error.status||error.status>=500||error.status===409){const existing=await api('/api/chat').catch(()=>null);if(existing)next=existing;else throw error;}else throw error;
     }
-    await waitForPreparation(started);chat=next;sessionVerified=true;history.reset(next);await deviceStore.merge(next,{kind:'initial',history:history.state()});profile={};renderChat();
+    startupDelivery.accept(next);await waitForPreparation(started);chat=next;chat.clockOffsetMs=startupDelivery.clockOffsetMs();sessionVerified=true;history.reset(next);await deviceStore.merge(chat,{kind:'initial',history:history.state()});profile={};renderChat();
   }catch(error){videoSignup(progress);onboarding.setError(error.message);}
   finally{busy=false;}
 }
 async function boot() {
   if(booting)return;booting=true;sessionVerified=false;
   const saved=await deviceStore.read(),cached=saved&&!erasedDeviceChat(saved.chat.id)?saved:null,cachedConfig=savedConfig();
-  if(cached){applyPublishedConfig(cachedConfig||{automationEnabled:false,rewardsEnabled:false,paymentMode:'demo',amount:4900,retentionDays:30});chat=cached.chat;history.reset({id:chat.id,changeRevision:cached.history?.revision,page:{oldestId:cached.history?.oldestId,hasOlder:cached.history?.hasOlder}});localOlder=cached.hasOlderLocal;localOldestId=cached.oldestId;suppressDeviceSave=true;renderChat();restorePending(cached);suppressDeviceSave=false;offline=true;updateConnection();}
+  if(cached){applyPublishedConfig(cachedConfig||{automationEnabled:false,rewardsEnabled:false,paymentMode:'demo',amount:4900,retentionDays:30});chat=cached.chat;startupDelivery.accept(chat,{cached:true});history.reset({id:chat.id,changeRevision:cached.history?.revision,page:{oldestId:cached.history?.oldestId,hasOlder:cached.history?.hasOlder}});localOlder=cached.hasOlderLocal;localOldestId=cached.oldestId;suppressDeviceSave=true;renderChat();restorePending(cached);suppressDeviceSave=false;offline=true;updateConnection();}
   try {
     const resumeKind=cached&&history.state().revision!==null?'delta':'initial';
     let [nextConfig,nextChat]=await Promise.all([api('/api/config').catch(error=>{if(cachedConfig)return cachedConfig;throw error;}),api(cached?history.route('/api/chat'):'/api/chat').catch(error=>{if(error.status===401)return null;throw error;})]);applyPublishedConfig(nextConfig);
@@ -357,7 +378,7 @@ async function boot() {
     }
     if(nextChat){
       if(chat&&chat.id===nextChat.id){sessionVerified=true;acceptServerChat(nextChat,{kind:resumeKind});messaging?.refresh();}
-      else{if(chat)await persistPending();suppressDeviceSave=true;outbox.clear();composerDraft=null;calls?.destroy();calls=null;chat=nextChat;history.reset(nextChat);localOlder=false;localOldestId=null;sessionVerified=true;await deviceStore.merge(nextChat,{kind:'initial',history:history.state()});renderChat();suppressDeviceSave=false;}
+      else{if(chat)await persistPending();suppressDeviceSave=true;outbox.clear();composerDraft=null;calls?.destroy();calls=null;chat=nextChat;startupDelivery.accept(nextChat);chat.clockOffsetMs=startupDelivery.clockOffsetMs();history.reset(nextChat);localOlder=false;localOldestId=null;sessionVerified=true;await deviceStore.merge(chat,{kind:'initial',history:history.state()});renderChat();suppressDeviceSave=false;}
       offline=false;outbox.resume({retryUncertain:true});calls?.poll();updateConnection();schedulePendingSave();if(nextChat.hasMoreChanges)chatPoll.poke({immediate:true});
     }else if(cached)endSession();else{chat=null;videoSignup();}
   }catch(error){if(chat&&stage==='chat'){offline=true;updateConnection();}else{app.innerHTML=`<section class="loading"><h1>A quiet pause.</h1><p>${esc(error.message)}</p><button class="primary" id="reload">Try again</button></section>`;app.querySelector('#reload').onclick=boot;}}

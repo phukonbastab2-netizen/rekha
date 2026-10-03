@@ -171,7 +171,8 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   function inputChanged(){updateSend();clearTimeout(typingTimer);const active=Boolean(input()?.value.trim())&&!editing;if(active&&Date.now()-lastTyping>3500){lastTyping=Date.now();typing(true);}typingTimer=setTimeout(()=>typing(false),2500);}
   function markRead(){
     if(destroyed||document.hidden)return;const scroller=app.querySelector('#chat-scroll');if(!scroller)return;const visible=scroller.getBoundingClientRect();if(visible.height<=0)return;
-    const latest=[...(getChat()?.messages||[])].reverse().find(message=>{if(message.role!=='assistant'||message.readByOther||Number(message.id)<=readId)return false;const node=app.querySelector(`[data-message="${Number(message.id)}"]`);if(!node)return false;const rect=node.getBoundingClientRect();return rect.height>0&&rect.bottom>=visible.top&&rect.top<=visible.bottom;});if(!latest)return;
+    const chat=getChat(),limit=chat?.startupReadLimit;
+    const latest=[...(chat?.messages||[])].reverse().find(message=>{if(message.role!=='assistant'||message.readByOther||Number(message.id)<=readId||Number.isSafeInteger(limit)&&Number(message.id)>limit)return false;const node=app.querySelector(`[data-message="${Number(message.id)}"]`);if(!node)return false;const rect=node.getBoundingClientRect();return rect.height>0&&rect.bottom>=visible.top&&rect.top<=visible.bottom;});if(!latest)return;
     readId=Number(latest.id);api('/api/chat/read','POST',{lastId:readId}).catch(()=>{readId=0;});
   }
   function pressTarget(target){

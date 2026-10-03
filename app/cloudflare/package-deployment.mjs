@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const files=['index.html','admin.html','app.js','admin.js','send-queue.js','adaptive-poll.js','chat-history.js','inbox-pages.js','library.js','media.js','media.css','workflow-admin.js','workflow.css','app-settings-ui.js','app-settings.css','messaging-ui.js','chat-icons.js','chat-sounds.js','permissions.js','permissions.css','calls.js','calls.css','voice-effects.js','voice-effects-worklet.js','styles.css','chat.css','admin.css','locales.js','art.svg','icon.svg','rekha-portrait.png','icon-192.png','icon-512.png','manifest.webmanifest','sw.js','offline.html','download.html','install-guide.js','SHA256.txt'];
-files.push('device-chat-store.js','countdown.js');
+files.push('device-chat-store.js','countdown.js','startup-delivery.js');
 const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.webmanifest':'application/manifest+json','.apk':'application/vnd.android.package-archive','.txt':'text/plain; charset=utf-8'};
 files.push('privacy-policy.html','about.html','contact.html','support.html','data-deletion.html','terms-and-conditions.html','refund-cancellation.html','disclaimer.html','shipping-policy.html','policies.css','app-ads.txt','video-onboarding.js','onboarding-poster.jpg');
 // Keep the old small fallback only during the first R2 migration. New SDK APKs stay in R2.
@@ -12,7 +12,7 @@ const assets=Object.fromEntries(files.map(name=>['/'+name,{type:types[path.extna
 const staticCode=`const bundledAssets=${JSON.stringify(assets)};\nasync function staticAssetFetch(request){if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405});let pathname=new URL(request.url).pathname;if(pathname==='/')pathname='/index.html';if(!Object.hasOwn(bundledAssets,pathname))return new Response('Not found',{status:404});const asset=bundledAssets[pathname];const bytes=Uint8Array.from(atob(asset.base64),c=>c.charCodeAt(0));return new Response(request.method==='HEAD'?null:bytes,{headers:{'Content-Type':asset.type}});}\n`;
 const ai=readFileSync(path.join(root,'src','ai.mjs'),'utf8').replace('export async function generateReply','async function generateReply');
 const owner=readFileSync(path.join(root,'cloudflare','owner.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replaceAll('export async function','async function');
-const messaging=readFileSync(path.join(root,'cloudflare','messaging.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function');
+const messaging=readFileSync(path.join(root,'cloudflare','messaging.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
 const calls=readFileSync(path.join(root,'cloudflare','calls.mjs'),'utf8').replaceAll('export async function','async function');
 const workflow=readFileSync(path.join(root,'cloudflare','workflow.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export const','const');
 const appSettings=readFileSync(path.join(root,'cloudflare','app-settings.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');

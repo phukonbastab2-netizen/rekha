@@ -1,6 +1,6 @@
 import { rewardCallback } from './rewards.mjs';
 import { ownerRoutes, mediaResponse } from './owner.mjs';
-import { messagingRoutes, messagingView, messagingAcknowledgment, messagingDeleteAttachments, messagingHistory } from './messaging.mjs';
+import { messagingRoutes, messagingView, messagingAcknowledgment, messagingDeleteAttachments, messagingHistory, messagingColumns } from './messaging.mjs';
 import { callsRoutes } from './calls.mjs';
 import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowGetConfig, workflowRecoverMessages } from './workflow.mjs';
 import { appSettingsRoutes, appSettingsPublic, appSettingsDefaults } from './app-settings.mjs';
@@ -10,7 +10,7 @@ const encoder=new TextEncoder();
 const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(text))),b=>b.toString(16).padStart(2,'0')).join('');
 const token=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
 const customerAutomationEnabled=env=>env.CUSTOMER_AUTOMATION_ENABLED==='true';
-const kundliReviewMessage='मैं 5 मिनट में आपकी कुंडली देखकर सब कुछ बताता हूँ। आप ऑनलाइन रहिए। तब तक आप इस वीडियो में मेरे ग्राहकों के रिव्यू देख सकते हैं।\n\nMain 5 minute mein aapki kundli dekhkar sab kuch batata hoon. Aap online rahiye. Tab tak aap is video mein mere clients ke reviews dekh sakte hain.';
+const kundliReviewMessage='मैं 5 मिनट में आपकी कुंडली देखकर सब कुछ बताता हूँ। आप ऑनलाइन रहिए। तब तक आप इस वीडियो में मेरे क्लाइंट्स के रिव्यू देख सकते हैं।\n\nMain 5 minute mein aapki kundli dekhkar sab kuch batata hoon. Aap online rahiye. Tab tak aap is video mein mere clients ke reviews dekh sakte hain.';
 const welcome={en:'Namaste. This is a quiet space for your questions. What’s on your mind today? A full kundli also needs birth time and birthplace; no chart has been calculated yet.',hi:'नमस्ते। आज आप किस विषय पर बात करना चाहते हैं? पूरी कुंडली के लिए जन्म समय और जन्म स्थान भी चाहिए। अभी कुंडली की गणना नहीं हुई है।',hinglish:'Namaste. Aaj aap kis baare mein baat karna chahte hain? Poori kundli ke liye birth time aur birthplace bhi chahiye. Abhi chart calculate nahi hua hai.'};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Permissions-Policy':'camera=(self), microphone=(self), geolocation=(self)','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
 function prefs(value={}){let location=null;if(value.location!=null){const {latitude,longitude}=value.location;if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180)throw fail(400,'Invalid location.');location={latitude:Math.round(latitude*10)/10,longitude:Math.round(longitude*10)/10};}return{remember:value.remember===true,location,consentVersion:'2026-10-03'};}
@@ -84,13 +84,13 @@ export async function handleApi(request,env,executionContext){
   const result=(data,status=200,extra={})=>Response.json(data,{status,headers:{...headers,...extra}});
   const cookies=Object.fromEntries((request.headers.get('Cookie')||'').split(';').map(x=>x.trim().split('=')));
   const get=id=>one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE id=?',id);
-  const messages=id=>all("SELECT id,role,kind,body,status,created,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId FROM messages WHERE conversation_id=? ORDER BY id",id);
+  const messages=id=>all('SELECT '+messagingColumns+' FROM messages WHERE conversation_id=? ORDER BY id',id);
   const pending=id=>one("SELECT * FROM messages WHERE conversation_id=? AND role='user' AND status IN ('pending','failed') ORDER BY id DESC LIMIT 1",id);
-  const insert=(id,role,kind,body,status='sent',clientId=null)=>stmt('INSERT INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,?,?,?,?,?,?)',id,role,kind,body,status,clientId,Date.now());
+  const insert=(id,role,kind,body,status='sent',clientId=null,created=Date.now())=>stmt('INSERT INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,?,?,?,?,?,?)',id,role,kind,body,status,clientId,created);
   async function view(chat,admin=false,options={}){
     const bounded=request.headers.get('X-Rekha-History')==='bounded-v1',history=bounded?await messagingHistory({request,chat,all,fail,options}):{rows:messages(chat.id)};
     const [guidedConversation,messaging,draft]=await Promise.all([automationEnabled&&workflowIsEnrolled(one,chat.id),messagingView({chat,messages:history.rows,admin,one,all,bounded,acknowledgedId:options.acknowledgedId}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;
-    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
+    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,serverTime:Date.now(),inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
   }
   async function acknowledge(chat,acknowledgedId){
     if(!chat)throw fail(409,'The chat changed. Please refresh.');
@@ -99,7 +99,7 @@ export async function handleApi(request,env,executionContext){
     const freeTurns=appSettings.service.freeReplies;
     // An ACK is a partial snapshot, never a history/delta cursor. A client must
     // retain its previous cursor so concurrent incoming messages and edits sync.
-    return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
+    return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,serverTime:Date.now(),inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
   }
   async function customer(){
     const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));
@@ -134,7 +134,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-kundli-reviews-0.9.4'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-paced-startup-0.9.5'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
@@ -165,14 +165,17 @@ export async function handleApi(request,env,executionContext){
       const startBatch=[stmt(createSql,id,await hash(session),data.name.trim(),data.dob,data.language,JSON.stringify(preferences),automationEnabled?'ai':'manual',now,now,...(kundli?[kundli.id,kundli.object_key,kundli.mime,testimonials.id,testimonials.object_key,testimonials.mime]:[]))];
       if(kundli){
         const payload=JSON.stringify({text:'Your kundli',title:'',items:[{id:kundli.id,title:'Shared kundli image',type:'image',url:'/api/media/'+kundli.id,mime:kundli.mime,size:kundli.size}]});
-        const videoPayload=JSON.stringify({text:'',title:'',items:[{id:testimonials.id,title:'ग्राहकों के रिव्यू · Clients ke reviews',type:'video',url:'/api/media/'+testimonials.id,mime:testimonials.mime,size:testimonials.size}]});
+        const videoPayload=JSON.stringify({text:'',title:'',items:[{id:testimonials.id,title:'क्लाइंट्स के रिव्यू · Clients ke reviews',type:'video',url:'/api/media/'+testimonials.id,mime:testimonials.mime,size:testimonials.size}]});
         // The complete startup sequence and both private grants commit together.
-        // The timer is durable display data only; it schedules no automatic reply.
+        // Created timestamps are durable display deadlines for these four rows
+        // only: five-second preparation followed by five-second delivery gaps.
+        // All rows are returned to keep delta cursors complete; clients reveal
+        // each at deliveryAt using serverTime. No timer schedules a later reply.
         // Any concurrent library archive rolls back rather than leaving a partial chat.
-        startBatch.push(insert(id,'assistant','media',payload,'sent','onboarding:kundli-v1'),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,kundli.id),
-          insert(id,'assistant','owner-message',kundliReviewMessage,'sent','onboarding:kundli-review-v1'),
-          insert(id,'assistant','media',videoPayload,'sent','onboarding:testimonials-v1'),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,testimonials.id),
-          insert(id,'assistant','kundli-wait','कुंडली देखने का समय · Kundli dekhne ka samay','sent','onboarding:kundli-wait-v1'));
+        startBatch.push(insert(id,'assistant','media',payload,'sent','onboarding:kundli-v1',now+5000),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,kundli.id),
+          insert(id,'assistant','owner-message',kundliReviewMessage,'sent','onboarding:kundli-review-v1',now+10000),
+          insert(id,'assistant','media',videoPayload,'sent','onboarding:testimonials-v1',now+15000),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,testimonials.id),
+          insert(id,'assistant','kundli-wait','कुंडली देखने का समय · Kundli dekhne ka samay','sent','onboarding:kundli-wait-v1',now+20000));
       }
       if(automationEnabled&&!kundli)startBatch.push(insert(id,'assistant','welcome',welcome[data.language]));
       await db.batch(startBatch);

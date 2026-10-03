@@ -7,6 +7,15 @@ const id='private-local-customer',other='other-private-local-customer';
 const message=(n,extra={})=>({id:n,role:n%2?'user':'assistant',kind:'customer',body:'Local message '+n,status:'sent',created:n,changeRevision:n,...extra});
 const view=(messages,extra={})=>({id,name:'Local fixture',dob:'1990-01-01',language:'en',version:1,updated:1,inboxRevision:1,blocked:false,locked:false,messages,historyComplete:false,...extra});
 const history=(extra={})=>({id,revision:250,oldestId:171,hasOlder:true,...extra});
+
+test('startup deadlines and safe clock offset persist while hidden rows and drafts remain available offline',async t=>{
+  const f=fixture(t),store=f.create(),created=Date.parse('2026-10-04T01:00:00Z');
+  const startup=[1,2,3,4].map(n=>message(n,{role:'assistant',created:created+n*5000,deliveryAt:created+n*5000,kind:n===4?'kundli-wait':'owner-message'}));
+  await store.merge(view([...startup,message(5,{deliveryAt:created+99999}),message(6,{deliveryAt:Infinity})],{clockOffsetMs:-120000,serverTime:created,typing:{owner:true}}));
+  await store.savePending(id,{draft:{body:'Keep my unsent draft',attachments:[]},clockOffsetMs:-125000});store.close();
+  const cached=await f.create().read({id});assert.equal(cached.chat.messages.length,6);assert.deepEqual(cached.chat.messages.slice(0,4).map(row=>row.deliveryAt),startup.map(row=>row.deliveryAt));
+  assert.equal(cached.chat.messages[3].created,created+20000);assert.equal(cached.chat.clockOffsetMs,-125000);assert.equal(cached.chat.serverTime,undefined);assert.equal(cached.chat.typing.owner,false);assert.equal(cached.chat.messages[4].deliveryAt,undefined);assert.equal(cached.chat.messages[5].deliveryAt,undefined);assert.equal(cached.pending.draft.body,'Keep my unsent draft');
+});
 function fixture(t){const indexedDB=new IDBFactory(),options={indexedDB,IDBKeyRange,dbName:'local-fixture'},stores=[];const create=extra=>{const store=createDeviceChatStore({...options,...extra});stores.push(store);return store;};t.after(()=>stores.forEach(store=>store.close()));return{create,indexedDB};}
 const request=q=>new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
 async function rawDatabase(indexedDB){return request(indexedDB.open('local-fixture',1));}
