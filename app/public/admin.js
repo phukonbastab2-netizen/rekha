@@ -8,6 +8,7 @@ import { openFeatureAccess,getFeatureMedia } from './permissions.js';
 import {createAdaptivePoll} from './adaptive-poll.js';
 import {createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor} from './chat-history.js';
 import {createInboxPages} from './inbox-pages.js';
+import {createChatSounds} from './chat-sounds.js';
 
 const app = document.querySelector('#admin-app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -17,6 +18,8 @@ let recorder=null, recordingStream=null, recordingTimer=null, recordingChunks=[]
 let calls;
 const history=createChatHistory(),inboxPages=createInboxPages();
 let inboxController=null,inboxLoading=false,searchTimer=null,olderLoading=false,connectionPaused=false;
+const sounds=createChatSounds({scope:'admin',incomingRole:'user',canPlay:()=>app.dataset.view!=='login'&&!startRecording.pending&&!recordingStream&&!document.querySelector('.call-panel')});
+const soundedSends=new Set();
 const inboxPoll=createAdaptivePoll({task:loadInbox,canRun:()=>app.dataset.view!=='login',fastMs:8000,idleMs:60000});
 const threadPoll=createAdaptivePoll({task:poll,canRun:()=>Boolean(selected)&&app.dataset.view==='chat',hot:()=>current?.typing?.customer,idleMs:30000});
 const readThrough=new Map();
@@ -34,6 +37,7 @@ function time(value){return timeFormatter.format(new Date(value));}
 function latestPreview(c){return c.preview||c.lastMessage||c.last_message||`${c.language} · ${c.mode==='ai'?'Automatic':c.mode==='assist'?'Drafts':'Personal'}`;}
 function closeRecorder(cancel=true){recordingCancelled=cancel;if(recorder&&recorder.state!=='inactive')recorder.stop();recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;}
 function login() {
+  sounds.reset();soundedSends.clear();
   calls?.destroy();calls=null;
   inboxPoll.stop();threadPoll.stop();inboxController?.abort();clearTimeout(searchTimer);closeRecorder();readThrough.clear();selected=null;current=null;chats=[];history.reset();inboxPages.reset();mobileView('login');
   app.innerHTML=`<main class="login"><section class="login-card"><div class="brand"><img src="/icon-192.png" alt="">Rekha Astrology</div><h1>Your customer inbox.</h1><p class="muted">Read conversations, send messages and manage replies from your private admin app.</p><form id="login-form"><label>Owner password<input id="password" type="password" autocomplete="current-password" required minlength="16"></label><p id="login-error" class="error" role="alert"></p><button class="primary">Sign in securely →</button></form><a class="install-owner" href="/astrorani/RekhaAdmin.apk" download>Download private admin app ↓</a><p class="muted">Only the owner can access this panel.</p></section></main>`;
@@ -41,7 +45,7 @@ function login() {
 }
 async function workspace() {
   inboxFingerprint='';inboxMarkup.clear();messageMarkup.clear();
-  inboxPages.reset('',filter);const request=inboxPages.request();const [list,nextConfig]=await Promise.all([api(request.route),api('/api/config')]);inboxPages.accept(list,request);chats=inboxPages.state().items;config=nextConfig;
+  inboxPages.reset('',filter);const request=inboxPages.request();const [list,nextConfig]=await Promise.all([api(request.route),api('/api/config')]);inboxPages.accept(list,request);chats=inboxPages.state().items;config=nextConfig;sounds.observeInbox(chats,{kind:'initial'});
   if(!calls)calls=installCalls({role:'admin',getConversationId:()=>selected,notify:notice,getAppSettings:()=>config?.appSettings});
   app.innerHTML=`<header class="topbar"><div class="brand"><img src="/icon-192.png" alt="">Rekha <span class="private">PRIVATE ADMIN</span></div><div class="links"><a class="install-owner" href="/astrorani/RekhaAdmin.apk" download>Admin app ↓</a><button id="open-library">Media library</button><button id="open-quick-replies">Quick replies</button><button id="logout">Sign out</button></div></header><main class="workspace"><aside class="inbox"><div class="inbox-head"><h2>Chats <span id="count" class="badge"></span></h2><input class="search" id="search" placeholder="Search customers or labels" aria-label="Search conversations"><nav class="inbox-filters" aria-label="Filter customers">${[['all','All'],['waiting','Waiting'],['unread','Unread'],['pinned','Pinned'],['archived','Archived'],['blocked','Blocked']].map(([key,label])=>`<button data-filter="${key}" aria-pressed="${filter===key}">${label}</button>`).join('')}</nav></div><div id="inbox-list"></div></aside><section class="conversation" id="conversation"><div class="empty"><div class="empty-icon">✧</div><h2>Your conversations.</h2><p>Choose a customer to read messages and reply. You can send messages anytime.</p></div></section><aside class="controls" id="controls"><h3>Customer & reply settings</h3><p class="muted">Open a chat to manage reply mode, notes and customer details.</p></aside></main>`;
   mobileView(selected?'chat':'inbox');
@@ -49,6 +53,7 @@ async function workspace() {
   app.querySelector('#open-quick-replies').onclick=()=>quickReplies(false);
   const appEditor=document.createElement('button');appEditor.textContent='Edit customer app';appEditor.id='open-app-settings';appEditor.onclick=()=>openAppSettings({api,notice});app.querySelector('.topbar .links').prepend(appEditor);
   const access=document.createElement('button');access.textContent='Feature access';access.id='feature-access';access.onclick=()=>openFeatureAccess();app.querySelector('.topbar .links').append(access);
+  const soundToggle=document.createElement('button');soundToggle.id='chat-sounds';soundToggle.type='button';const drawSounds=()=>{soundToggle.textContent='Chat sounds · '+(sounds.enabled()?'On':'Off');soundToggle.setAttribute('aria-pressed',String(sounds.enabled()));};drawSounds();soundToggle.onclick=()=>{sounds.setEnabled(!sounds.enabled());drawSounds();};app.querySelector('.topbar .links').insertBefore(soundToggle,app.querySelector('#logout'));
   const flowSettings=document.createElement('button');flowSettings.textContent='Replies & video flow';flowSettings.id='open-workflow';flowSettings.onclick=()=>openWorkflowSettings({api,notice});app.querySelector('.topbar .links').insertBefore(flowSettings,app.querySelector('#logout'));
   app.querySelector('#logout').onclick=async()=>{try{await api('/api/admin/logout','POST',{});login();}catch(error){notice(error.message);}};
   if(typeof window.RekhaDevice?.showAlertSettings==='function'){
@@ -65,18 +70,18 @@ async function workspace() {
   app.querySelector('.topbar .brand').title=`AI: ${config.aiMode} · Payment: ${config.paymentMode}`;
 }
 function drawInboxPaging(){const button=app.querySelector('#inbox-more');if(!button)return;button.hidden=!inboxPages.state().hasMore&&!inboxLoading;button.disabled=inboxLoading;button.textContent=inboxLoading?'Loading customers…':'Load more customers';}
-async function loadInbox({more=false,signal}={}){
+async function loadInbox({more=false,signal,kind='delta'}={}){
   if(document.hidden||navigator.onLine===false||app.dataset.view==='login')return;
   if(inboxLoading)return;
   const request=inboxPages.request({more}),controller=new AbortController();inboxController=controller;inboxLoading=true;drawInboxPaging();
   const before=JSON.stringify(chats);
-  try{const data=await api(request.route,'GET',undefined,{signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});if(controller.signal.aborted||!inboxPages.accept(data,request))return;chats=inboxPages.state().items;for(const row of chats)if(row.latestUserId&&row.latestUserId<=(readThrough.get(row.id)||0))row.unread=0;connectionPaused=false;drawList();return{changed:before!==JSON.stringify(chats)};}
+  try{const data=await api(request.route,'GET',undefined,{signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});if(controller.signal.aborted||!inboxPages.accept(data,request))return;chats=inboxPages.state().items;for(const row of chats)if(row.latestUserId&&row.latestUserId<=(readThrough.get(row.id)||0))row.unread=0;sounds.observeInbox(chats,{kind:more?'older':kind});connectionPaused=false;drawList();return{changed:before!==JSON.stringify(chats)};}
   catch(error){if(controller.signal.aborted||signal?.aborted)return;if(error.status===401)login();else if(!connectionPaused){connectionPaused=true;notice('Connection paused. Trying again…');}throw error;}
   finally{if(inboxController===controller){inboxLoading=false;inboxController=null;drawInboxPaging();}}
 }
 async function searchInbox(){
   clearTimeout(searchTimer);inboxPoll.stop();inboxController?.abort();inboxController=null;inboxLoading=false;inboxPages.reset(app.querySelector('#search')?.value||'',filter);chats=[];inboxFingerprint='';drawList();
-  try{await loadInbox();}catch{/* The list retains a retrying state. */}finally{if(app.dataset.view!=='login')inboxPoll.start();}
+  try{await loadInbox({kind:'initial'});}catch{/* The list retains a retrying state. */}finally{if(app.dataset.view!=='login')inboxPoll.start();}
 }
 function drawList(){
   const search=app.querySelector('#search');if(!search)return;
@@ -94,7 +99,7 @@ async function select(id){
   try{const data=await api(`/api/admin/conversations/${id}`);if(selected!==id)return;acceptConversation(data,{kind:'initial'});drawConversation(true);await markRead();threadPoll.start();}catch(error){if(error.status===401)login();else if(error.status===404)removeDeletedChat(id);notice(error.message);}
 }
 function removeDeletedChat(id){inboxPages.remove(id);chats=inboxPages.state().items;if(selected===id){selected=null;current=null;dirty=false;history.reset();mobileView('inbox');app.querySelector('#conversation').innerHTML='<div class="empty"><p>This conversation was deleted. Choose another customer.</p></div>';}inboxFingerprint='';drawList();}
-function acceptConversation(data,{kind='mutation'}={}){if(data?.id!==selected||!Array.isArray(data.messages))return false;current=history.accept(current,data,{kind});const row=chats.find(item=>item.id===current.id);if(row)for(const key of ['name','mode','version','inboxRevision','updated','pinned','archived','blocked','labels'])if(key in current)row[key]=current[key];return true;}
+function acceptConversation(data,{kind='mutation'}={}){if(data?.id!==selected||!Array.isArray(data.messages))return false;current=history.accept(current,data,{kind});sounds.observe(current,{kind});const row=chats.find(item=>item.id===current.id);if(row)for(const key of ['name','mode','version','inboxRevision','updated','pinned','archived','blocked','labels'])if(key in current)row[key]=current[key];return true;}
 async function loadEarlier(){
   if(olderLoading||!history.state().hasOlder||!current)return;const id=selected;olderLoading=true;drawHistory();
   try{const data=await api(history.route(`/api/admin/conversations/${id}`,{older:true}));if(selected!==id||!current)return;const thread=app.querySelector('#thread'),anchor=captureThreadAnchor(thread);acceptConversation(data,{kind:'older'});fingerprint='';drawConversation();restoreThreadAnchor(thread,anchor);}
@@ -158,7 +163,7 @@ function drawConversation(initial=false){
   app.querySelector('#reply-form').onsubmit=async event=>{
     event.preventDefault();if(actionBusy||(!reply.value.trim()&&!attachment))return;actionBusy=true;
     const id=current.id,body=reply.value;app.querySelector('#send-reply').disabled=true;app.querySelector('#reply-error').textContent='';
-    try{const payload={body,version:current.version,replyTo:quoted?.id||null,answersPending:!!pending&&app.querySelector('#answer-pending').checked,...(attachment?.collectionId?{collectionId:attachment.collectionId}:attachment?{itemIds:attachment.itemIds}:{})};const signature=JSON.stringify({...payload,version:undefined});if(!sendAttempt||sendAttempt.signature!==signature)sendAttempt={signature,clientId:crypto.randomUUID()};const data=await api(`/api/admin/conversations/${id}/send`,'POST',{...payload,clientId:sendAttempt.clientId});attachment=null;sendAttempt=null;quoted=null;if(selected===id){acceptConversation(data);dirty=false;reply.value='';lastDraft='';}threadPoll.poke({immediate:true});inboxPoll.poke({immediate:true});api(`/api/admin/conversations/${id}/typing`,'POST',{active:false}).catch(()=>{});}
+    try{const payload={body,version:current.version,replyTo:quoted?.id||null,answersPending:!!pending&&app.querySelector('#answer-pending').checked,...(attachment?.collectionId?{collectionId:attachment.collectionId}:attachment?{itemIds:attachment.itemIds}:{})};const signature=JSON.stringify({...payload,version:undefined});if(!sendAttempt||sendAttempt.signature!==signature)sendAttempt={signature,clientId:crypto.randomUUID()};const clientId=sendAttempt.clientId,data=await api(`/api/admin/conversations/${id}/send`,'POST',{...payload,clientId});if(!soundedSends.has(clientId)){soundedSends.add(clientId);if(soundedSends.size>512)soundedSends.delete(soundedSends.values().next().value);sounds.play('sent');}attachment=null;sendAttempt=null;quoted=null;if(selected===id){acceptConversation(data);dirty=false;reply.value='';lastDraft='';}threadPoll.poke({immediate:true});inboxPoll.poke({immediate:true});api(`/api/admin/conversations/${id}/typing`,'POST',{active:false}).catch(()=>{});}
     catch(error){app.querySelector('#reply-error').textContent=error.message;if(error.status===409){await refreshSelected();sendAttempt=null;}}
     finally{actionBusy=false;fingerprint='';drawConversation();}
   };

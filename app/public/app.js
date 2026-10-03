@@ -6,17 +6,19 @@ import { createSendQueue } from './send-queue.js';
 import { createAdaptivePoll } from './adaptive-poll.js';
 import { createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor } from './chat-history.js';
 import { chatIcon } from './chat-icons.js';
+import { createChatSounds } from './chat-sounds.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
 let calls, configReadAt=0, sessionEnded=false,chatMutation=0,outboxChatId=null;
 const history=createChatHistory();let olderLoading=false;
 const messageMarkup=new Map(),dateFormatters=new Map();
+const sounds=createChatSounds({scope:'customer',incomingRole:'assistant',canPlay:()=>stage==='chat'&&!sessionEnded&&!messaging?.hasLiveCapture?.()&&!document.querySelector('.call-panel')});
 const outbox=createSendQueue({
   online:()=>navigator.onLine!==false&&!sessionEnded&&Boolean(chat),
   send:async(record,{signal})=>{if(!chat||chat.id!==record.conversationId||sessionEnded)throw Object.assign(new Error('This chat session has ended. Your message was not sent.'),{status:401});const payload=await record.prepare(record.snapshot,{signal});if(!payload)throw Object.assign(new Error('There is no message to send.'),{status:400});return payload.editId?api(`/api/messages/${payload.editId}`,'PATCH',{body:payload.body},{signal}):api('/api/messages','POST',payload,{signal});},
   onAck:next=>{acceptServerChat(next);chatPoll.poke({immediate:true});},
-  onConfirmed:record=>record.finish?.(record.snapshot),
+  onConfirmed:record=>{record.finish?.(record.snapshot);if(!record.snapshot.editId)sounds.play('sent');},
   onError:error=>{if(error.status===401)endSession();},
   onChange:()=>{fingerprint='';if(stage==='chat')drawChat();},
 });
@@ -72,7 +74,7 @@ function endSession(){chatPoll.stop();sessionEnded=true;outbox.pause({abort:true
 function acceptServerChat(next,{kind='mutation'}={}){
   if(!next||!Array.isArray(next.messages)||chat&&next.id!==chat.id)return false;
   chat=history.accept(chat,next,{kind});
-  chatMutation++;outbox.reconcile(chat);if(stage==='chat')drawChat();return true;
+  chatMutation++;outbox.reconcile(chat);sounds.observe(chat,{kind});if(stage==='chat')drawChat();return true;
 }
 function drawHistory(){const button=app.querySelector('#load-earlier');if(!button)return;button.hidden=!history.state().hasOlder;button.disabled=olderLoading;button.textContent=olderLoading?(lang==='hi'?'पुराने संदेश खुल रहे हैं…':'Loading earlier messages…'):(lang==='hi'?'पुराने संदेश देखें':'Load earlier messages');}
 async function loadEarlier(){
@@ -141,6 +143,7 @@ function renderChat() {
   messageMarkup.clear();
   messaging?.destroy(); messaging = null;
   stage = 'chat';sessionEnded=false; updateLanguage(chat.language); fingerprint = '';
+  sounds.observe(chat,{kind:'initial'});
   document.body.classList.add('chat-mode');
   const previewNotes = previewLabel();
   app.innerHTML = `<section class="chat" aria-label="${esc(astrologerName())} chat"><header class="chat-head"><button type="button" class="chat-back" id="chat-back" aria-label="${introEnabled()?'Back to introduction':'Conversation settings'}">${chatIcon('back')}</button><button type="button" class="chat-contact" id="chat-contact" aria-label="${esc(astrologerName())} conversation details"><img class="avatar" src="${esc(logo())}" alt=""><span class="chat-contact-copy"><strong class="chat-name">${esc(astrologerName())}</strong><span class="chat-caption">${t('tagline')}</span></span></button><button type="button" class="icon-button" id="chat-privacy" aria-label="Conversation menu" title="Conversation menu">${chatIcon('more')}</button></header><div class="chat-scroll" id="chat-scroll" role="log" aria-live="polite" aria-relevant="additions text"><div class="chat-notices"><div class="demo-ribbon">${esc(previewNotes)}</div><div class="chat-ribbon" id="chat-ribbon"></div></div><div class="date-divider">${t('newChapter')}</div><div id="messages"></div><div id="chat-bottom"></div></div><form class="composer" id="composer"><div class="compose-row"><div class="compose-input"><textarea id="message-input" rows="1" maxlength="2000" aria-label="${t('messagePlaceholder')}" placeholder="${esc(messagePlaceholder())}"></textarea></div><button class="send compose-primary" type="submit" aria-label="${t('send')}">${chatIcon('send')}</button></div><p class="error" id="send-error" role="alert"></p><p class="footnote">${t('reflection')}</p></form></section>`;
@@ -155,7 +158,7 @@ function renderChat() {
   app.querySelector('#composer').addEventListener('rekha:compose-state',event=>updateComposePrimary(event.detail));
   let composing=false;composerInput.addEventListener('compositionstart',()=>composing=true);composerInput.addEventListener('compositionend',()=>composing=false);
   app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing&&!composing&&event.keyCode!==229) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
-  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy});
+  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy,sounds});
   if(composerDraft){messaging.restoreDraft?.(composerDraft);composerDraft=null;}
   window.RekhaChatUI=messaging;
   outbox.resume();
@@ -273,7 +276,7 @@ function privacy(editable) {
 function confirmDelete() {
   dialog.innerHTML = `<h2 id="privacy-title">${t('deleteTitle')}</h2><p>${t('deleteText')}</p><div class="dialog-actions"><button class="secondary" id="cancel-delete">${t('cancel')}</button><button class="secondary danger" id="confirm-delete">${t('confirmDelete')}</button></div>`;
   dialog.querySelector('#cancel-delete').onclick = () => privacy(true);
-  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});chatPoll.stop();stage='language';outbox.clear();composerDraft=null;chat=null;history.reset();dialog.close();chooseLanguage();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
+  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});chatPoll.stop();stage='language';outbox.clear();composerDraft=null;chat=null;history.reset();sounds.reset();dialog.close();chooseLanguage();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
 }
 function introduction() {
   if(!introEnabled()){if(stage==='chat'){toast(lang==='hi'?'परिचय अभी उपलब्ध नहीं है।':'The introduction is currently unavailable.');return;}if(chat)renderChat();else chooseLanguage();return;}

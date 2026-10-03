@@ -111,7 +111,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-receipts-0.9.2'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-sounds-0.9.2'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');

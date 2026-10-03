@@ -106,6 +106,8 @@ The provided PowerShell `build.ps1` scripts accept your JDK, SDK, Gradle executa
 
 Blue double ticks confirm that an outgoing message has reached the recipient's chat. Long-press a message to see its receipt label; read labels use the actual read cursor. Pending or failed sends show their current status.
 
+Original send and receive tones play in the open chat after the first tap or key press. Chat sounds can be muted from the customer's conversation menu or the owner's toolbar. Old messages, edits and repeat updates stay silent; calls, voice recording and media playback pause the tones. Background message alerts use Android notification settings.
+
 Tap Voice or Camera to request only that feature's Android permission inside the app. Use **Feature access** to set up microphone, camera and optional message alerts directly. A dismissed or retryable denied request offers an in-app retry. Only a confirmed permanent denial offers Android app settings; the APK does not send customers to browser site settings. Files are chosen through the phone's picker; the app does not request SMS, full-gallery or all-files access.
 
 Admin calls offer Natural, Lower pitch, Higher pitch, Warm and Robot effects. Audio processing stays on the device and does not clone another person's voice. Install the updated Android APK to receive the native permission bridge.
