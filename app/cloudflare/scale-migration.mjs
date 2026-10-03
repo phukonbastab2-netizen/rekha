@@ -4,7 +4,9 @@ import {splitSqlStatements} from './sql-statements.mjs';
 // prepare(sql).bind(...values).all()/run(). No cloud credentials are handled here.
 export async function applyScaleMigration(db,source){
   let applied=0,skipped=0;const columns=new Map();
-  for(const sql of splitSqlStatements(source)){
+  // D1's REST statement splitter can reject trigger bodies with CRLF. Keep the
+  // prepared SQL transport identical across Windows checkouts and rollout retries.
+  for(const sql of splitSqlStatements(source.replace(/\r\n?/g,'\n'))){
     const clean=sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\//g,''),alter=/^\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)\b/i.exec(clean);
     if(alter){const [,table,column]=alter;if(!columns.has(table)){const result=await db.prepare('PRAGMA table_info('+table+')').all();columns.set(table,new Set(result.results.map(row=>row.name)));}if(columns.get(table).has(column)){skipped++;continue;}await db.prepare(sql).run();columns.get(table).add(column);applied++;}
     else{await db.prepare(sql).run();applied++;}
