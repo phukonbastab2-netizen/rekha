@@ -15,7 +15,7 @@ function fixture(role='customer'){
   replace('MediaStream',Stream);
   class Element{
     constructor(tag='div',root=null){this.tagName=tag;this.root=root||this;this.children=[];this.nodes=new Map();this.className='';this.textContent='';this.hidden=false;}
-    set innerHTML(html){this.html=html;const root=this.root;if(html.includes('<h2>'))for(const selector of ['h2','.call-status','.call-remote','.call-local','.call-buttons'])root.nodes.set(selector,new Element(selector,root));for(const selector of ['.call-end','.call-answer','.call-mute']){const cls=selector.slice(1);if(html.includes('class="'+cls+'"'))root.nodes.set(selector,new Element(cls,root));else if(this!==root||html.includes('<h2>'))root.nodes.delete(selector);}}
+    set innerHTML(html){this.html=html;const root=this.root;if(html.includes('<h2>')){for(const selector of ['h2','.call-status','.call-remote','.call-local','.call-buttons','.call-audio-status','.call-audio-actions'])root.nodes.set(selector,new Element(selector,root));root.nodes.get('.call-audio-status').hidden=true;root.nodes.get('.call-audio-actions').hidden=true;}for(const selector of ['.call-end','.call-answer','.call-mute','.call-play']){const cls=selector.slice(1);if(html.includes('class="'+cls+'"'))root.nodes.set(selector,new Element(cls,root));else if(this!==root||html.includes('<h2>')){if(selector!=='.call-play')root.nodes.delete(selector);}}}
     get innerHTML(){return this.html;}
     querySelector(selector){return this.nodes.get(selector)||this.children.find(e=>e.className===selector.slice(1))||null;}
     append(child){child.parent=this;this.children.push(child);}setAttribute(){}add(option){this.children.push(option);}play(){return Promise.resolve();}
@@ -107,5 +107,25 @@ test('each admin call fetches fresh relay credentials and sends the selected pro
     const voice=f.controls.querySelector('.voice-choice');voice.value='warm';voice.onchange();const launch=f.controls.children.find(e=>e.className==='call-launch');await launch.onclick();
     assert.equal(f.peers[0].config.iceServers[0].username,'user-1');assert.notEqual(f.peers[0].tracks[0].track,f.streams[0].getAudioTracks()[0]);assert.equal(f.audioNodes[1].type,'lowpass');
     const processed=f.peers[0].tracks[0].track;await f.panel().querySelector('.call-end').onclick();assert.equal(processed.stopped,true);await launch.onclick();assert.equal(f.peers[1].config.iceServers[0].username,'user-2');assert.deepEqual(f.requests.filter(r=>r.path.startsWith('/config')).map(r=>r.path),['/config?callId=outgoing-1','/config?callId=outgoing-2']);
+  }finally{await f.dispose();}
+});
+
+test('blocked remote playback offers a gesture retry and explains connected audio until playback succeeds',async()=>{
+  const f=fixture();try{
+    await f.controls.children.find(e=>e.className==='call-launch').onclick();const panel=f.panel(),peer=f.peers[0],remote=panel.querySelector('.call-remote'),local=panel.querySelector('.call-local');let attempts=0,localPlays=0;remote.play=async()=>{attempts++;if(attempts===1)throw Object.assign(Error('Autoplay blocked'),{name:'NotAllowedError'});};local.play=async()=>{localPlays++;};
+    peer.ontrack({track:f.stream().getAudioTracks()[0]});await settle();assert.equal(panel.querySelector('.call-audio-actions').hidden,false);assert.equal(panel.querySelector('.call-audio-status').textContent,'Tap Play call audio to hear the other person.');peer.change('connected');assert.equal(panel.querySelector('.call-status').textContent,'Connected · Tap to hear call audio');
+    await panel.querySelector('.call-play').onclick();assert.equal(attempts,2);assert.equal(panel.querySelector('.call-audio-actions').hidden,true);assert.equal(panel.querySelector('.call-audio-status').hidden,true);assert.equal(panel.querySelector('.call-status').textContent,'Connected');assert.equal(localPlays,0);
+  }finally{await f.dispose();}
+});
+
+test('old call playback completion cannot alter a new call panel',async()=>{
+  const f=fixture();try{
+    const launch=f.controls.children.find(e=>e.className==='call-launch');await launch.onclick();const old=f.panel(),pending=deferred();old.querySelector('.call-remote').play=()=>pending.promise;f.peers[0].change('connected');f.peers[0].ontrack({track:f.stream().getAudioTracks()[0]});await old.querySelector('.call-end').onclick();await launch.onclick();const next=f.panel();next.querySelector('.call-remote').play=async()=>{throw Error('Playback blocked');};f.peers[1].ontrack({track:f.stream().getAudioTracks()[0]});await settle();f.peers[1].change('connected');pending.resolve();await settle();assert.equal(next.querySelector('.call-status').textContent,'Connected · Tap to hear call audio');assert.equal(next.querySelector('.call-audio-actions').hidden,false);
+  }finally{await f.dispose();}
+});
+
+test('an older playback rejection cannot overwrite a newer successful playback attempt',async()=>{
+  const f=fixture();try{
+    await f.controls.children.find(e=>e.className==='call-launch').onclick();const panel=f.panel(),peer=f.peers[0],pending=deferred();let attempts=0;panel.querySelector('.call-remote').play=()=>++attempts===1?pending.promise:Promise.resolve();peer.ontrack({track:f.stream().getAudioTracks()[0]});peer.ontrack({track:f.stream().getAudioTracks()[0]});await settle();peer.change('connected');pending.resolve(Promise.reject(Object.assign(Error('Old autoplay rejection'),{name:'NotAllowedError'})));await settle();assert.equal(panel.querySelector('.call-audio-actions').hidden,true);assert.equal(panel.querySelector('.call-status').textContent,'Connected');
   }finally{await f.dispose();}
 });

@@ -1,8 +1,8 @@
-# Android 1.3.0-connected
+# Android 1.3.1-connected
 
-Version 1.3.0-connected (versionCode 4) includes 12 customer APKs and one **Rekha Global Admin** APK. Customer apps load their own live HTTPS services and preserve existing package IDs and the signing key. The new admin package is `in.rekha.global.owner`; it opens [the owner control centre](https://rekhaastrology.in/global-apps/preview/control.html), where the owner chooses one of 12 inboxes and signs in with that app's existing private password. Its **Apps** button returns to the collection list. No password is bundled in an APK.
+Version 1.3.1-connected (versionCode 5) includes 12 customer APKs and one **Rekha Global Admin** APK. Customer apps load their own live HTTPS services and preserve existing package IDs and the signing key. The admin package is `in.rekha.global.owner`; it opens [the owner control centre](https://rekhaastrology.in/global-apps/preview/control.html), where the owner chooses one of 12 inboxes and signs in with that app's existing private password. Its **Apps** button returns to the collection list. No password is bundled in an APK.
 
-All 13 APKs were built locally. Runtime device validation remains outstanding; builds and signature checks do not establish phone permission behavior or a successful call. See [release notes](RELEASE-NOTES-1.3.md) and [verification](VERIFICATION.md).
+Build and signature-check results are recorded in [verification](VERIFICATION.md). Runtime device validation remains outstanding; builds and signature checks do not establish phone permission behavior or a successful call. See [release notes](RELEASE-NOTES-1.3.1.md).
 
 ## Build customer and admin APKs
 
@@ -24,7 +24,9 @@ node scripts/build.mjs
 node scripts/android.mjs
 ```
 
-The outputs are `dist/apks/<app-id>.apk` plus `dist/apks/rekha-global-admin.apk`. The script checks APK v2/v3 signatures. APK permissions are INTERNET, RECORD_AUDIO and CAMERA. Microphone and camera requests begin after a feature tap, and grants are restricted to the current permitted HTTPS origin. File selection uses the system picker and returns only the selected file to its requesting page; no SMS, contacts, location or broad gallery permission is requested. See [voice and permission details](VOICE-AND-PERMISSIONS.md).
+The outputs are `dist/apks/<app-id>.apk` plus `dist/apks/rekha-global-admin.apk`. The script checks APK v2/v3 signatures. APK permissions are INTERNET, MODIFY_AUDIO_SETTINGS, RECORD_AUDIO and CAMERA. Microphone and camera requests begin after a feature tap, and grants are restricted to the current permitted HTTPS origin. File selection uses the system picker and returns only the selected file to its requesting page; no SMS, contacts, location or broad gallery permission is requested. See [voice and permission details](VOICE-AND-PERMISSIONS.md).
+
+Release 1.3.1 adds MODIFY_AUDIO_SETTINGS so Android WebView can use communication audio routing. Chromium checks this permission together with microphone access when selecting communication devices. It is a normal manifest permission and adds no runtime permission prompt. This addresses a missing prerequisite; real-device audio and calls remain untested. See [Android permission documentation](https://developer.android.com/reference/kotlin/android/Manifest.permission#MODIFY_AUDIO_SETTINGS) and [Chromium's audio manager](https://chromium.googlesource.com/chromium/src/media/+/master/base/android/java/src/org/chromium/media/AudioManagerAndroid.java).
 
 The initial private signing key is stored in the creating workspace's `work/android-signing/` folder, outside the deliverables and GitHub. Back it up securely before moving to another machine. A plain copied APK is not a backup of the signing key.
 

@@ -2,13 +2,14 @@
   "id": "rekha-global-admin",
   "name": "Rekha Global Admin",
   "package": "in.rekha.global.owner",
-  "versionCode": 4,
-  "versionName": "1.3.0-connected",
+  "versionCode": 5,
+  "versionName": "1.3.1-connected",
   "minAndroid": 26,
   "bytes": 17031,
-  "sha256": "7ff575e564bb1b22a132ddb3b167de992eec42ce695aba31aaf7e7bdac07075a",
+  "sha256": "784c24a7c102085352b607b5771ea6ae24b70dbfbbfcc9801c3eda4a560b78a1",
   "permissions": [
     "android.permission.INTERNET",
+    "android.permission.MODIFY_AUDIO_SETTINGS",
     "android.permission.RECORD_AUDIO",
     "android.permission.CAMERA"
   ],
@@ -42,6 +43,6 @@
     "comparedCustomer": "luna-harbor"
   },
   "customerChecksumEntriesPreserved": 12,
-  "verifiedAtUtc": "2026-10-03T02:50:37.6157011Z",
+  "verifiedAtUtc": "2026-10-03T03:17:01.9949552Z",
   "deviceRuntimeTested": false
 }

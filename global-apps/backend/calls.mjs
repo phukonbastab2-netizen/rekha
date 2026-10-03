@@ -1,5 +1,6 @@
 // Private foreground call signaling. Media travels between the two devices.
 import { generateTurnConfig } from './turn.mjs';
+const CALL_HEARTBEAT_LEASE_MS = 120000;
 export async function callsRoutes(ctx){
   const {request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate}=ctx;
   const prefix=route.startsWith('/api/admin/calls')?'/api/admin/calls':route.startsWith('/api/calls')?'/api/calls':null;
@@ -9,6 +10,10 @@ export async function callsRoutes(ctx){
   const callQuery='SELECT calls.*,(SELECT name FROM conversations c WHERE c.id=calls.conversation_id) AS customer_name FROM calls';
   const view=c=>({id:c.id,conversationId:c.conversation_id,caller:c.caller,type:c.type,status:c.status,created:c.created,updated:c.updated,reason:c.reason,...(actor==='admin'?{customerName:c.customer_name}:{})});
   await stmt("UPDATE calls SET status='ended',reason='expired',updated=? WHERE expires<? AND status!='ended'",Date.now(),Date.now()).run();
+  // Each authenticated participant must remain present. One live participant
+  // cannot renew the other participant's lease or extend the hard call limit.
+  const leaseNow=Date.now(),leaseCutoff=leaseNow-CALL_HEARTBEAT_LEASE_MS;
+  await stmt("UPDATE calls SET status='ended',reason='connection-failed',updated=? WHERE status='active' AND (COALESCE((SELECT MAX(created) FROM call_signals WHERE call_id=calls.id AND kind='heartbeat' AND actor='admin'),updated)<? OR COALESCE((SELECT MAX(created) FROM call_signals WHERE call_id=calls.id AND kind='heartbeat' AND actor='customer'),updated)<?)",leaseNow,leaseCutoff,leaseCutoff).run();
   await stmt("UPDATE calls SET status='ended',reason='blocked',updated=? WHERE status!='ended' AND conversation_id IN (SELECT conversation_id FROM chat_messaging WHERE blocked=1)",Date.now()).run();
   await stmt("DELETE FROM call_signals WHERE call_id IN (SELECT id FROM calls WHERE status='ended')").run();
   if(route===prefix+'/config'&&method==='GET'){
@@ -50,6 +55,8 @@ export async function callsRoutes(ctx){
     if(call.status!=='ringing')throw fail(409,'This call is no longer ringing.');
     const update=await stmt("UPDATE calls SET status='active',updated=?,expires=? WHERE id=? AND status='ringing' AND NOT EXISTS(SELECT 1 FROM calls WHERE status='active' AND id!=?) AND NOT EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked=1)",Date.now(),Date.now()+3600000,call.id,call.id,call.conversation_id).run();
     if(!update.meta.changes)throw fail(409,'Another call is active.');
+    const acceptedAt=Date.now();
+    for(const participant of ['admin','customer'])await stmt("INSERT INTO call_signals(call_id,actor,kind,payload,created) SELECT ?,?,'heartbeat','{}',? WHERE EXISTS(SELECT 1 FROM calls WHERE id=? AND status='active' AND expires>?) AND NOT EXISTS(SELECT 1 FROM call_signals WHERE call_id=? AND actor=? AND kind='heartbeat')",call.id,participant,acceptedAt,call.id,acceptedAt,call.id,participant).run();
     return result(view(await one(callQuery+' WHERE id=?',call.id)));
   }
   if(match[2]==='end'&&method==='POST'){
@@ -58,7 +65,13 @@ export async function callsRoutes(ctx){
   }
   if(match[2]==='signals'&&method==='GET'){
     const after=Number(new URL(request.url).searchParams.get('after')||0);if(!Number.isSafeInteger(after)||after<0)throw fail(400,'Invalid cursor.');
-    const signals=await all('SELECT id,kind,payload FROM call_signals WHERE call_id=? AND actor!=? AND id>? ORDER BY id LIMIT 150',call.id,actor,after);
+    if(call.status==='active'){
+      const heartbeatNow=Date.now();
+      await stmt("UPDATE call_signals SET created=? WHERE call_id=? AND actor=? AND kind='heartbeat' AND EXISTS(SELECT 1 FROM calls WHERE id=? AND status='active' AND expires>?)",heartbeatNow,call.id,actor,call.id,heartbeatNow).run();
+      // A freshly upgraded active call may not have this private marker yet.
+      await stmt("INSERT INTO call_signals(call_id,actor,kind,payload,created) SELECT ?,?,'heartbeat','{}',? WHERE EXISTS(SELECT 1 FROM calls WHERE id=? AND status='active' AND expires>?) AND NOT EXISTS(SELECT 1 FROM call_signals WHERE call_id=? AND actor=? AND kind='heartbeat')",call.id,actor,heartbeatNow,call.id,heartbeatNow,call.id,actor).run();
+    }
+    const signals=await all("SELECT id,kind,payload FROM call_signals WHERE call_id=? AND actor!=? AND kind!='heartbeat' AND id>? ORDER BY id LIMIT 150",call.id,actor,after);
     return result({call:view(call),signals:signals.map(s=>({...s,payload:JSON.parse(s.payload)}))});
   }
   if(match[2]==='signals'&&method==='POST'){
@@ -75,7 +88,7 @@ export async function callsRoutes(ctx){
     }
     const serialized=JSON.stringify(payload);
     if(data.kind!=='ice'){const existing=await one('SELECT payload FROM call_signals WHERE call_id=? AND actor=? AND kind=?',call.id,actor,data.kind);if(existing){if(existing.payload!==serialized)throw fail(409,'The call description was already sent.');return result({ok:true});}}
-    const inserted=await stmt("INSERT INTO call_signals(call_id,actor,kind,payload,created) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM calls WHERE id=? AND status!='ended' AND expires>?) AND (SELECT COUNT(*) FROM call_signals WHERE call_id=?)<250 AND (?='ice' OR NOT EXISTS(SELECT 1 FROM call_signals WHERE call_id=? AND actor=? AND kind=?))",call.id,actor,data.kind,serialized,Date.now(),call.id,Date.now(),call.id,data.kind,call.id,actor,data.kind).run();
+    const inserted=await stmt("INSERT INTO call_signals(call_id,actor,kind,payload,created) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM calls WHERE id=? AND status!='ended' AND expires>?) AND (SELECT COUNT(*) FROM call_signals WHERE call_id=? AND kind!='heartbeat')<250 AND (?='ice' OR NOT EXISTS(SELECT 1 FROM call_signals WHERE call_id=? AND actor=? AND kind=?))",call.id,actor,data.kind,serialized,Date.now(),call.id,Date.now(),call.id,data.kind,call.id,actor,data.kind).run();
     if(!inserted.meta.changes)throw fail(409,'The call changed or its signal limit was reached.');return result({ok:true},201);
   }
   throw fail(404,'Call endpoint not found.');

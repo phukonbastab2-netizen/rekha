@@ -1,4 +1,12 @@
-# Release 1.3.0-connected — 3 October 2026
+# Release 1.3.1-connected — 3 October 2026
+
+- All **49 local tests passed**, including blocked playback recovery and stale asynchronous results, private two-party call leases, tenant isolation and the existing messaging/relay checks.
+- All **13 signed APKs** passed independent package, version, compiled-URL, allowed-permission and signing checks. Customer embedded assets match the new generated files. Android versionCode 5 / 1.3.1-connected uses the original signing certificate.
+- APK permissions are exactly INTERNET, MODIFY_AUDIO_SETTINGS, RECORD_AUDIO and CAMERA. The added permission supports communication-audio routing; no new runtime consent dialog or broad phone-data permission was added.
+- Public APK readback and live call-flow checks for this patch are pending publication. Existing evidence below records the preceding release until these checks complete.
+- No physical Android device is attached and no emulator is configured. Real-phone audio, cross-network media, TURN traversal and background ringing are not verified. The current Cloudflare credential still rejects TURN management, and the dashboard requires sign-in. No relay was activated.
+
+## Historical release 1.3.0 verification
 
 - All **37 local tests passed**. Client lifecycle tests cover idle incoming-call discovery, answer signaling, visibility polling, continued listening after cleanup, delayed permission cancellation, late creation-response cleanup, bounded disconnection recovery and fresh per-call relay configuration with processed admin audio.
 - **13 APKs were built**: 12 customer apps and one Rekha Global Admin app, using versionCode 4 / 1.3.0-connected. The build signs them with the persistent key and checks v2/v3 signatures.

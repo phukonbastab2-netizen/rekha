@@ -1,6 +1,6 @@
 # Connected deployment — 3 October 2026
 
-The 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`, with each owner inbox at `/admin`. The collection hub links to all services. Android 1.3.0-connected (versionCode 4) has 12 customer builds using their compiled HTTPS addresses and one Rekha Global Admin build opening the owner control centre. Original customer package IDs and the signing certificate are preserved for updates. Physical-device validation remains outstanding.
+The 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`, with each owner inbox at `/admin`. The collection hub links to all services. Android 1.3.1-connected (versionCode 5) has 12 customer builds using their compiled HTTPS addresses and one Rekha Global Admin build opening the owner control centre. Original customer package IDs and the signing certificate are preserved for updates. Physical-device validation remains outstanding.
 
 ## Infrastructure
 
@@ -18,7 +18,7 @@ Customer replies are manual. AI, paid checkout and voice cloning are not enabled
 
 The admin APK is `preview/apks/rekha-global-admin.apk` (package `in.rekha.global.owner`). Its entry page is [control.html](https://rekhaastrology.in/global-apps/preview/control.html). Choose **Owner inbox** for a country and enter that app's existing private password. The native **Apps** button returns to the 12-app list. Passwords are not bundled; each service authenticates its own owner session. Uploaded files remain scoped to the submitting conversation and app storage prefix.
 
-Release 1.3 checks for incoming calls every approximately five seconds while idle, and polls an active call every approximately 1.5 seconds. Hidden pages pause polling and resume when visible. Ending or declining a call leaves the incoming listener running. A delayed microphone permission result cannot create or accept a call after its client was cancelled. A disconnected established call gets up to 15 seconds to recover, then ends and releases its media resources.
+Release 1.3 checks for incoming calls every approximately five seconds while idle, and polls an active call every approximately 1.5 seconds. Hidden pages pause polling and resume when visible. Ending or declining a call leaves the incoming listener running. A delayed microphone permission result cannot create or accept a call after its client was cancelled. A disconnected established call gets up to 15 seconds to recover, then ends and releases its media resources. Release 1.3.1 adds private participant heartbeats: an active call is ended during the next call-route request if either participant has been absent for over two minutes. This prevents an abandoned call blocking later calls for its full one-hour limit. No schema migration was required.
 
 Optional Cloudflare TURN support can issue short-lived connection credentials for an authenticated participant in a current call. Each call fetches fresh settings using its own call ID. No TURN provider was activated: the current account credential received HTTP 403 from Cloudflare TURN management. No paid provider or plan upgrade was enabled. The default remains STUN-only; these call fixes do not guarantee connectivity on mobile or restrictive networks. See [TURN setup](TURN-SETUP.md) for the exact server secrets and later configuration steps.
 
