@@ -1,6 +1,6 @@
 {
   "name": "rekha-astrology-app",
-  "version": "0.6.0-preview",
+  "version": "0.7.0-preview",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24.15.0" },

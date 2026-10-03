@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.6.0-preview",
+  "version": "0.7.0-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -15,6 +15,8 @@
     "admin-android/settings.gradle",
     "admin-android/src/in/rekhaastrology/admin/MainActivity.java",
     "admin-android/src/in/rekhaastrology/admin/MessageAlerts.java",
+    "admin-android/src/in/rekhaastrology/admin/PermissionPolicy.java",
+    "admin-android/tests/in/rekhaastrology/admin/PermissionPolicyTest.java",
     "android/AndroidManifest.xml",
     "android/build.gradle",
     "android/build.ps1",
@@ -23,6 +25,8 @@
     "android/settings.gradle",
     "android/src/in/rekhaastrology/astrorani/MainActivity.java",
     "android/src/in/rekhaastrology/astrorani/MessageAlerts.java",
+    "android/src/in/rekhaastrology/astrorani/PermissionPolicy.java",
+    "android/tests/in/rekhaastrology/astrorani/PermissionPolicyTest.java",
     "cloudflare/app-settings.mjs",
     "cloudflare/calls.mjs",
     "cloudflare/messaging.mjs",
@@ -66,9 +70,13 @@
     "public/media.js",
     "public/messaging-ui.js",
     "public/offline.html",
+    "public/permissions.css",
+    "public/permissions.js",
     "public/rekha-portrait.png",
     "public/styles.css",
     "public/sw.js",
+    "public/voice-effects-worklet.js",
+    "public/voice-effects.js",
     "public/workflow-admin.js",
     "public/workflow.css",
     "scripts/check-source.mjs",
@@ -89,6 +97,7 @@
     "tests/test-workflow-cron.mjs",
     "tests/test-workflow-retry.mjs",
     "tests/test-workflow.mjs",
+    "tests/voice-effects.test.mjs",
     "wrangler.example.jsonc"
   ]
 }

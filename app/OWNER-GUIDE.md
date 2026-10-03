@@ -34,6 +34,12 @@ Existing customers require an explicit **Start**. Each chat also has **Pause**, 
 
 The preview payment QR remains inactive. Do not collect card details or try to reuse a customer's payment information. Configure a legitimate payment provider separately before accepting real payments.
 
+## Voice and device setup
+
+Use **Feature access** to enable microphone, camera and optional message alerts. Android prompts are separate; tapping a voice or camera feature also starts its permission request. If access was previously blocked, tap **Open app settings** and change that permission there. Customers share selected files through Attach; their SMS and full gallery are not accessible to the owner.
+
+On an owner call, choose Natural, Lower pitch, Higher pitch, Warm or Robot under **Your voice**. You can change the effect during a call. These are local effects, not a cloned voice. Mute silences both the microphone and processed outgoing audio. Both apps must remain open for calls.
+
 ## Protect customer information
 
 Use the owner panel on a private device, sign out when finished, and keep the owner password and signing backups private. Ask only for details needed for the conversation. Never request passwords, OTPs, banking credentials or another person's private messages. Respect the configured retention period and customer deletion requests.

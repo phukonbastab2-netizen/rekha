@@ -15,7 +15,13 @@ import org.json.*;
 /** Opt-in periodic checks; this does not promise instant push delivery. */
 public final class MessageAlerts extends JobService {
   private volatile boolean stopped;
-  static void checkpoint(Context context,boolean owner){if(!context.getSharedPreferences("alerts",MODE_PRIVATE).getBoolean("enabled",false))return;new Thread(()->{try{long current=latest(owner);if(current>=0)context.getSharedPreferences("alerts",MODE_PRIVATE).edit().putLong("cursor",current).apply();}catch(Exception ignored){}},"rekha-alert-checkpoint").start();}
+  private static boolean checkpointRunning;
+  private static long lastCheckpointAt=-60000;
+  static synchronized void checkpoint(Context context,boolean owner){
+    if(!context.getSharedPreferences("alerts",MODE_PRIVATE).getBoolean("enabled",false)||checkpointRunning||android.os.SystemClock.elapsedRealtime()-lastCheckpointAt<60000)return;
+    checkpointRunning=true;lastCheckpointAt=android.os.SystemClock.elapsedRealtime();Context app=context.getApplicationContext();
+    new Thread(()->{try{long current=latest(owner);if(current>=0)app.getSharedPreferences("alerts",MODE_PRIVATE).edit().putLong("cursor",current).apply();}catch(Exception ignored){}finally{synchronized(MessageAlerts.class){checkpointRunning=false;}}},"rekha-alert-checkpoint").start();
+  }
   private static long latest(boolean owner)throws Exception{
     String origin="https://"+MainActivity.HOST,cookie=CookieManager.getInstance().getCookie(origin);if(cookie==null)return -1;
     HttpURLConnection connection=(HttpURLConnection)new URL(origin+(owner?"/api/admin/conversations":"/api/chat")).openConnection();connection.setConnectTimeout(15000);connection.setReadTimeout(15000);connection.setInstanceFollowRedirects(false);connection.setRequestProperty("Cookie",cookie);

@@ -5,7 +5,9 @@ import { installCalls } from './calls.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, interval, busy = false, checkoutBusy = false, fingerprint = '', offline = false, pendingSend = null, messaging = null;
-let calls, configReadAt=0, sessionEnded=false;
+let calls, configReadAt=0, sessionEnded=false,chatMutation=0;
+const messageMarkup=new Map(),dateFormatters=new Map();
+function dates(){const locale=lang==='hi'?'hi-IN':'en-IN';if(!dateFormatters.has(locale))dateFormatters.set(locale,{day:new Intl.DateTimeFormat(locale,{day:'numeric',month:'short',year:'numeric'}),time:new Intl.DateTimeFormat(locale,{hour:'2-digit',minute:'2-digit'})});return dateFormatters.get(locale);}
 const copyKeys=new Set(['tagline','languageTitle','languageSubtitle','detailsTitle','detailsSubtitle','kundli','kundliNote','permissionsTitle','permissionsSubtitle','messagePlaceholder','reflection','offerTitle','offerText','topics']);
 const brand=()=>config?.appSettings?.brand||{};
 const brandName=()=>typeof brand().name==='string'&&brand().name.trim()?brand().name:'Rekha Astrology';
@@ -101,6 +103,8 @@ async function start(skip) {
   finally { busy = false; if(stage==='chat'){fingerprint='';drawChat();}else app.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
 }
 function renderChat() {
+  chatMutation++;
+  messageMarkup.clear();
   messaging?.destroy(); messaging = null;
   stage = 'chat';sessionEnded=false; updateLanguage(chat.language); fingerprint = '';
   document.body.classList.add('chat-mode');
@@ -114,7 +118,7 @@ function renderChat() {
   app.querySelector('#chat-privacy').onclick = () => privacy(true);
   app.querySelector('#composer').onsubmit = send;
   app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
-  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:next=>{chat=next;drawChat();},toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy});
+  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:next=>{chatMutation++;chat=next;drawChat();},toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy});
   window.RekhaChatUI=messaging;
   drawChat(); clearInterval(interval); interval = setInterval(refresh, 2200);
   window.dispatchEvent(new CustomEvent('rekha:chat-mounted',{detail:{header:app.querySelector('.chat-head'),conversationId:chat.id}}));
@@ -127,13 +131,16 @@ function drawChat() {
   app.querySelector('.demo-ribbon').textContent = previewLabel();
   const scroller = app.querySelector('#chat-scroll'), nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 140;
   app.querySelector('#chat-ribbon').textContent = chat.guidedConversation ? (lang === 'hi' ? `${astrologerName()} के साथ आपकी बातचीत` : lang === 'hinglish' ? `${astrologerName()} ke saath aapki baatcheet` : `Your conversation with ${astrologerName()}`) : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
-  let lastDay='';
+  let lastDay='';const format=dates(),quoteById=new Map(chat.messages.map(m=>[m.id,m])),active=new Set();
   const renderedMessages = chat.messages.map(m => {
-    if (m.role === 'system') return `<div class="system-note" data-message="${m.id}">${esc(m.kind === 'demo-payment' ? text('demoPaid') : m.kind === 'payment' ? text('paid') : m.kind === 'refund' ? text('refund') : m.body)}</div>`;
-    const date=new Date(m.created),day=date.toLocaleDateString(),separator=day!==lastDay?`<div class="day-label">${esc(date.toLocaleDateString(lang==='hi'?'hi-IN':'en-IN',{day:'numeric',month:'short',year:'numeric'}))}</div>`:'';lastDay=day;
+    active.add(m.id);const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,quoteById.get(m.replyTo)]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;
+    if(cached?.key===key)return{id:m.id,html:cached.html};
+    if(m.role==='system'){const html=`<div class="system-note" data-message="${m.id}">${esc(m.kind === 'demo-payment' ? text('demoPaid') : m.kind === 'payment' ? text('paid') : m.kind === 'refund' ? text('refund') : m.body)}</div>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};}
+    const separator=separatorDay?`<div class="day-label">${esc(format.day.format(date))}</div>`:'';
     const extras=messageExtras(m,chat,astrologerName());
-    return `<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m)}</div><span class="stamp">${extras.metadata}${date.toLocaleTimeString(lang === 'hi' ? 'hi-IN' : 'en-IN', { hour:'2-digit', minute:'2-digit' })}${extras.receipt}</span>${extras.reactionHtml}</div></article>`;
-  }).join('');
+    const html=`<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m)}</div><span class="stamp">${extras.metadata}${format.time.format(date)}${extras.receipt}</span>${extras.reactionHtml}</div></article>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};
+  });
+  for(const id of messageMarkup.keys())if(!active.has(id))messageMarkup.delete(id);
   syncThread(app.querySelector('#messages'),renderedMessages);
   const waiting = chat.messages.find(m => m.role === 'user' && ['pending','failed'].includes(m.status));
   let bottom = '';
@@ -158,7 +165,7 @@ function drawChat() {
 async function send(event) {
   event.preventDefault(); if (busy) return;
   const input = app.querySelector('#message-input'), body = input.value.trim(); if ((!body&&!messaging?.hasContent()) || input.disabled) return;
-  busy = true; input.disabled = true; app.querySelector('.send').disabled = true; app.querySelector('#send-error').textContent = '';
+  chatMutation++;busy = true; input.disabled = true; app.querySelector('.send').disabled = true; app.querySelector('#send-error').textContent = '';
   const signature=messaging?.draftSignature()||'';
   if (!pendingSend || pendingSend.body !== body || pendingSend.signature!==signature) pendingSend = { body, clientId: crypto.randomUUID(), signature };
   try {
@@ -172,9 +179,10 @@ async function send(event) {
 async function refresh() {
   if (stage !== 'chat' || document.hidden || busy || refresh.pending) return;
   refresh.pending = true;
+  const generation=chatMutation;
   try {
     if(Date.now()-configReadAt>=60000){configReadAt=Date.now();try{const nextConfig=await api('/api/config');if(stage==='chat')applyPublishedConfig(nextConfig);}catch{/* Existing chat remains usable while published settings are unavailable. */}}
-    const next = await api('/api/chat'); if (stage !== 'chat') return;
+    const next = await api('/api/chat'); if (stage !== 'chat'||busy||generation!==chatMutation) return;
     chat = next; drawChat(); messaging?.refresh(); if (offline) { toast(text('restored')); offline = false; }
   } catch (error) {
     if (error.status === 401) { clearInterval(interval);sessionEnded=true; messaging?.destroy(); messaging=null;calls?.destroy();calls=null; toast(text('expired')); app.querySelector('#message-input').disabled = true; app.querySelector('.send').disabled = true; }
@@ -182,7 +190,7 @@ async function refresh() {
   } finally { refresh.pending = false; }
 }
 async function checkout() {
-  if (checkoutBusy) return; checkoutBusy = true; app.querySelector('#unlock').disabled = true;
+  if (checkoutBusy) return;chatMutation++;checkoutBusy = true; app.querySelector('#unlock').disabled = true;
   const reset = () => { checkoutBusy = false; fingerprint = ''; drawChat(); };
   try {
     if (config.paymentMode === 'demo') { chat = await api('/api/payment/demo','POST',{}); reset(); return; }

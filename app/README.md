@@ -2,7 +2,7 @@
 
 This directory contains the customer app, private owner panel, Cloudflare backend and two Android WebView projects. The website in the repository root is separate and stays unchanged. That static website can be hosted separately; the authenticated chat needs the Cloudflare Worker.
 
-Web source package: **0.6.0-preview**, including the owner app editor. The included Android projects retain their **0.5.0-preview** release version; this repository does not contain a rebuilt or newly published APK.
+Web and Android source package: **0.7.0-preview**, including the owner app editor, feature-specific permission prompts and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
 
 Customers have one private conversation with Rekha. The owner can send text, images, video, audio, PDFs and ordered collections without waiting for a customer reply. Ads are disabled. Payments remain a preview with no real charges. No passwords, payment-card collection, OTP access or private-device scraping is implemented.
 
@@ -95,6 +95,10 @@ The source uses the public Rekha app host. Change the allowed host and app URLs 
 The provided PowerShell `build.ps1` scripts accept your JDK, SDK, Gradle executable, private signing directory and output path. Keep signing material outside this repository. Preserve the customer application's existing release key when shipping an update. No key, password, signed APK, Android build cache or `local.properties` file is included here. Put APK downloads in release storage only after you build and verify them; the preserved download page needs those release objects.
 
 ## Current boundaries
+
+Tap Voice or Camera to request only that feature's Android permission. Use **Feature access** to set up microphone, camera and optional message alerts. If Android has stopped showing a denied prompt, the recovery button opens app settings. Files are chosen through the phone's picker; the app does not request SMS, full-gallery or all-files access.
+
+Admin calls offer Natural, Lower pitch, Higher pitch, Warm and Robot effects. Audio processing stays on the device and does not clone another person's voice. Install the updated Android APK to receive the native permission bridge.
 
 - The owner/server can read conversations; chats are not end-to-end encrypted.
 - Foreground voice/video calls require both apps to remain open. TURN relay and real device/network validation are separate from local signaling checks; there is no background call ringing.

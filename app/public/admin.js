@@ -3,6 +3,7 @@ import { openLibrary } from './library.js';
 import { installCalls } from './calls.js';
 import { openWorkflowSettings,openChatWorkflow } from './workflow-admin.js';
 import { openAppSettings } from './app-settings-ui.js';
+import { openFeatureAccess,getFeatureMedia } from './permissions.js';
 
 const app = document.querySelector('#admin-app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -11,6 +12,8 @@ let attachment=null, sendAttempt=null, quoted=null, filter='all', config={}, thr
 let recorder=null, recordingStream=null, recordingTimer=null, recordingChunks=[], recordingStarted=0, recordingCancelled=false;
 let calls;
 const readThrough=new Map();
+const messageMarkup=new Map(),inboxMarkup=new Map();let inboxFingerprint='';
+const timeFormatter=new Intl.DateTimeFormat('en-IN',{hour:'2-digit',minute:'2-digit'}),dayFormatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',year:'numeric'}),inboxDateFormatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short'});
 async function api(route, method='GET', body) {
   const response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:method!=='GET'?{'Content-Type':'application/json'}:{},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(40000)});
   const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error||'Please try again.'),{status:response.status});if(method==='POST'&&route==='/api/admin/app-settings/publish'){config={...config,appSettings:data.published,settingsRevision:data.revision};window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));}return data;
@@ -19,9 +22,9 @@ function notice(text) { const n=document.querySelector('#notice');n.textContent=
 function mobileView(view){app.dataset.view=view;}
 function sender(m){return m.role==='user'?current?.name||'Customer':config.appSettings?.brand?.astrologerName||'Rekha';}
 function readable(m){if(m.deleted)return 'This message was deleted';if(m.kind==='media'){try{const d=JSON.parse(m.body);return [d.text,d.title,...(d.items||[]).map(i=>i.title)].filter(Boolean).join(' · ')||'Attachment';}catch{return 'Attachment';}}return m.body||'';}
-function time(value){return new Date(value).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});}
+function time(value){return timeFormatter.format(new Date(value));}
 function latestPreview(c){return c.preview||c.lastMessage||c.last_message||`${c.language} · ${c.mode==='ai'?'Automatic':c.mode==='assist'?'Drafts':'Personal'}`;}
-function closeRecorder(cancel=true){recordingCancelled=cancel;if(recorder&&recorder.state!=='inactive')recorder.stop();recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;}
+function closeRecorder(cancel=true){recordingCancelled=cancel;if(recorder&&recorder.state!=='inactive')recorder.stop();recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;}
 function login() {
   calls?.destroy();calls=null;
   clearInterval(timer);closeRecorder();readThrough.clear();selected=null;current=null;mobileView('login');
@@ -29,6 +32,7 @@ function login() {
   app.querySelector('#login-form').onsubmit=async event=>{event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;try{await api('/api/admin/login','POST',{password:app.querySelector('#password').value});await workspace();}catch(error){app.querySelector('#login-error').textContent=error.message;}finally{button.disabled=false;}};
 }
 async function workspace() {
+  inboxFingerprint='';inboxMarkup.clear();messageMarkup.clear();
   chats=await api('/api/admin/conversations');
   if(!calls)calls=installCalls({role:'admin',getConversationId:()=>selected,notify:notice,getAppSettings:()=>config?.appSettings});
   calls.poll();
@@ -37,6 +41,7 @@ async function workspace() {
   app.querySelector('#open-library').onclick=()=>openLibrary({api,notice});
   app.querySelector('#open-quick-replies').onclick=()=>quickReplies(false);
   const appEditor=document.createElement('button');appEditor.textContent='Edit customer app';appEditor.id='open-app-settings';appEditor.onclick=()=>openAppSettings({api,notice});app.querySelector('.topbar .links').prepend(appEditor);
+  const access=document.createElement('button');access.textContent='Feature access';access.id='feature-access';access.onclick=()=>openFeatureAccess();app.querySelector('.topbar .links').append(access);
   const flowSettings=document.createElement('button');flowSettings.textContent='Replies & video flow';flowSettings.id='open-workflow';flowSettings.onclick=()=>openWorkflowSettings({api,notice});app.querySelector('.topbar .links').insertBefore(flowSettings,app.querySelector('#logout'));
   app.querySelector('#logout').onclick=async()=>{try{await api('/api/admin/logout','POST',{});login();}catch(error){notice(error.message);}};
   if(typeof window.RekhaDevice?.showAlertSettings==='function'){
@@ -45,6 +50,7 @@ async function workspace() {
     app.querySelector('.topbar .links').insertBefore(alerts,app.querySelector('#logout'));
   }
   app.querySelector('#search').oninput=drawList;
+  app.querySelector('#inbox-list').onclick=event=>{const button=event.target.closest('[data-id]');if(button&&app.querySelector('#inbox-list').contains(button))select(button.dataset.id);};
   app.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{filter=b.dataset.filter;app.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));drawList();});
   drawList();clearInterval(timer);timer=setInterval(poll,2200);
   config=await api('/api/config');
@@ -52,15 +58,16 @@ async function workspace() {
 }
 function drawList(){
   const search=app.querySelector('#search');if(!search)return;
-  const query=search.value.trim().toLowerCase();app.querySelector('#count').textContent=chats.length;
+  const query=search.value.trim().toLowerCase(),print=JSON.stringify([chats,query,filter,selected]);if(print===inboxFingerprint)return;inboxFingerprint=print;app.querySelector('#count').textContent=chats.length;
   const list=chats.filter(c=>{const matches=[c.name,...(c.labels||[])].join(' ').toLowerCase().includes(query);if(!matches)return false;if(filter==='archived')return c.archived;if(filter==='blocked')return c.blocked;if(c.archived)return false;if(filter==='waiting')return c.waiting;if(filter==='unread')return c.unread>0;if(filter==='pinned')return c.pinned;return true;}).sort((a,b)=>Number(b.pinned)-Number(a.pinned)||new Date(b.updated)-new Date(a.updated));
-  app.querySelector('#inbox-list').innerHTML=list.map(c=>`<button class="chat-item ${selected===c.id?'selected':''} ${c.unread?'has-unread':''}" data-id="${esc(c.id)}"><span class="customer-avatar" aria-hidden="true">${esc(c.name.slice(0,1).toUpperCase())}</span><span class="chat-summary"><span class="row"><strong>${esc(c.name)}</strong><span class="inbox-date">${new Date(c.updated).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</span></span><span class="row"><small>${esc(latestPreview(c))}</small><span class="inbox-markers">${c.pinned?'<span title="Pinned">⌖</span>':''}${c.blocked?'<span title="Blocked">⊘</span>':''}${c.unread?`<span class="unread-count">${Number(c.unread)}</span>`:c.waiting?'<span class="waiting-dot" title="Waiting for your reply"></span>':''}</span></span>${c.labels?.length?`<span class="inbox-labels">${c.labels.map(x=>`<span>${esc(x)}</span>`).join('')}</span>`:''}</span></button>`).join('')||'<div class="empty inbox-empty"><p>No chats match this filter.</p></div>';
-  app.querySelectorAll('[data-id]').forEach(button=>button.onclick=()=>select(button.dataset.id));
+  const active=new Set(),fragments=list.map(c=>{active.add(c.id);const key=JSON.stringify([c,selected===c.id]),cached=inboxMarkup.get(c.id);if(cached?.key===key)return{id:c.id,html:cached.html};const html=`<button class="chat-item ${selected===c.id?'selected':''} ${c.unread?'has-unread':''}" data-id="${esc(c.id)}" data-message="${esc(c.id)}"><span class="customer-avatar" aria-hidden="true">${esc(c.name.slice(0,1).toUpperCase())}</span><span class="chat-summary"><span class="row"><strong>${esc(c.name)}</strong><span class="inbox-date">${inboxDateFormatter.format(new Date(c.updated))}</span></span><span class="row"><small>${esc(latestPreview(c))}</small><span class="inbox-markers">${c.pinned?'<span title="Pinned">⌖</span>':''}${c.blocked?'<span title="Blocked">⊘</span>':''}${c.unread?`<span class="unread-count">${Number(c.unread)}</span>`:c.waiting?'<span class="waiting-dot" title="Waiting for your reply"></span>':''}</span></span>${c.labels?.length?`<span class="inbox-labels">${c.labels.map(x=>`<span>${esc(x)}</span>`).join('')}</span>`:''}</span></button>`;inboxMarkup.set(c.id,{key,html});return{id:c.id,html};});for(const id of inboxMarkup.keys())if(!active.has(id))inboxMarkup.delete(id);
+  syncThread(app.querySelector('#inbox-list'),fragments.length?fragments:[{id:'empty-inbox',html:'<div data-message="empty-inbox" class="empty inbox-empty"><p>No chats match this filter.</p></div>'}]);
 }
 async function select(id){
   if(selected===id&&current?.id===id){mobileView('chat');await markRead();return;}
   if(actionBusy)return;if(dirty&&!confirm('Discard your unsent reply and open another conversation?'))return;
   closeRecorder();selected=id;attachment=null;sendAttempt=null;quoted=null;dirty=false;fingerprint='';lastDraft='';threadSearch='';onlyStarred=false;drawList();mobileView('chat');
+  messageMarkup.clear();
   try{const data=await api(`/api/admin/conversations/${id}`);if(selected!==id)return;current=data;drawConversation(true);await markRead();}catch(error){notice(error.message);}
 }
 function toInbox(){if(actionBusy)return;closeRecorder();mobileView('inbox');app.querySelector('#controls')?.classList.remove('mobile-open');}
@@ -70,9 +77,9 @@ async function markRead(){
 }
 function renderMessage(m){
   if(m.role==='system')return `<div data-message="${m.id}" class="entry system">${esc(m.body)}</div>`;
-  const own=m.role!=='user',reply=current.messages.find(x=>x.id===m.replyTo);
+  const own=m.role!=='user',reply=current.messages.find(x=>x.id===m.replyTo),key=JSON.stringify([m,reply,sender(m),sender(reply||m)]),cached=messageMarkup.get(m.id);if(cached?.key===key)return cached.html;
   const reactions=(m.reactions||[]).map(r=>`<button type="button" class="reaction-pill ${r.by==='owner'?'mine':''}" data-react-existing="${m.id}" data-emoji="${esc(r.emoji)}" aria-label="${esc(r.emoji)} reaction">${esc(r.emoji)}</button>`).join('');
-  return `<article data-message="${m.id}" class="entry ${own?'owner':'user'} ${m.deleted?'deleted':''}"><div class="body">${reply?`<button class="quoted-message" data-jump="${reply.id}"><strong>${esc(sender(reply))}</strong><span>${esc(readable(reply).slice(0,140))}</span></button>`:''}${m.deleted?'<span class="deleted-text">This message was deleted</span>':messageBody(m)}<span class="bubble-meta">${m.starred?'<span title="Starred">★</span>':''}${m.edited?'<span>edited</span>':''}<time>${time(m.created)}</time>${own?`<span class="message-ticks ${m.readByOther?'read':''}" aria-label="${m.readByOther?'Read by customer':'Sent'}">${m.readByOther?'✓✓':'✓'}</span>`:''}</span></div>${reactions?`<div class="message-reactions">${reactions}</div>`:''}<button type="button" class="message-options" data-message-menu="${m.id}" aria-label="Message actions">⌄</button></article>`;
+  const html=`<article data-message="${m.id}" class="entry ${own?'owner':'user'} ${m.deleted?'deleted':''}"><div class="body">${reply?`<button class="quoted-message" data-jump="${reply.id}"><strong>${esc(sender(reply))}</strong><span>${esc(readable(reply).slice(0,140))}</span></button>`:''}${m.deleted?'<span class="deleted-text">This message was deleted</span>':messageBody(m)}<span class="bubble-meta">${m.starred?'<span title="Starred">★</span>':''}${m.edited?'<span>edited</span>':''}<time>${time(m.created)}</time>${own?`<span class="message-ticks ${m.readByOther?'read':''}" aria-label="${m.readByOther?'Read by customer':'Sent'}">${m.readByOther?'✓✓':'✓'}</span>`:''}</span></div>${reactions?`<div class="message-reactions">${reactions}</div>`:''}<button type="button" class="message-options" data-message-menu="${m.id}" aria-label="Message actions">⌄</button></article>`;messageMarkup.set(m.id,{key,html});return html;
 }
 function drawConversation(initial=false){
   queueMicrotask(()=>calls?.mount(app.querySelector('.owner-call-actions')));
@@ -84,13 +91,13 @@ function drawConversation(initial=false){
   app.querySelector('#customer-state').textContent=current.typing?.customer?'typing…':`${current.mode==='ai'?'Auto reply':current.mode==='assist'?'Draft approval':'Personal reply'}${current.blocked?' · Customer blocked':''}`;
   const thread=app.querySelector('#thread'),bottom=thread.scrollHeight-thread.scrollTop-thread.clientHeight<110;
   const messages=current.messages.filter(m=>(!onlyStarred||m.starred)&&(!threadSearch||readable(m).toLowerCase().includes(threadSearch.toLowerCase())));
-  let previousDate='';const threadHtml=messages.map(m=>{const date=new Date(m.created).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'});const separator=date!==previousDate?`<div data-message="date-${m.id}" class="day-divider">${esc(date)}</div>`:'';previousDate=date;return separator+renderMessage(m);}).join('');
-  syncThread(thread,threadHtml||'<div data-message="empty-search" class="empty"><p>No messages found.</p></div>');
+  let previousDate='';const threadHtml=[];for(const m of messages){const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;if(day!==previousDate)threadHtml.push({id:'date-'+m.id,html:`<div data-message="date-${m.id}" class="day-divider">${esc(dayFormatter.format(date))}</div>`});previousDate=day;threadHtml.push({id:m.id,html:renderMessage(m)});}const activeIds=new Set(current.messages.map(m=>m.id));for(const id of messageMarkup.keys())if(!activeIds.has(id))messageMarkup.delete(id);
+  syncThread(thread,threadHtml.length?threadHtml:[{id:'empty-search',html:'<div data-message="empty-search" class="empty"><p>No messages found.</p></div>'}]);
   if(initial||bottom)thread.scrollTop=thread.scrollHeight;
   const pending=current.messages.findLast(m=>m.role==='user'&&['pending','failed'].includes(m.status));const reply=app.querySelector('#reply');
   if(!dirty&&current.draft&&lastDraft!==current.draft.body){reply.value=current.draft.body;lastDraft=current.draft.body;}
   if(!pending&&!dirty){reply.value='';lastDraft='';}if(current.mode==='ai'&&!dirty){reply.value='';lastDraft='';}
-  reply.disabled=actionBusy;app.querySelector('#send-reply').disabled=actionBusy;app.querySelector('#voice-record').disabled=actionBusy;
+  reply.disabled=actionBusy;app.querySelector('#send-reply').disabled=actionBusy;app.querySelector('#voice-record').disabled=actionBusy||startRecording.pending||recorder?.state==='recording';
   app.querySelector('#draft-label').textContent=current.draft?'AI draft · review before sending':'';
   app.querySelector('#reply-hint').textContent=current.mode==='ai'?'Sending changes this chat to personal reply.':'You can send follow-ups anytime.';
   app.querySelector('.answer-toggle').hidden=!pending;
@@ -155,9 +162,11 @@ async function uploadAttachment(file){
   try{const response=await fetch(`/api/admin/uploads?title=${encodeURIComponent(file.name||'Voice message')}&category=general`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':file.type||'application/octet-stream'},body:file,signal:AbortSignal.timeout(180000)});const result=await response.json();if(!response.ok)throw Error(result.error);if(selected===id){attachment={itemIds:[result.id],label:result.title||file.name};sendAttempt=null;dirty=true;}notice('Attachment ready. Press Send to share it.');}catch(error){notice(error.message);}finally{actionBusy=false;fingerprint='';drawConversation();}
 }
 async function startRecording(){
-  if(recorder?.state==='recording')return;if(!window.MediaRecorder||!navigator.mediaDevices?.getUserMedia)return notice('Voice recording is unavailable in this browser. You can attach an audio file.');
+  if(actionBusy||startRecording.pending||recorder?.state==='recording')return;if(!window.MediaRecorder||!navigator.mediaDevices?.getUserMedia)return notice('Voice recording is unavailable in this browser. You can attach an audio file.');
   const chatId=selected;
-  try{recordingStream=await navigator.mediaDevices.getUserMedia({audio:true});if(selected!==chatId){closeRecorder();return;}const mime=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t=>MediaRecorder.isTypeSupported(t));recorder=new MediaRecorder(recordingStream,mime?{mimeType:mime}:undefined);recordingChunks=[];recordingCancelled=false;recordingStarted=Date.now();recorder.ondataavailable=e=>{if(e.data.size)recordingChunks.push(e.data);};recorder.onstop=async()=>{recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const row=app.querySelector('.recording-row');if(row)row.hidden=true;if(recordingCancelled||selected!==chatId)return;const type=recorder.mimeType.split(';')[0],extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';const file=new File(recordingChunks,`Voice message.${extension}`,{type});await uploadAttachment(file);};recorder.start(1000);app.querySelector('.recording-row').hidden=false;app.querySelector('#recording-time').textContent='0:00';recordingTimer=setInterval(()=>{const seconds=Math.floor((Date.now()-recordingStarted)/1000);app.querySelector('#recording-time').textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;if(seconds>=180)closeRecorder(false);},1000);}catch(error){closeRecorder();notice(error.name==='NotAllowedError'?'Microphone permission was declined.':'Could not start voice recording.');}
+  startRecording.pending=true;
+  app.querySelector('#voice-record').disabled=true;
+  try{recordingStream=await getFeatureMedia('microphone',{audio:true});if(selected!==chatId){closeRecorder();return;}const mime=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t=>MediaRecorder.isTypeSupported(t));recorder=new MediaRecorder(recordingStream,mime?{mimeType:mime}:undefined);recordingChunks=[];recordingCancelled=false;recordingStarted=Date.now();recorder.ondataavailable=e=>{if(e.data.size)recordingChunks.push(e.data);};recorder.onstop=async()=>{recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const row=app.querySelector('.recording-row');if(row)row.hidden=true;if(recordingCancelled||selected!==chatId)return;const type=recorder.mimeType.split(';')[0],extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';const file=new File(recordingChunks,`Voice message.${extension}`,{type});await uploadAttachment(file);};recorder.start(1000);app.querySelector('.recording-row').hidden=false;app.querySelector('#recording-time').textContent='0:00';recordingTimer=setInterval(()=>{const seconds=Math.floor((Date.now()-recordingStarted)/1000);app.querySelector('#recording-time').textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;if(seconds>=180)closeRecorder(false);},1000);}catch(error){closeRecorder();notice(error.message||'Could not start voice recording.');}finally{startRecording.pending=false;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||recorder?.state==='recording';}
 }
 function emojiPicker(){const d=dialog('Add emoji',`<div class="emoji-grid">${['😊','🙏','❤️','👍','✨','🌸','☀️','🌙','🎉','💫','🌟','🤗','✅','🙂','💐','🕉️'].map(x=>`<button data-emoji="${x}" aria-label="${x}">${x}</button>`).join('')}</div>`);d.querySelectorAll('[data-emoji]').forEach(b=>b.onclick=()=>{const reply=app.querySelector('#reply'),start=reply.selectionStart,end=reply.selectionEnd;reply.value=reply.value.slice(0,start)+b.dataset.emoji+reply.value.slice(end);dirty=true;sendAttempt=null;d.close();reply.focus();growReply();});}
 function jumpMessage(id){const el=app.querySelector(`[data-message="${id}"]`);if(!el)return notice('Clear the message search to see this reply.');el.scrollIntoView({block:'center',behavior:'smooth'});el.classList.add('highlight');setTimeout(()=>el.classList.remove('highlight'),1800);}
@@ -188,7 +197,7 @@ async function quickReplies(insert){
 async function poll(){
   calls?.poll();
   if(loading||document.hidden||actionBusy)return;loading=true;
-  try{chats=await api('/api/admin/conversations');drawList();if(selected&&app.dataset.view==='chat'){const id=selected;const data=await api(`/api/admin/conversations/${id}`);if(id===selected){current=data;drawConversation();await markRead();}}}
+  try{const id=selected&&app.dataset.view==='chat'?selected:null;const [list,data]=await Promise.all([api('/api/admin/conversations'),id?api(`/api/admin/conversations/${id}`):null]);if(actionBusy)return;chats=list;drawList();if(data&&id===selected&&(!current||data.version>=current.version)){current=data;drawConversation();await markRead();}}
   catch(error){if(error.status===401)login();else if(error.status===404){selected=null;current=null;dirty=false;await workspace();notice('This conversation was deleted.');}else notice('Connection paused. Trying again…');}
   finally{loading=false;}
 }

@@ -24,12 +24,18 @@ export async function messagingReadUpload(request,limit,fail){
   const bytes=new Uint8Array(size);let offset=0;for(const part of chunks){bytes.set(part,offset);offset+=part.length;}return bytes;
 }
 export async function messagingView({chat,messages,admin,one,all}){
-  const settings=await one('SELECT * FROM chat_messaging WHERE conversation_id=?',chat.id)||{};
-  const details=await all('SELECT d.* FROM message_messaging d JOIN messages m ON m.id=d.message_id WHERE m.conversation_id=?',chat.id);
-  const stars=await all('SELECT s.message_id FROM message_stars s JOIN messages m ON m.id=s.message_id WHERE m.conversation_id=? AND s.side=?',chat.id,admin?'owner':'customer');
-  const reactions=await all('SELECT r.message_id,r.side,r.emoji FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=?',chat.id);
-  const byId=new Map(details.map(d=>[d.message_id,d])),starred=new Set(stars.map(s=>s.message_id)),now=Date.now();
-  return {messages:messages.map(m=>{const d=byId.get(m.id)||{};return{...m,body:d.deleted?'':m.body,replyTo:d.reply_to??null,edited:d.edited??null,deleted:!!d.deleted,starred:starred.has(m.id),reactions:d.deleted?[]:reactions.filter(r=>r.message_id===m.id).map(r=>({emoji:r.emoji,by:r.side})),readByOther:m.role==='user'?m.id<=(settings.owner_read||0):m.role==='assistant'?m.id<=(settings.customer_read||0):false};}),typing:{customer:(settings.customer_typing||0)>now,owner:(settings.owner_typing||0)>now},blocked:!!settings.blocked,...(admin?{pinned:!!settings.pinned,archived:!!settings.archived,labels:JSON.parse(settings.labels||'[]'),notes:settings.notes||''}:{})};
+  // These private reads are independent. Start them together rather than paying
+  // a separate D1 round trip for every part of a chat on each refresh.
+  const [settingsRow,details,stars,reactions,rows]=await Promise.all([
+    one('SELECT * FROM chat_messaging WHERE conversation_id=?',chat.id),
+    all('SELECT d.* FROM message_messaging d JOIN messages m ON m.id=d.message_id WHERE m.conversation_id=?',chat.id),
+    all('SELECT s.message_id FROM message_stars s JOIN messages m ON m.id=s.message_id WHERE m.conversation_id=? AND s.side=?',chat.id,admin?'owner':'customer'),
+    all('SELECT r.message_id,r.side,r.emoji FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=?',chat.id),
+    messages,
+  ]);
+  const settings=settingsRow||{},byId=new Map(details.map(d=>[d.message_id,d])),starred=new Set(stars.map(s=>s.message_id)),byReaction=new Map(),now=Date.now();
+  for(const reaction of reactions){let items=byReaction.get(reaction.message_id);if(!items)byReaction.set(reaction.message_id,items=[]);items.push({emoji:reaction.emoji,by:reaction.side});}
+  return {messages:rows.map(m=>{const d=byId.get(m.id)||{};return{...m,body:d.deleted?'':m.body,replyTo:d.reply_to??null,edited:d.edited??null,deleted:!!d.deleted,starred:starred.has(m.id),reactions:d.deleted?[]:byReaction.get(m.id)||[],readByOther:m.role==='user'?m.id<=(settings.owner_read||0):m.role==='assistant'?m.id<=(settings.customer_read||0):false};}),typing:{customer:(settings.customer_typing||0)>now,owner:(settings.owner_typing||0)>now},blocked:!!settings.blocked,...(admin?{pinned:!!settings.pinned,archived:!!settings.archived,labels:JSON.parse(settings.labels||'[]'),notes:settings.notes||''}:{})};
 }
 export async function messagingDeleteAttachments({env,all,chatId}){
   const files=await all('SELECT object_key FROM chat_attachments WHERE conversation_id=?',chatId);

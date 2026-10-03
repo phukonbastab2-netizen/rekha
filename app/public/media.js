@@ -73,12 +73,25 @@ function openViewer(collection,start,binding){
 }
 // Preserve player nodes during receipt/reaction updates; restore ordered search results.
 export function syncThread(container,html){
-  const binding=bindMedia(container),template=document.createElement('template');template.innerHTML=html;const old=new Map([...container.children].map(el=>[el.dataset.message,el]));let index=0;
-  for(const fresh of template.content.children){const previous=old.get(fresh.dataset.message);old.delete(fresh.dataset.message);let activeNode=previous;if(!previous)activeNode=fresh.cloneNode(true);else if(previous.outerHTML!==fresh.outerHTML){
-    const replacement=fresh.cloneNode(true),players=[...previous.querySelectorAll('audio,video')],retained=new Set();for(const player of replacement.querySelectorAll('audio,video')){const match=players.find(oldPlayer=>!retained.has(oldPlayer)&&oldPlayer.tagName===player.tagName&&oldPlayer.getAttribute('src')===player.getAttribute('src'));if(match){retained.add(match);player.replaceWith(match);}}
-    for(const player of players)if(!retained.has(player)){player.pause();player.removeAttribute('src');player.load();}previous.replaceWith(replacement);activeNode=replacement;
-  }if(container.children[index]!==activeNode)container.insertBefore(activeNode,container.children[index]||null);index++;}
+  const binding=bindMedia(container);
+  if(typeof html==='string'&&binding.lastHTML===html)return binding;
+  const keyed=Array.isArray(html),template=document.createElement('template');
+  if(!keyed)template.innerHTML=html;
+  const fragments=keyed?html:[...template.content.children].map(node=>({id:node.dataset.message,html:node.outerHTML,node}));
+  const old=new Map([...container.children].map(el=>[el.dataset.message,el])),markup=binding.markup||new Map(),nextMarkup=new Map(),changed=[];let cursor=container.firstElementChild;
+  for(const fragment of fragments){
+    const id=String(fragment.id),previous=old.get(id);old.delete(id);let activeNode=previous;nextMarkup.set(id,fragment.html);
+    // Compare the last supplied markup, not live HTML that players mutate. A
+    // typing tick need not parse 250 unchanged bubbles or restart their media.
+    if(!previous||markup.get(id)!==fragment.html){
+      let replacement=fragment.node;if(!replacement){template.innerHTML=fragment.html;replacement=template.content.firstElementChild;}if(!replacement)continue;
+      if(previous){const players=[...previous.querySelectorAll('audio,video')],retained=new Set();for(const player of replacement.querySelectorAll('audio,video')){const match=players.find(oldPlayer=>!retained.has(oldPlayer)&&oldPlayer.tagName===player.tagName&&oldPlayer.getAttribute('src')===player.getAttribute('src'));if(match){retained.add(match);player.replaceWith(match);}}for(const player of players)if(!retained.has(player)){player.pause();player.removeAttribute('src');player.load();}previous.replaceWith(replacement);if(cursor===previous)cursor=replacement;}
+      activeNode=replacement;changed.push(activeNode);
+    }
+    if(activeNode!==cursor)container.insertBefore(activeNode,cursor);cursor=activeNode.nextElementSibling;
+  }
   for(const el of old.values()){stopPlayers(el);el.remove();}
-  for(const card of container.querySelectorAll('.media-card')){const player=card.querySelector('audio,video'),image=card.querySelector('img');if(player?.error||image?.complete&&!image.naturalWidth)statusOf(card,true);else if(player?.readyState>=1){const formatted=duration(player.duration),target=card.querySelector('.media-duration');if(target)target.textContent=formatted?' · '+formatted:'';}}
+  for(const node of changed)for(const card of node.querySelectorAll('.media-card')){const player=card.querySelector('audio,video'),image=card.querySelector('img');if(player?.error||image?.complete&&!image.naturalWidth)statusOf(card,true);else if(player?.readyState>=1){const formatted=duration(player.duration),target=card.querySelector('.media-duration');if(target)target.textContent=formatted?' · '+formatted:'';}}
+  binding.markup=nextMarkup;binding.lastHTML=keyed?null:html;
   return binding;
 }
