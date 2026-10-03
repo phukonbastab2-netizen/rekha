@@ -20,7 +20,7 @@ The admin APK is `preview/apks/rekha-global-admin.apk` (package `in.rekha.global
 
 Release 1.3 checks for incoming calls every approximately five seconds while idle, and polls an active call every approximately 1.5 seconds. Hidden pages pause polling and resume when visible. Ending or declining a call leaves the incoming listener running. A delayed microphone permission result cannot create or accept a call after its client was cancelled. A disconnected established call gets up to 15 seconds to recover, then ends and releases its media resources.
 
-Optional Cloudflare TURN support can issue short-lived connection credentials for an authenticated participant in a current call. Each call fetches fresh settings using its own call ID. No TURN provider was activated: the current account credential received HTTP 403 from Cloudflare TURN management. No paid provider or plan upgrade was enabled. The default remains STUN-only; these call fixes do not guarantee connectivity on mobile or restrictive networks.
+Optional Cloudflare TURN support can issue short-lived connection credentials for an authenticated participant in a current call. Each call fetches fresh settings using its own call ID. No TURN provider was activated: the current account credential received HTTP 403 from Cloudflare TURN management. No paid provider or plan upgrade was enabled. The default remains STUN-only; these call fixes do not guarantee connectivity on mobile or restrictive networks. See [TURN setup](TURN-SETUP.md) for the exact server secrets and later configuration steps.
 
 ## Rebuilding
 

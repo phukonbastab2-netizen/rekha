@@ -17,6 +17,8 @@ Initial source/APK commit: `71c7d0e4d3618f22a804c88b849a38b95d936dea`. The new `
 
 The US and UK are included, making **12 customer apps**, with 10 customer-language dictionaries across the collection. Each customer APK and the admin APK have distinct package IDs, so they can coexist on one Android device. Android 8+ is required.
 
+The local download bundle **Android-Apps-and-Admin.zip** contains all 13 signed release 1.3 APKs, their SHA-256 checksums and installation instructions. Customer APKs can update the existing installations with the same signing key; Rekha Global Admin installs as a separate app.
+
 The 12 connected owner services are deployed. Live AI, actual payments, chart calculation, voice cloning and app-store publishing are not enabled.
 
 Machine-readable public checks are in [PUBLIC-VERIFICATION.json](PUBLIC-VERIFICATION.json); read their recorded version and timestamp. Build and test details, including outstanding checks, are in [VERIFICATION.md](VERIFICATION.md). Changes are listed in [release notes](RELEASE-NOTES-1.3.md).
