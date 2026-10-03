@@ -2,11 +2,20 @@ import { messageBody, syncThread } from './media.js';
 import { languages } from './locales.js';
 import { createMessagingUI, messageExtras } from './messaging-ui.js';
 import { installCalls } from './calls.js';
+import { createSendQueue,mergeServerChat } from './send-queue.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
-let lang = 'en', config, chat, stage = 'splash', profile = {}, interval, busy = false, checkoutBusy = false, fingerprint = '', offline = false, pendingSend = null, messaging = null;
-let calls, configReadAt=0, sessionEnded=false,chatMutation=0;
+let lang = 'en', config, chat, stage = 'splash', profile = {}, interval, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
+let calls, configReadAt=0, sessionEnded=false,chatMutation=0,outboxChatId=null;
 const messageMarkup=new Map(),dateFormatters=new Map();
+const outbox=createSendQueue({
+  online:()=>navigator.onLine!==false&&!sessionEnded&&Boolean(chat),
+  send:async(record,{signal})=>{if(!chat||chat.id!==record.conversationId||sessionEnded)throw Object.assign(new Error('This chat session has ended. Your message was not sent.'),{status:401});const payload=await record.prepare(record.snapshot,{signal});if(!payload)throw Object.assign(new Error('There is no message to send.'),{status:400});return payload.editId?api(`/api/messages/${payload.editId}`,'PATCH',{body:payload.body},{signal}):api('/api/messages','POST',payload,{signal});},
+  onAck:next=>acceptServerChat(next),
+  onConfirmed:record=>record.finish?.(record.snapshot),
+  onError:error=>{if(error.status===401)endSession();},
+  onChange:()=>{fingerprint='';if(stage==='chat')drawChat();},
+});
 function dates(){const locale=lang==='hi'?'hi-IN':'en-IN';if(!dateFormatters.has(locale))dateFormatters.set(locale,{day:new Intl.DateTimeFormat(locale,{day:'numeric',month:'short',year:'numeric'}),time:new Intl.DateTimeFormat(locale,{hour:'2-digit',minute:'2-digit'})});return dateFormatters.get(locale);}
 const copyKeys=new Set(['tagline','languageTitle','languageSubtitle','detailsTitle','detailsSubtitle','kundli','kundliNote','permissionsTitle','permissionsSubtitle','messagePlaceholder','reflection','offerTitle','offerText','topics']);
 const brand=()=>config?.appSettings?.brand||{};
@@ -46,12 +55,21 @@ function applyPublishedConfig(next){
   window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));
 }
 const previewLabel = () => [!chat?.guidedConversation && config.aiMode === 'demo' ? (lang === 'hi' ? 'नमूना उत्तर' : 'Sample replies') : '', config.paymentMode === 'demo' || config.paymentTest ? (lang === 'hi' ? 'परीक्षण भुगतान · कोई असली शुल्क नहीं' : 'Payment preview · no real charges') : ''].filter(Boolean).join(' · ');
-async function api(route, method = 'GET', body) {
-  const response = await fetch(route, { method, credentials: 'same-origin', cache: 'no-store', headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : {}, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(40000) });
-  const data = await response.json();
-  if (!response.ok) throw Object.assign(new Error(data.error || text('generalError')), { status: response.status });
+async function api(route, method = 'GET', body, {signal}={}) {
+  let response;
+  try{response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:method!=='GET'?{'Content-Type':'application/json'}:{},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});}catch(error){if(signal?.aborted)throw error;throw new Error(navigator.onLine===false?'You are offline. Your unsent message is kept.':'Could not confirm delivery. Please retry your message.');}
+  let data;try{data=await response.json();}catch{throw Object.assign(new Error('The connection returned an unreadable response. Please try again.'),{status:response.ok?undefined:response.status});}
+  if(!response.ok){const queuedWrite=method==='POST'&&route==='/api/messages'||method==='PATCH'&&/^\/api\/messages\/\d+$/.test(route);if(response.status===401&&stage==='chat'&&!queuedWrite)endSession();throw Object.assign(new Error(data.error||text('generalError')),{status:response.status});}
   return data;
 }
+function endSession(){clearInterval(interval);sessionEnded=true;outbox.pause({abort:true});messaging?.destroy();messaging=null;calls?.destroy();calls=null;toast(text('expired'));const input=app.querySelector('#message-input'),send=app.querySelector('.send');if(input)input.disabled=true;if(send)send.disabled=true;}
+function acceptServerChat(next){
+  if(!next||!Array.isArray(next.messages)||chat&&next.id!==chat.id)return false;
+  chat=mergeServerChat(chat,next);
+  chatMutation++;outbox.reconcile(next);if(stage==='chat')drawChat();return true;
+}
+function pendingMessages(){return outbox.list().filter(r=>r.conversationId===chat?.id).map(record=>({id:record.snapshot.editId||'local-'+record.clientId,clientId:record.clientId,role:'user',kind:'customer',body:[record.snapshot.body,...(record.snapshot.attachments||[]).map(a=>'📎 '+(a.file?.name||a.uploaded?.title||'Attachment'))].filter(Boolean).join('\n'),created:record.created,status:'outgoing',replyTo:record.snapshot.replyTo||null,reactions:[],sendState:record.state,sendError:record.error,sendUncertain:record.uncertain,editId:record.snapshot.editId||null}));}
+function displayMessages(){const local=pendingMessages(),edits=new Map(local.filter(m=>m.editId).map(m=>[m.editId,m]));return[...chat.messages.map(m=>edits.has(m.id)?{...m,...edits.get(m.id),created:m.created}:m),...local.filter(m=>!m.editId)];}
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.hidden = true; }, 5500); }
 function updateLanguage(value) { lang = Object.hasOwn(languages,value)?value:'en'; document.documentElement.lang = lang === 'hinglish' ? 'hi-Latn' : lang;if(config?.appSettings){const subtitle=document.querySelector('.story-copy p');if(subtitle)subtitle.textContent=text('tagline');document.querySelector('meta[name="description"]')?.setAttribute('content',text('tagline'));} }
 function screen(number, body) {
@@ -103,6 +121,7 @@ async function start(skip) {
   finally { busy = false; if(stage==='chat'){fingerprint='';drawChat();}else app.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
 }
 function renderChat() {
+  if(outboxChatId&&outboxChatId!==chat.id){outbox.clear();composerDraft=null;}outboxChatId=chat.id;
   chatMutation++;
   messageMarkup.clear();
   messaging?.destroy(); messaging = null;
@@ -117,9 +136,12 @@ function renderChat() {
   composerInput.oninput=()=>{composerInput.style.height='auto';composerInput.style.height=Math.min(composerInput.scrollHeight,120)+'px';};
   app.querySelector('#chat-privacy').onclick = () => privacy(true);
   app.querySelector('#composer').onsubmit = send;
-  app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
-  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:next=>{chatMutation++;chat=next;drawChat();},toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy});
+  let composing=false;composerInput.addEventListener('compositionstart',()=>composing=true);composerInput.addEventListener('compositionend',()=>composing=false);
+  app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing&&!composing&&event.keyCode!==229) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
+  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy});
+  if(composerDraft){messaging.restoreDraft?.(composerDraft);composerDraft=null;}
   window.RekhaChatUI=messaging;
+  outbox.resume();
   drawChat(); clearInterval(interval); interval = setInterval(refresh, 2200);
   window.dispatchEvent(new CustomEvent('rekha:chat-mounted',{detail:{header:app.querySelector('.chat-head'),conversationId:chat.id}}));
   if(!calls)calls=installCalls({role:'customer',getConversationId:()=>chat?.id,getAppSettings:()=>config?.appSettings,notify:toast});
@@ -127,17 +149,18 @@ function renderChat() {
 }
 function drawChat() {
   if (stage !== 'chat') return;
-  const print = JSON.stringify(chat); if (print === fingerprint) return; fingerprint = print;
+  const visibleMessages=displayMessages(),print=JSON.stringify([chat,visibleMessages]);if(print===fingerprint)return;fingerprint=print;
   app.querySelector('.demo-ribbon').textContent = previewLabel();
   const scroller = app.querySelector('#chat-scroll'), nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 140;
   app.querySelector('#chat-ribbon').textContent = chat.guidedConversation ? (lang === 'hi' ? `${astrologerName()} के साथ आपकी बातचीत` : lang === 'hinglish' ? `${astrologerName()} ke saath aapki baatcheet` : `Your conversation with ${astrologerName()}`) : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
-  let lastDay='';const format=dates(),quoteById=new Map(chat.messages.map(m=>[m.id,m])),active=new Set();
-  const renderedMessages = chat.messages.map(m => {
+  let lastDay='';const format=dates(),quoteById=new Map(visibleMessages.map(m=>[m.id,m])),active=new Set();
+  const renderedMessages = visibleMessages.map(m => {
     active.add(m.id);const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,quoteById.get(m.replyTo)]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;
     if(cached?.key===key)return{id:m.id,html:cached.html};
     if(m.role==='system'){const html=`<div class="system-note" data-message="${m.id}">${esc(m.kind === 'demo-payment' ? text('demoPaid') : m.kind === 'payment' ? text('paid') : m.kind === 'refund' ? text('refund') : m.body)}</div>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};}
     const separator=separatorDay?`<div class="day-label">${esc(format.day.format(date))}</div>`:'';
-    const extras=messageExtras(m,chat,astrologerName());
+    const extras=messageExtras(m,{...chat,messages:visibleMessages},astrologerName());
+    if(m.sendState){extras.actions='';extras.receipt='';const label=m.sendState==='sending'?(lang==='hi'?'भेजा जा रहा है…':'Sending…'):m.sendState==='queued'?(navigator.onLine===false?(lang==='hi'?'कनेक्शन का इंतज़ार':'Waiting for connection'):(lang==='hi'?'भेजने की कतार में':'Queued')):m.sendUncertain?(lang==='hi'?'डिलीवरी की पुष्टि नहीं हुई':'Delivery not confirmed'):(lang==='hi'?'भेजा नहीं गया':'Not sent');extras.metadata+=`<span class="outbox-state ${m.sendState}" data-send-state="${m.sendState}" title="${esc(m.sendError||label)}" aria-label="${esc(label)}">${esc(label)}</span>${m.sendState==='failed'?`<button type="button" class="outbox-retry" data-retry-send="${esc(m.clientId)}" ${sessionEnded?'disabled':''}>${lang==='hi'?'फिर भेजें':'Retry'}</button>`:''}`;}
     const html=`<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m)}</div><span class="stamp">${extras.metadata}${format.time.format(date)}${extras.receipt}</span>${extras.reactionHtml}</div></article>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};
   });
   for(const id of messageMarkup.keys())if(!active.has(id))messageMarkup.delete(id);
@@ -147,7 +170,7 @@ function drawChat() {
   if (waiting?.status === 'pending') bottom = `<div class="waiting"><span class="flame" aria-hidden="true"></span>${t('thinking')}</div>`;
   if (waiting?.status === 'failed') bottom = `<p class="error">${t('failed')}</p><button class="secondary" id="retry">${t('retry')}</button>`;
   if (chat.locked) bottom = `<section class="offer"><span class="eyebrow">${t('offerEyebrow')}</span><h3>${t('offerTitle')}</h3><p>${t('offerText')}</p><div class="price-line"><span class="price">${esc(price())}</span><span>${t('oneTime')}</span></div><button class="primary" id="unlock" ${checkoutBusy ? 'disabled' : ''}>${config.paymentMode === 'demo' ? t('demoUnlock') : t('unlock')}</button><p class="footnote">${t('offerFooter')}</p></section>`;
-  if (chat.messages.length === 1) bottom = `<div class="prompt-chips">${t('topics').map(text => `<button class="chip" data-prompt="${esc(text)}">${esc(text)}</button>`).join('')}</div>`;
+  if (visibleMessages.length === 1) bottom = `<div class="prompt-chips">${t('topics').map(text => `<button class="chip" data-prompt="${esc(text)}">${esc(text)}</button>`).join('')}</div>`;
   app.querySelector('#chat-bottom').innerHTML = bottom;
   const input = app.querySelector('#message-input'); input.disabled = chat.locked;
   input.placeholder = chat.blocked ? 'This conversation is unavailable.' : messagingPaused() ? (lang==='hi'?'संदेश भेजना अभी रोका गया है।':'Messaging is paused. You can still read your chat.') : chat.locked ? text('lockedPlaceholder') : text('messagePlaceholder');
@@ -155,49 +178,46 @@ function drawChat() {
   input.disabled = (chat.locked && !messaging?.isEditing()) || chat.blocked || busy || messagingPaused() || sessionEnded;
   app.querySelector('.send').disabled = input.disabled;
   for (const button of app.querySelectorAll('[data-prompt]')) button.onclick = () => { input.value = button.dataset.prompt; input.focus(); };
-  if (app.querySelector('#retry')) app.querySelector('#retry').onclick = async () => { try { chat = await api('/api/retry','POST',{}); drawChat(); } catch (error) { toast(error.message); } };
+  if(app.querySelector('#retry'))app.querySelector('#retry').onclick=async()=>{try{acceptServerChat(await api('/api/retry','POST',{}));}catch(error){toast(error.message);} };
   if (app.querySelector('#unlock')) app.querySelector('#unlock').onclick = checkout;
+  for(const button of app.querySelectorAll('[data-retry-send]'))button.onclick=()=>{if(sessionEnded||chat.blocked||messagingPaused())return toast('Messages are currently unavailable. Your unsent message is kept.');outbox.retry(button.dataset.retrySend);};
   if (nearBottom || chat.locked) scroller.scrollTop = scroller.scrollHeight;
   messaging?.refresh();
   window.dispatchEvent(new CustomEvent('rekha:chat-refreshed',{detail:{conversationId:chat.id}}));
   calls?.poll();
 }
-async function send(event) {
+function send(event) {
   event.preventDefault(); if (busy) return;
   const input = app.querySelector('#message-input'), body = input.value.trim(); if ((!body&&!messaging?.hasContent()) || input.disabled) return;
-  chatMutation++;busy = true; input.disabled = true; app.querySelector('.send').disabled = true; app.querySelector('#send-error').textContent = '';
-  const signature=messaging?.draftSignature()||'';
-  if (!pendingSend || pendingSend.body !== body || pendingSend.signature!==signature) pendingSend = { body, clientId: crypto.randomUUID(), signature };
+  app.querySelector('#send-error').textContent='';
   try {
-    const payload=await messaging.preparePayload(body,pendingSend.clientId);if(!payload)return;
-    chat=payload.editId?await api(`/api/messages/${payload.editId}`,'PATCH',{body:payload.body}):await api('/api/messages','POST',payload);
-    pendingSend = null; input.value = ''; input.style.height='44px'; messaging.sent(); drawChat(); app.querySelector('#chat-scroll').scrollTop = app.querySelector('#chat-scroll').scrollHeight;
+    const snapshot=messaging.takeDraft(body,crypto.randomUUID());if(!snapshot)return;
+    chatMutation++;outbox.enqueue({snapshot,conversationId:chat.id,baseVersion:Number(chat.version)||0,prepare:messaging.prepareDraft,finish:messaging.finishDraft});
+    if(!input.value)input.style.height='44px';input.focus();app.querySelector('#chat-scroll').scrollTop=app.querySelector('#chat-scroll').scrollHeight;
   }
   catch (error) { app.querySelector('#send-error').textContent = error.message; }
-  finally { busy = false; input.disabled=Boolean((chat?.locked&&!messaging?.isEditing())||chat?.blocked||messagingPaused()||sessionEnded);app.querySelector('.send').disabled=input.disabled; }
 }
 async function refresh() {
   if (stage !== 'chat' || document.hidden || busy || refresh.pending) return;
   refresh.pending = true;
-  const generation=chatMutation;
   try {
     if(Date.now()-configReadAt>=60000){configReadAt=Date.now();try{const nextConfig=await api('/api/config');if(stage==='chat')applyPublishedConfig(nextConfig);}catch{/* Existing chat remains usable while published settings are unavailable. */}}
-    const next = await api('/api/chat'); if (stage !== 'chat'||busy||generation!==chatMutation) return;
-    chat = next; drawChat(); messaging?.refresh(); if (offline) { toast(text('restored')); offline = false; }
+    const next = await api('/api/chat');if(stage!=='chat')return;
+    acceptServerChat(next);messaging?.refresh();if(offline){toast(text('restored'));offline=false;}
   } catch (error) {
-    if (error.status === 401) { clearInterval(interval);sessionEnded=true; messaging?.destroy(); messaging=null;calls?.destroy();calls=null; toast(text('expired')); app.querySelector('#message-input').disabled = true; app.querySelector('.send').disabled = true; }
+    if (error.status === 401) endSession();
     else if (!offline) { offline = true; toast(text('connection')); }
   } finally { refresh.pending = false; }
 }
 async function checkout() {
   if (checkoutBusy) return;chatMutation++;checkoutBusy = true; app.querySelector('#unlock').disabled = true;
-  const reset = () => { checkoutBusy = false; fingerprint = ''; drawChat(); };
+  const reset = () => { checkoutBusy = false;fingerprint='';drawChat();outbox.resume({retryUncertain:true}); };
   try {
-    if (config.paymentMode === 'demo') { chat = await api('/api/payment/demo','POST',{}); reset(); return; }
+    if (config.paymentMode === 'demo') { acceptServerChat(await api('/api/payment/demo','POST',{})); reset(); return; }
     const order = await api('/api/payment/order','POST',{});
     if (!window.Razorpay) await new Promise((resolve, reject) => { const script = document.createElement('script'); script.src = 'https://checkout.razorpay.com/v1/checkout.js'; script.onload = resolve; script.onerror = reject; document.head.append(script); });
     const payment = new window.Razorpay({ key: order.key, amount: order.amount, currency: order.currency, order_id: order.id, name: brandName(), description: 'Continued conversation with '+astrologerName(), theme: { color: getComputedStyle(document.documentElement).getPropertyValue('--brand-primary').trim()||'#075e54' },
-      handler: async result => { try { chat = await api('/api/payment/verify','POST',result); } catch (error) { toast(error.message); } finally { reset(); } },
+      handler: async result => { try {acceptServerChat(await api('/api/payment/verify','POST',result));}catch(error){toast(error.message);}finally{reset();} },
       modal: { ondismiss: () => { toast(text('checkoutCancelled')); reset(); } },
     });
     payment.on('payment.failed', () => { toast(text('generalError')); reset(); }); payment.open();
@@ -208,7 +228,7 @@ function privacy(editable) {
   dialog.querySelector('#close-dialog').onclick = () => dialog.close();
   if(introEnabled()){const introButton=document.createElement('button');introButton.className='text-button';introButton.textContent='Watch our introduction';introButton.onclick=()=>{dialog.close();introduction();};dialog.querySelector('.dialog-actions').before(introButton);}
   if (editable) {
-    dialog.querySelector('#save-privacy').onclick = async event => { const button = event.currentTarget; button.disabled = true; try { const prefs = await readChoices(dialog); chat = await api('/api/preferences','PATCH',prefs); drawChat(); dialog.close(); toast(text('privacySaved')); } catch (error) { toast(error.message); } finally { button.disabled = false; } };
+    dialog.querySelector('#save-privacy').onclick = async event => { const button = event.currentTarget; button.disabled = true; try { const prefs = await readChoices(dialog);acceptServerChat(await api('/api/preferences','PATCH',prefs));dialog.close();toast(text('privacySaved'));}catch(error){toast(error.message);}finally{button.disabled=false;} };
     dialog.querySelector('#delete-chat').onclick = confirmDelete;
   }
   if (!dialog.open) dialog.showModal();
@@ -216,11 +236,14 @@ function privacy(editable) {
 function confirmDelete() {
   dialog.innerHTML = `<h2 id="privacy-title">${t('deleteTitle')}</h2><p>${t('deleteText')}</p><div class="dialog-actions"><button class="secondary" id="cancel-delete">${t('cancel')}</button><button class="secondary danger" id="confirm-delete">${t('confirmDelete')}</button></div>`;
   dialog.querySelector('#cancel-delete').onclick = () => privacy(true);
-  dialog.querySelector('#confirm-delete').onclick = async event => { event.currentTarget.disabled = true; try { await api('/api/chat','DELETE',{}); clearInterval(interval); chat = null; pendingSend = null; stage = 'language'; dialog.close(); chooseLanguage(); } catch (error) { toast(error.message); event.currentTarget.disabled = false; } };
+  dialog.querySelector('#confirm-delete').onclick = async event => {event.currentTarget.disabled=true;outbox.pause({abort:true});try{await api('/api/chat','DELETE',{});clearInterval(interval);stage='language';outbox.clear();composerDraft=null;chat=null;dialog.close();chooseLanguage();}catch(error){toast(error.message);event.currentTarget.disabled=false;outbox.resume();} };
 }
 function introduction() {
   if(!introEnabled()){if(stage==='chat'){toast(lang==='hi'?'परिचय अभी उपलब्ध नहीं है।':'The introduction is currently unavailable.');return;}if(chat)renderChat();else chooseLanguage();return;}
+  if(messaging?.hasLiveCapture?.()){toast('Finish or cancel your recording or permission request first.');return;}
   calls?.destroy();calls=null;
+  if(stage==='chat'&&messaging)composerDraft=messaging.preserveDraft?.()||null;
+  outbox.pause();
   messaging?.destroy(); messaging=null;
   document.body.classList.remove('chat-mode');
   stage='intro';clearInterval(interval);
@@ -233,12 +256,13 @@ function introduction() {
 }
 async function boot() {
   try {
-    applyPublishedConfig(await api('/api/config'));
-    try {chat=await api('/api/chat');}catch(error){if(error.status!==401)throw error;}
+    const [nextConfig,nextChat]=await Promise.all([api('/api/config'),api('/api/chat').catch(error=>{if(error.status===401)return null;throw error;})]);applyPublishedConfig(nextConfig);chat=nextChat;
     let seen=false;try{seen=localStorage.getItem('rekha-intro-v1')==='seen';}catch{}
     if(chat&&(seen||!introEnabled()))renderChat();else if(introEnabled())introduction();else chooseLanguage();
   }catch(error){app.innerHTML=`<section class="loading"><h1>A quiet pause.</h1><p>${esc(error.message)}</p><button class="primary" id="reload">Try again</button></section>`;app.querySelector('#reload').onclick=boot;}
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(stage==='chat')outbox.resume({retryUncertain:true});refresh();}});
+window.addEventListener('online',()=>{if(stage==='chat')outbox.resume({retryUncertain:true});refresh();});
+window.addEventListener('beforeunload',event=>{if(outbox.isPending()||messaging?.hasContent()||messaging?.hasLiveCapture?.()||composerDraft&&(composerDraft.body||composerDraft.attachments?.length)){event.preventDefault();event.returnValue='';}});
 boot();

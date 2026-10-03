@@ -56,7 +56,8 @@ export async function messagingAttachmentResponse({request,env,route,one,owner,c
   return new Response(request.method==='HEAD'?null:object.body,{status:range?206:200,headers:h});
 }
 export async function messagingRoutes(ctx){
-  const {request,env,route,method,stmt,one,all,result,body,get,view,pending,generate,customer,owner,fail,rate,onCustomerMessage,isGuided}=ctx;
+  const {request,env,route,method,stmt,one,all,result,body,get,view,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided}=ctx;
+  const schedule=scheduleChatWork||generate;
   const appChat=ctx.appSettings?.chat||{},freeTurns=ctx.appSettings?.service?.freeReplies??3,unlockPrice=ctx.appSettings?.service?.unlockPriceRupees??49;
   const customerMayWrite=()=>{if(appChat.customerMessagingEnabled===false)throw fail(403,'Customer messages are currently paused.');};
   const ensure=chatId=>stmt('INSERT OR IGNORE INTO chat_messaging(conversation_id) VALUES(?)',chatId).run();
@@ -79,28 +80,32 @@ export async function messagingRoutes(ctx){
     return result(attachmentItem(await one('SELECT * FROM chat_attachments WHERE id=?',id)),201);
   }
   if(route==='/api/messages'&&method==='POST'){
-    const chat=await customer(),data=await body();customerMayWrite();await rate('chat:'+chat.id,24);
+    const chat=await customer(),data=await body();
     if(!messagingClient(data.clientId)||typeof data.body!=='string'||data.body.length>2000)throw fail(400,'Write a message of up to 2,000 characters.');
+    const existingMessage=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);
+    if(existingMessage){try{await onCustomerMessage?.(await get(chat.id),existingMessage);}catch{}await schedule(chat.id);return result(await view(await get(chat.id)));}
+    customerMayWrite();const guided=!!await isGuided?.(chat.id);await rate('chat:'+chat.id,guided?60:48);
     if(data.mediaIds?.length&&appChat.attachmentsEnabled===false)throw fail(403,'Customer attachments are currently unavailable.');
     const selected=await attachments(data.mediaIds||[],chat.id);
     if(selected.some(item=>item.type==='audio')&&appChat.voiceNotesEnabled===false)throw fail(403,'Customer voice notes are currently unavailable.');
-    const existingMessage=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);
-    if(existingMessage){await onCustomerMessage?.(await get(chat.id),existingMessage);return result(await view(await get(chat.id)));}
     if((await settings(chat.id)).blocked)throw fail(403,'Messages to this chat are paused.');
-    if(chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!await isGuided?.(chat.id))throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
+    if(chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!guided)throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
     const replyTo=await quote(data.replyTo,chat.id);
     if(!data.body.trim()&&!selected.length)throw fail(400,'Write a message or attach a file.');
     const payload=selected.length?JSON.stringify({text:data.body.trim(),title:'',items:selected}):data.body.trim(),kind=selected.length?'media':'customer',now=Date.now();
     const batch=await env.DB.batch([
       stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'user',?,?,'pending',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND (entitlement!='free' OR free_used<?+(SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) OR EXISTS(SELECT 1 FROM chat_workflow WHERE conversation_id=conversations.id))) AND NOT EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked=1)",chat.id,kind,payload,data.clientId,now,chat.id,freeTurns,chat.id),
+      stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',now,chat.id),
+      stmt('INSERT INTO chat_messaging(conversation_id,archived,customer_typing) SELECT ?,0,0 WHERE changes()=1 ON CONFLICT(conversation_id) DO UPDATE SET archived=0,customer_typing=0',chat.id),
+      stmt('DELETE FROM drafts WHERE conversation_id=? AND changes()=1',chat.id),
       stmt('INSERT OR IGNORE INTO message_messaging(message_id,reply_to) SELECT id,? FROM messages WHERE conversation_id=? AND client_id=?',replyTo,chat.id,data.clientId),
-      stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)',now,chat.id,chat.id,data.clientId),
-      stmt('DELETE FROM drafts WHERE conversation_id=? AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)',chat.id,chat.id,data.clientId),
-      stmt('UPDATE chat_messaging SET archived=0,customer_typing=0 WHERE conversation_id=?',chat.id),
     ]);
-    if(!batch[0].meta.changes){const duplicate=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);if(duplicate){await onCustomerMessage?.(await get(chat.id),duplicate);return result(await view(await get(chat.id)));}throw fail(409,'The chat changed. Please refresh.');}
-    await onCustomerMessage?.(await get(chat.id),await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId));
-    await generate(chat.id);return result(await view(await get(chat.id)),202);
+    const saved=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);
+    if(!saved)throw fail(409,'The chat changed. Please refresh.');
+    // A stored message is acknowledged even if subsequent scheduling is interrupted.
+    // The pending row and missing workflow event are recovered by polls and cron.
+    try{await onCustomerMessage?.(await get(chat.id),saved);}catch{}
+    await schedule(chat.id);return result(await view(await get(chat.id)),batch[0].meta.changes?202:200);
   }
   const ownerPath=route.match(/^\/api\/admin\/conversations\/([a-f0-9-]{36})\/(settings|read|typing|send)$/),customerPath=route.match(/^\/api\/chat\/(read|typing)$/);
   if(ownerPath||customerPath){
@@ -112,7 +117,11 @@ export async function messagingRoutes(ctx){
       for(const field of ['pinned','archived','blocked'])if(field in data){if(typeof data[field]!=='boolean')throw fail(400,'Invalid chat setting.');changes[field]=data[field]?1:0;}
       if('notes' in data){if(typeof data.notes!=='string'||data.notes.length>4000)throw fail(400,'Notes must be 4,000 characters or less.');changes.notes=data.notes;}
       if('labels' in data){if(!Array.isArray(data.labels)||data.labels.length>8||data.labels.some(s=>typeof s!=='string'||!s.trim()||s.length>30))throw fail(400,'Choose up to eight labels of 30 characters.');changes.labels=JSON.stringify([...new Set(data.labels.map(s=>s.trim()))]);}
-      await env.DB.batch([stmt('UPDATE chat_messaging SET pinned=?,archived=?,blocked=?,labels=?,notes=?,owner_typing=CASE WHEN ?=1 THEN 0 ELSE owner_typing END,customer_typing=CASE WHEN ?=1 THEN 0 ELSE customer_typing END WHERE conversation_id=?',changes.pinned,changes.archived,changes.blocked,changes.labels,changes.notes,changes.blocked,changes.blocked,chat.id),...(data.blocked===true?[stmt('UPDATE conversations SET version=version+1 WHERE id=?',chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]:[])]);
+      await env.DB.batch([
+        stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked!=?)',Date.now(),chat.id,chat.id,changes.blocked),
+        stmt('DELETE FROM drafts WHERE conversation_id=? AND changes()=1',chat.id),
+        stmt('UPDATE chat_messaging SET pinned=?,archived=?,blocked=?,labels=?,notes=?,owner_typing=CASE WHEN ?=1 THEN 0 ELSE owner_typing END,customer_typing=CASE WHEN ?=1 THEN 0 ELSE customer_typing END WHERE conversation_id=?',changes.pinned,changes.archived,changes.blocked,changes.labels,changes.notes,changes.blocked,changes.blocked,chat.id),
+      ]);
       return result(await view(await get(chat.id),true));
     }
     if(action==='read'){
@@ -141,8 +150,9 @@ export async function messagingRoutes(ctx){
       const data=method==='PATCH'?await body():{};
       if(method==='PATCH'&&(message.kind==='media'||typeof data.body!=='string'||!data.body.trim()||data.body.length>(isOwner?4000:2000)))throw fail(400,'Only text messages can be edited.');
       await env.DB.batch([stmt('INSERT OR IGNORE INTO message_messaging(message_id) VALUES(?)',id),stmt(`UPDATE message_messaging SET ${method==='PATCH'?'edited':'deleted'}=? WHERE message_id=?`,Date.now(),id),stmt(method==='PATCH'?'UPDATE messages SET body=? WHERE id=?':"UPDATE messages SET body=?,status=CASE WHEN role='user' THEN 'deleted' ELSE status END WHERE id=?",method==='PATCH'?data.body.trim():'',id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=?',Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id),...(method==='DELETE'?[stmt('DELETE FROM message_reactions WHERE message_id=?',id)]:[])]);
-      if(!isOwner&&method==='PATCH'&&message.status==='pending')await generate(chat.id);
+      if(!isOwner&&method==='PATCH'&&message.status==='pending')await schedule(chat.id);
     }else throw fail(405,'Method not allowed.');
+    if(action==='star'||action==='reaction')await stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=?',Date.now(),chat.id).run();
     return result(await view(await get(chat.id),isOwner));
   }
   if(route==='/api/admin/conversations'&&method==='GET'){
@@ -179,5 +189,5 @@ async function messagingOwnerSend(ctx){
     stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media')) WHERE id=?",chat.id,chat.id),
     stmt('UPDATE chat_messaging SET owner_typing=0 WHERE conversation_id=?',chat.id),
   ]);
-  if(!inserted[0].meta.changes)throw fail(409,'The chat changed. Review it and send again.');return result(await view(await get(chat.id),true),201);
+  if(!inserted[0].meta.changes){if(await one('SELECT id FROM messages WHERE conversation_id=? AND client_id=?',chat.id,clientId))return result(await view(await get(chat.id),true));throw fail(409,'The chat changed. Review it and send again.');}return result(await view(await get(chat.id),true),201);
 }

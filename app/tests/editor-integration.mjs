@@ -47,6 +47,7 @@ try{
   expect(await api('/api/admin/conversations/'+active.id+'/mode','PATCH',{mode:'manual'},owner),200);
   const send=async(chat,data={})=>api('/api/messages','POST',{body:'Synthetic private question',clientId:randomUUID(),...data},chat.cookie);
   const history=async chat=>expect(await api('/api/chat','GET',undefined,chat.cookie),200);
+  async function delivered(chat,body){for(let attempt=0;attempt<80;attempt++){const view=await history(chat);if(view.messages.some(message=>message.body===body))return view;await new Promise(resolve=>setTimeout(resolve,20));}assert.fail('The asynchronously delivered workflow step did not appear: '+body);}
   const initial=expect(await send(active),202),textId=initial.messages.at(-1).id;
   const png=fs.readFileSync(root+'public/icon-192.png'),pdf=Buffer.from('%PDF-1.4\n% Synthetic editor fixture\n%%EOF');
   const audio=Buffer.alloc(32);audio.set([26,69,223,163]);
@@ -137,16 +138,15 @@ try{
   await editPublished(next=>{next.service.freeReplies=0;next.service.unlockPriceRupees=99;next.chat.voiceNotesEnabled=true;});
   const oldFlow=await signup('hi');assert.equal(oldFlow.view.guidedConversation,true);assert.equal(oldFlow.view.locked,false);assert.equal(oldFlow.view.freeRemaining,0);
   const first=expect(await send(oldFlow),202);assert.equal(first.freeUsed,0);
-  assert.equal(first.messages.at(-1).body,'HI ₹99 + ₹299 + ₹499 + 99');
+  await delivered(oldFlow,'HI ₹99 + ₹299 + ₹499 + 99');
   const oldSnapshot=JSON.parse((await db.prepare('SELECT config FROM chat_workflow WHERE conversation_id=?').bind(oldFlow.id).first()).config);
   assert.equal(oldSnapshot.unlockPriceRupees,99);assert.equal(oldSnapshot.language,'hi');
   await editPublished(next=>{next.service.unlockPriceRupees=119;});
-  for(let i=0;i<4;i++)await history(oldFlow);
-  let oldHistory=await history(oldFlow);assert.equal(oldHistory.messages.at(-1).body,'HI final ₹99 + ₹299 + ₹499 + 99');
+  let oldHistory=await delivered(oldFlow,'HI final ₹99 + ₹299 + ₹499 + 99');
   assert.equal(oldHistory.freeUsed,0);assert.equal(oldHistory.locked,false);
-  const oldReminder=expect(await send(oldFlow),202);assert.equal(oldReminder.messages.at(-1).body,'HI reminder ₹99 / 99');
+  expect(await send(oldFlow),202);await delivered(oldFlow,'HI reminder ₹99 / 99');
   const newFlow=await signup('en');assert.equal(newFlow.view.guidedConversation,true);assert.equal(newFlow.view.freeRemaining,0);assert.equal(newFlow.view.locked,false);
-  const newer=expect(await send(newFlow),202);assert.equal(newer.messages.at(-1).body,'EN ₹119 + ₹299 + ₹499 + 119');
+  expect(await send(newFlow),202);await delivered(newFlow,'EN ₹119 + ₹299 + ₹499 + 119');
   assert.equal(JSON.parse((await db.prepare('SELECT config FROM chat_workflow WHERE conversation_id=?').bind(newFlow.id).first()).config).unlockPriceRupees,119);
   for(let i=0;i<6;i++)expect(await send(newFlow,{body:'Synthetic unlimited follow-up '+i}),202);
   const guidedPdf=expect(await uploadCustomer(newFlow,pdf,'application/pdf','guided.pdf'),201);

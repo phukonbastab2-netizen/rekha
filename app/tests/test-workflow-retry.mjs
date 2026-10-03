@@ -9,8 +9,9 @@ const files = ['cloudflare/rewards.mjs', 'cloudflare/messaging.mjs', 'cloudflare
 let source = files.map(file => fs.readFileSync(root + file, 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/export (async function|function|const)/g, '$1')).join('\n');
 const hook = 'async function onCustomerMessage(chat,message){await flowOnCustomer';
 assert.ok(source.includes(hook), 'The current worker must have the customer workflow hook.');
-source = 'let fixtureHookFailed=false;\n' + source.replace(hook,
+source = 'let fixtureHookFailed=false,fixtureBackgroundFailed=false;\n' + source.replace(hook,
   "async function onCustomerMessage(chat,message){if(!fixtureHookFailed){fixtureHookFailed=true;throw Error('Local injected transient hook failure');}await flowOnCustomer");
+source=source.replace('const work=Promise.resolve().then(async()=>{await recoverWorkflowMessages',"const work=Promise.resolve().then(async()=>{if(!fixtureBackgroundFailed){fixtureBackgroundFailed=true;throw Error('Local interrupted background fixture');}await recoverWorkflowMessages");
 const mf = new Miniflare(convertV4MiniflareOptions({
   modules: true, script: source, compatibilityDate: '2026-09-24',
   d1Databases: { DB: 'workflow-retry-test' }, r2Buckets: { MEDIA: 'workflow-retry-media' },
@@ -42,12 +43,12 @@ try {
   const signup = await api('/api/start', 'POST', { name: 'Local workflow retry fixture', dob: '1990-01-01', language: 'hi', consent: true, preferences: {} });
   assert.equal(signup.status, 201); const cookie = signup.cookie, id = signup.data.id, clientId = randomUUID(), payload = { body: 'Synthetic first message', clientId };
   const failed = await api('/api/messages', 'POST', payload, cookie);
-  assert.equal(failed.status, 503, 'The injected failure happens after the message is stored.');
+  assert.equal(failed.status, 202, 'The saved message is acknowledged despite interrupted subsequent scheduling.');
   const stored = await db.prepare('SELECT COUNT(*) AS n FROM messages WHERE conversation_id=? AND role=?').bind(id, 'user').first();
   assert.equal(stored.n, 1);
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM workflow_jobs WHERE conversation_id=?').bind(id).first()).n, 0);
-  const recovered = await api('/api/messages', 'POST', payload, cookie);
-  assert.equal(recovered.status, 200, 'Retrying the same client ID repairs the event without inserting another user message.');
+  let recovered;for(let attempt=0;attempt<60;attempt++){recovered=await api('/api/chat','GET',undefined,cookie);if(recovered.data.messages.some(message=>message.body===config.content.greeting))break;await new Promise(resolve=>setTimeout(resolve,20));}
+  assert.equal(recovered.status, 200, 'Customer polling repairs the event without requiring a resend.');
   assert.equal(recovered.data.messages.filter(message => message.role === 'user').length, 1);
   assert.equal(recovered.data.messages.filter(message => message.kind === 'owner-message').length, 1);
   assert.equal(recovered.data.messages.at(-1).body, config.content.greeting);
@@ -56,7 +57,7 @@ try {
   assert.equal(once.status, 200); assert.equal(once.data.messages.filter(message => message.kind === 'owner-message').length, 1);
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM workflow_events WHERE conversation_id=?').bind(id).first()).n, 1);
   assert.equal((await db.prepare('SELECT COUNT(*) AS n FROM workflow_jobs WHERE conversation_id=?').bind(id).first()).n, 1);
-  console.log('Workflow retry regression passed: committed message recovers after transient scheduling failure, no duplicate messages/events/jobs and no free credit increment.');
+  console.log('Workflow retry regression passed: committed message is acknowledged immediately and recovers on polling after interrupted scheduling, no duplicate messages/events/jobs and no free credit increment.');
 } finally {
   await mf.dispose();
 }

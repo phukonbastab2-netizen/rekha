@@ -11,6 +11,7 @@ const db=await mf.getD1Database('DB');
 for(const sql of readFileSync(path.join(root,'cloudflare/schema.sql'),'utf8').split(';').filter(s=>s.trim()))await db.prepare(sql).run();
 async function call(route,method='GET',data,cookie='',headers={}){const response=await mf.dispatchFetch('https://rekha.test'+route,{method,headers:{Origin:'https://rekha.test','Content-Type':'application/json',Cookie:cookie,...headers},...(data===undefined?{}:{body:JSON.stringify(data)})});return{status:response.status,data:await response.json(),cookie:response.headers.get('Set-Cookie')?.split(';')[0]};}
 async function upload(route,mime,bytes,cookie){const response=await mf.dispatchFetch('https://rekha.test'+route,{method:'POST',headers:{Origin:'https://rekha.test','Content-Type':mime,Cookie:cookie},body:bytes});return{status:response.status,data:await response.json()};}
+async function settled(cookie,freeUsed){for(let attempt=0;attempt<60;attempt++){const reply=await call('/api/chat','GET',undefined,cookie);if(reply.data.freeUsed===freeUsed)return reply.data;await new Promise(resolve=>setTimeout(resolve,20));}assert.fail('The asynchronously saved reply did not settle.');}
 try{
   const signup=()=>call('/api/start','POST',{name:'Private test',dob:'1990-01-01',language:'en',consent:true,preferences:{}});
   const first=await signup(),second=await signup();assert.equal(first.status,201);assert.equal(second.status,201);const c=first.cookie,c2=second.cookie,id=first.data.id,id2=second.data.id;
@@ -71,9 +72,9 @@ try{
   await call('/api/messages/'+m.id,'DELETE',{},c);const deleted=(await call('/api/chat','GET',undefined,c)).data.messages.find(v=>v.id===m.id);assert.equal(deleted.body,'');assert.equal(deleted.deleted,true);assert.equal(deleted.reactions.length,0);
   const listed=(await call('/api/admin/conversations','GET',undefined,a)).data.find(v=>v.id===id);assert.ok(listed.latestUserMessageId>0);assert.ok(listed.latestMessageId>=listed.latestUserMessageId);
   const auto=await signup(),autoCookie=auto.cookie,clientId=randomUUID();
-  assert.equal((await send({body:'Automatic one',clientId},autoCookie)).data.freeUsed,1);
-  assert.equal((await send({body:'Automatic two'},autoCookie)).data.freeUsed,2);
-  assert.equal((await send({body:'Automatic three'},autoCookie)).data.freeUsed,3);
+  assert.equal((await send({body:'Automatic one',clientId},autoCookie)).status,202);await settled(autoCookie,1);
+  assert.equal((await send({body:'Automatic two'},autoCookie)).status,202);await settled(autoCookie,2);
+  assert.equal((await send({body:'Automatic three'},autoCookie)).status,202);await settled(autoCookie,3);
   assert.equal((await send({body:'After free limit'},autoCookie)).status,402);
   assert.equal((await send({body:'Duplicate automatic one',clientId},autoCookie)).status,200);
   assert.equal((await upload('/api/uploads?name=limited.png','image/png',png,autoCookie)).status,402);

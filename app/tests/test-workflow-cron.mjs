@@ -48,7 +48,9 @@ try {
   const signup = await api('/api/start', 'POST', { name: 'Local cron fixture', dob: '1990-01-01', language: 'hi', consent: true, preferences: {} });
   assert.equal(signup.status, 201); const id = signup.data.id, cookie = signup.cookie;
   const first = await api('/api/messages', 'POST', { body: 'Synthetic cron question', clientId: randomUUID() }, cookie);
-  assert.equal(first.status, 202); assert.equal(first.data.messages.filter(message => message.kind === 'owner-message').length, 1);
+  assert.equal(first.status, 202);
+  for(let attempt=0;attempt<60;attempt++){if((await db.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=? AND kind='owner-message'").bind(id).first()).n===1)break;await new Promise(resolve=>setTimeout(resolve,20));}
+  assert.equal((await db.prepare("SELECT COUNT(*) AS n FROM messages WHERE conversation_id=? AND kind='owner-message'").bind(id).first()).n,1);
   let job = await db.prepare('SELECT * FROM workflow_jobs WHERE conversation_id=? AND kind=?').bind(id, 'first').first();
   assert.equal(job.step, 1); assert.equal(job.status, 'pending');
   const payload = JSON.parse(job.payload); payload.timings.firstDelayMs = 200; payload.timings.itemGapMs = 200;

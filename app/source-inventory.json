@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.7.0-preview",
+  "version": "0.8.0-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -73,6 +73,7 @@
     "public/permissions.css",
     "public/permissions.js",
     "public/rekha-portrait.png",
+    "public/send-queue.js",
     "public/styles.css",
     "public/sw.js",
     "public/voice-effects-worklet.js",
@@ -91,8 +92,10 @@
     "tests/app.test.mjs",
     "tests/editor-integration.mjs",
     "tests/rewards.test.mjs",
+    "tests/send-queue.test.mjs",
     "tests/test-app-settings.mjs",
     "tests/test-calls.mjs",
+    "tests/test-message-acks.mjs",
     "tests/test-messaging.mjs",
     "tests/test-workflow-cron.mjs",
     "tests/test-workflow-retry.mjs",

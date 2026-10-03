@@ -15,53 +15,97 @@ function prefs(value={}){let location=null;if(value.location!=null){const {latit
 function cookie(name,value,remember=false,remove=false){return`${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict${remove?'; Max-Age=0':remember?'; Max-Age=2592000':''}`;}
 function validDate(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value<'1900-01-01')return false;const date=new Date(`${value}T00:00:00Z`),cutoff=new Date();cutoff.setUTCFullYear(cutoff.getUTCFullYear()-18);return Number.isFinite(+date)&&date.toISOString().slice(0,10)===value&&date<=cutoff;}
 
-export async function handleApi(request,env){
+async function finishChatReply(ctx,chat,message,text,kind,lease=null){
+  const {env,stmt}=ctx,replyId=`reply:${message.id}`,leaseGuard=lease?' AND EXISTS(SELECT 1 FROM rate_limits WHERE key=? AND count=? AND expires=?)':'',leaseArgs=lease?[lease.key,lease.messageId,lease.until]:[];
+  const batch=await env.DB.batch([
+    stmt(`INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created)
+      SELECT ?,'assistant',?,?,'sent',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND version=? AND mode=?)
+      AND EXISTS(SELECT 1 FROM messages WHERE id=? AND conversation_id=? AND status IN ('pending','failed'))${leaseGuard}`,chat.id,kind,text,replyId,Date.now(),chat.id,chat.version,chat.mode,message.id,chat.id,...leaseArgs),
+    // changes() belongs to the immediately preceding INSERT in this atomic batch.
+    // Concurrent completions or an obsolete reply cannot increment the chat twice.
+    stmt("UPDATE conversations SET version=version+1,free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media')),updated=? WHERE id=? AND changes()=1",chat.id,Date.now(),chat.id),
+    stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)",chat.id,message.id,chat.id,replyId),
+    stmt('DELETE FROM drafts WHERE conversation_id=? AND message_id<=? AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)',chat.id,message.id,chat.id,replyId),
+  ]);
+  return !!batch[0].meta.changes;
+}
+async function generateChatReply(ctx,id){
+  const {stmt,one,all,appSettings}=ctx;
+  const get=()=>one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE id=?',id);
+  let chat=await get();if(!chat||chat.mode==='manual')return false;
+  const [message,guided,blocked,draft]=await Promise.all([
+    one("SELECT * FROM messages WHERE conversation_id=? AND role='user' AND status IN ('pending','failed') ORDER BY id DESC LIMIT 1",id),
+    workflowIsEnrolled(one,id),one('SELECT blocked FROM chat_messaging WHERE conversation_id=?',id),
+    chat.mode==='assist'?one('SELECT message_id,version FROM drafts WHERE conversation_id=?',id):null,
+  ]);
+  if(!message||(chat.mode==='ai'&&guided)||blocked?.blocked||(!guided&&chat.entitlement==='free'&&chat.free_used>=appSettings.service.freeReplies+(chat.rewards||0))||draft?.message_id===message.id&&draft.version===chat.version)return false;
+  // Durable, atomic D1 lease: correctness does not depend on one Worker isolate.
+  // Pending rows survive interrupted waitUntil work and are recovered by polls/cron.
+  const now=Date.now(),lease={key:'reply-lease:'+id,messageId:message.id,until:now+60000};
+  const claimed=await stmt('INSERT INTO rate_limits(key,count,expires) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET count=excluded.count,expires=excluded.expires WHERE rate_limits.expires<=? RETURNING count',lease.key,lease.messageId,lease.until,now).first();
+  if(!claimed)return false;let failed=false;
+  try{
+    chat=await get();if(!chat||chat.mode==='manual'||chat.mode==='ai'&&await workflowIsEnrolled(one,id))return false;
+    if((await one('SELECT blocked FROM chat_messaging WHERE conversation_id=?',id))?.blocked)return false;
+    const current=await one("SELECT * FROM messages WHERE conversation_id=? AND role='user' AND status IN ('pending','failed') ORDER BY id DESC LIMIT 1",id);
+    if(current?.id!==message.id)return false;
+    const history=(await all('SELECT id,role,kind,body,status,created FROM messages WHERE conversation_id=? ORDER BY id DESC LIMIT 16',id)).reverse();
+    const reply=await generateReply({aiMode:'demo'},chat,history);
+    if(chat.mode==='assist'){
+      const saved=await stmt(`INSERT OR REPLACE INTO drafts(conversation_id,message_id,body,kind,version)
+        SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND mode='assist' AND version=?)
+        AND EXISTS(SELECT 1 FROM messages WHERE id=? AND status IN ('pending','failed'))
+        AND EXISTS(SELECT 1 FROM rate_limits WHERE key=? AND count=? AND expires=?)`,id,message.id,reply.body,reply.kind,chat.version,id,chat.version,message.id,lease.key,lease.messageId,lease.until).run();return !!saved.meta.changes;
+    }
+    return await finishChatReply(ctx,chat,message,reply.body,reply.kind,lease);
+  }catch{
+    failed=true;await ctx.env.DB.batch([
+      stmt("UPDATE messages SET status='failed' WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM conversations WHERE id=? AND version=?) AND EXISTS(SELECT 1 FROM rate_limits WHERE key=? AND count=? AND expires=?)",message.id,id,chat.version,lease.key,lease.messageId,lease.until),
+      stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),id),
+      stmt('UPDATE rate_limits SET count=-count,expires=? WHERE key=? AND count=? AND expires=?',Date.now()+30000,lease.key,lease.messageId,lease.until),
+    ]);return false;
+  }finally{if(!failed)await stmt('DELETE FROM rate_limits WHERE key=? AND count=? AND expires=?',lease.key,lease.messageId,lease.until).run();}
+}
+async function recoverWorkflowMessages(ctx,chatId=null,limit=20){
+  const rows=await ctx.all("SELECT m.* FROM messages m JOIN chat_workflow f ON f.conversation_id=m.conversation_id WHERE m.role='user' AND m.status!='deleted' AND m.created>=f.started_at AND NOT EXISTS(SELECT 1 FROM workflow_events e WHERE e.conversation_id=m.conversation_id AND e.generation=f.generation AND e.message_id=m.id)"+(chatId?' AND m.conversation_id=?':'')+' ORDER BY m.id LIMIT ?',...(chatId?[chatId]:[]),limit);
+  const chats=new Map();for(const message of rows){let chat=chats.get(message.conversation_id);if(!chat){chat=await ctx.one('SELECT * FROM conversations WHERE id=?',message.conversation_id);chats.set(message.conversation_id,chat);}if(chat)await flowOnCustomer(ctx,chat,message);}
+}
+
+export async function handleApi(request,env,executionContext){
   const url=new URL(request.url),route=url.pathname,method=request.method,db=env.DB;
   const stmt=(sql,...args)=>db.prepare(sql).bind(...args),one=(sql,...args)=>stmt(sql,...args).first(),all=async(sql,...args)=>(await stmt(sql,...args).all()).results;
   let appSettings=appSettingsDefaults,settingsRevision=0;
   const result=(data,status=200,extra={})=>Response.json(data,{status,headers:{...headers,...extra}});
   const cookies=Object.fromEntries((request.headers.get('Cookie')||'').split(';').map(x=>x.trim().split('=')));
   const get=id=>one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE id=?',id);
-  const messages=id=>all('SELECT id,role,kind,body,status,created FROM messages WHERE conversation_id=? ORDER BY id',id);
+  const messages=id=>all("SELECT id,role,kind,body,status,created,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId FROM messages WHERE conversation_id=? ORDER BY id",id);
   const pending=id=>one("SELECT * FROM messages WHERE conversation_id=? AND role='user' AND status IN ('pending','failed') ORDER BY id DESC LIMIT 1",id);
   const insert=(id,role,kind,body,status='sent',clientId=null)=>stmt('INSERT INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,?,?,?,?,?,?)',id,role,kind,body,status,clientId,Date.now());
-  async function view(chat,admin=false){const [guidedConversation,messaging,draft]=await Promise.all([workflowIsEnrolled(one,chat.id),messagingView({chat,messages:messages(chat.id),admin,one,all}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),...(admin?{mode:chat.mode,version:chat.version}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(admin?{draft}:{})};}
+  async function view(chat,admin=false){const [guidedConversation,messaging,draft]=await Promise.all([workflowIsEnrolled(one,chat.id),messagingView({chat,messages:messages(chat.id),admin,one,all}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(admin?{draft}:{})};}
   async function customer(){const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));if(!c)throw fail(401,'Your chat session has ended. Please start again.');return c;}
   async function owner(){if(!cookies.ar_admin||!await one('SELECT 1 FROM admin_sessions WHERE token_hash=? AND expires>?',await hash(cookies.ar_admin),Date.now()))throw fail(401,'Please sign in to the owner panel.');}
   async function rate(key,max,ms=60000){const bucket=Math.floor(Date.now()/ms),hashed=await hash(`${key}:${bucket}`);const row=await stmt('INSERT INTO rate_limits(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',hashed,Date.now()+ms).first();if(row.count>max)throw fail(429,'Too many requests. Please wait and try again.');}
   async function body(){if(!request.headers.get('Content-Type')?.startsWith('application/json'))throw fail(415,'JSON required.');const limit=['/api/admin/app-settings','/api/admin/workflow/settings'].includes(route)&&method==='PATCH'?128*1024:16384,reader=request.body?.getReader();let bytes=0,chunks=[];if(reader){for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>limit){await reader.cancel();throw fail(413,'Request too large.');}chunks.push(value);}}const content=new Uint8Array(bytes);let offset=0;for(const chunk of chunks){content.set(chunk,offset);offset+=chunk.length;}try{const d=JSON.parse(new TextDecoder().decode(content)||'{}');if(!d||typeof d!=='object'||Array.isArray(d))throw Error();return d;}catch{throw fail(400,'Invalid request.');}}
-  async function finish(chat,message,text,kind){
-    const replyId=`reply:${message.id}`;
-    await db.batch([
-      stmt(`INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created)
-        SELECT ?,'assistant',?,?,'sent',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND version=? AND mode=?)
-        AND EXISTS(SELECT 1 FROM messages WHERE id=? AND conversation_id=? AND status IN ('pending','failed'))`,chat.id,kind,text,replyId,Date.now(),chat.id,chat.version,chat.mode,message.id,chat.id),
-      stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)",chat.id,message.id,chat.id,replyId),
-      stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media')),updated=? WHERE id=?",chat.id,Date.now(),chat.id),
-      stmt("DELETE FROM drafts WHERE conversation_id=? AND EXISTS(SELECT 1 FROM messages WHERE id=? AND status='answered')",chat.id,message.id),
-    ]);
-  }
-  async function generate(id){
-    const chat=await get(id),message=await pending(id),guided=chat&&await workflowIsEnrolled(one,id);if(!chat||chat.mode==='manual'||(chat.mode==='ai'&&guided)||!message||(await one('SELECT blocked FROM chat_messaging WHERE conversation_id=?',id))?.blocked||(!guided&&chat.entitlement==='free'&&chat.free_used>=appSettings.service.freeReplies+(chat.rewards||0)))return;
-    try{const reply=await generateReply({aiMode:'demo'},chat,await messages(id));
-      if(chat.mode==='assist')await stmt(`INSERT OR REPLACE INTO drafts(conversation_id,message_id,body,kind,version)
-        SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND mode='assist' AND version=?)
-        AND EXISTS(SELECT 1 FROM messages WHERE id=? AND status='pending')`,id,message.id,reply.body,reply.kind,chat.version,id,chat.version,message.id).run();
-      else await finish(chat,message,reply.body,reply.kind);
-    }catch{await stmt("UPDATE messages SET status='failed' WHERE id=? AND status='pending' AND EXISTS(SELECT 1 FROM conversations WHERE id=? AND version=?)",message.id,id,chat.version).run();}
-  }
+  const finish=(chat,message,text,kind)=>finishChatReply(workflowCtx,chat,message,text,kind);
+  const generate=id=>generateChatReply(workflowCtx,id);
   const workflowCtx={env,stmt,one,all,fail,owner,body,result,get,route,method};
-  async function onCustomerMessage(chat,message){await flowOnCustomer(workflowCtx,chat,message);await workflowProcessDue(workflowCtx,{chatId:chat.id});}
+  async function onCustomerMessage(chat,message){await flowOnCustomer(workflowCtx,chat,message);}
+  async function scheduleChatWork(id){
+    const work=Promise.resolve().then(async()=>{await recoverWorkflowMessages(workflowCtx,id);await workflowProcessDue(workflowCtx,{chatId:id});await generate(id);}).catch(()=>{});
+    if(executionContext?.waitUntil){executionContext.waitUntil(work);return;}await work;
+  }
   try{
-    const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-permissions-voice-0.7.0'});
+    // Receipt/typing updates and sign-in do not need a second settings read.
+    const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
+    if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-customer-send-0.8.0'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
-    if(['POST','PUT','PATCH','DELETE'].includes(method)){if(request.headers.get('Origin')!==url.origin)throw fail(403,'Request origin not allowed.');await rate(`write:${request.headers.get('CF-Connecting-IP')||'unknown'}`,100);}
+    if(['POST','PUT','PATCH','DELETE'].includes(method)){if(request.headers.get('Origin')!==url.origin)throw fail(403,'Request origin not allowed.');await rate(`write:${request.headers.get('CF-Connecting-IP')||'unknown'}`,240);}
     const edited=await appSettingsRoutes(workflowCtx);if(edited)return edited;
     const workflow=await workflowRoutes(workflowCtx);if(workflow)return workflow;
-    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,pending,generate,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>workflowIsEnrolled(one,id),appSettings});if(messaging)return messaging;
+    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>workflowIsEnrolled(one,id),appSettings});if(messaging)return messaging;
     const calls=await callsRoutes({request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate,appSettings});if(calls)return calls;
     if(route==='/api/start'&&method==='POST'){
       await rate(`signup:${request.headers.get('CF-Connecting-IP')||'unknown'}`,12,3600000);const data=await body();
@@ -82,21 +126,11 @@ export async function handleApi(request,env){
       return result({attempt},201);
     }
     if(route.startsWith('/api/media/'))return await mediaResponse({request,env,route,one,owner,customer,fail});
-    if(route==='/api/chat'&&method==='GET'){const chat=await customer();await workflowProcessDue(workflowCtx,{chatId:chat.id});return result(await view(await get(chat.id)));}
+    if(route==='/api/chat'&&method==='GET'){const chat=await customer();await scheduleChatWork(chat.id);return result(await view(await get(chat.id)));}
     if(route==='/api/chat'&&method==='DELETE'){const chat=await customer();await messagingDeleteAttachments({env,all,chatId:chat.id});await stmt('DELETE FROM conversations WHERE id=?',chat.id).run();return result({deleted:true},200,{'Set-Cookie':cookie('ar_session','',false,true)});}
-    if(route==='/api/preferences'&&method==='PATCH'){const chat=await customer(),data=prefs(await body());await db.batch([stmt('UPDATE conversations SET preferences=?,version=version+1,updated=? WHERE id=?',JSON.stringify(data),Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]);await generate(chat.id);return result(await view(await get(chat.id)),200,{'Set-Cookie':cookie('ar_session',cookies.ar_session,data.remember)});}
-    if(route==='/api/messages'&&method==='POST'){
-      const chat=await customer(),data=await body();await rate(`chat:${chat.id}`,12);
-      if(typeof data.body!=='string'||!data.body.trim()||data.body.length>2000||typeof data.clientId!=='string'||!/^[\w-]{16,80}$/.test(data.clientId))throw fail(400,'Write a message of 1–2000 characters.');
-      if(await one('SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId))return result(await view(await get(chat.id)));
-      if(chat.entitlement==='free'&&chat.free_used>=appSettings.service.freeReplies+(chat.rewards||0))throw fail(402,`Unlock continued chat for ₹${appSettings.service.unlockPriceRupees}.`);
-      const inserted=await stmt(`INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created)
-        SELECT ?,'user','customer',?,'pending',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND (entitlement!='free' OR free_used<3+(SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id)))`,chat.id,data.body.trim(),data.clientId,Date.now(),chat.id).run();
-      if(!inserted.meta.changes)return result(await view(await get(chat.id)));
-      await db.batch([stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=?',Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]);await generate(chat.id);return result(await view(await get(chat.id)),202);
-    }
-    if(route==='/api/retry'&&method==='POST'){const chat=await customer();await rate(`retry:${chat.id}`,5);if(chat.mode==='manual'||!await pending(chat.id))throw fail(409,'No reply to retry.');await stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id).run();await generate(chat.id);return result(await view(await get(chat.id)),202);}
-    if(route==='/api/payment/demo'&&method==='POST'){const chat=await customer();await db.batch([stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,'system','demo-payment',?,'sent','demo-unlock',?)",chat.id,'₹'+appSettings.service.unlockPriceRupees,Date.now()),stmt("UPDATE conversations SET entitlement='demo',updated=? WHERE id=?",Date.now(),chat.id)]);return result(await view(await get(chat.id)));}
+    if(route==='/api/preferences'&&method==='PATCH'){const chat=await customer(),data=prefs(await body());await db.batch([stmt('UPDATE conversations SET preferences=?,version=version+1,updated=? WHERE id=?',JSON.stringify(data),Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),200,{'Set-Cookie':cookie('ar_session',cookies.ar_session,data.remember)});}
+    if(route==='/api/retry'&&method==='POST'){const chat=await customer();await rate(`retry:${chat.id}`,5);if(chat.mode==='manual'||!await pending(chat.id))throw fail(409,'No reply to retry.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),202);}
+    if(route==='/api/payment/demo'&&method==='POST'){const chat=await customer();await db.batch([stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,'system','demo-payment',?,'sent','demo-unlock',?)",chat.id,'₹'+appSettings.service.unlockPriceRupees,Date.now()),stmt("UPDATE conversations SET entitlement='demo',version=version+CASE WHEN entitlement!='demo' OR changes()=1 THEN 1 ELSE 0 END,updated=? WHERE id=?",Date.now(),chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)));}
     if(route.startsWith('/api/payment'))throw fail(409,'Real payments are not enabled in this preview. No charge is taken.');
     if(route==='/api/admin/login'&&method==='POST'){await rate(`login:${request.headers.get('CF-Connecting-IP')||'unknown'}`,6,300000);const data=await body();if(typeof data.password!=='string'||await hash(data.password)!==env.ADMIN_PASSWORD_HASH)throw fail(401,'Incorrect owner password.');const session=token();await stmt('INSERT INTO admin_sessions(token_hash,expires) VALUES(?,?)',await hash(session),Date.now()+8*3600000).run();return result({ok:true},200,{'Set-Cookie':cookie('ar_admin',session)});}
     if(route.startsWith('/api/admin/')){
@@ -125,9 +159,9 @@ export async function handleApi(request,env){
       if(route==='/api/admin/logout'&&method==='POST'){await stmt('DELETE FROM admin_sessions WHERE token_hash=?',await hash(cookies.ar_admin)).run();return result({ok:true},200,{'Set-Cookie':cookie('ar_admin','',false,true)});}
       if(route==='/api/admin/conversations'&&method==='GET')return result(await all(`SELECT c.id,c.name,c.language,c.mode,c.entitlement,c.updated,c.free_used,(SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed')) AS waiting FROM conversations c ORDER BY c.updated DESC LIMIT 500`));
       const match=route.match(/^\/api\/admin\/conversations\/([a-f0-9-]+)(?:\/(mode|reply|retry))?$/);
-      if(match){const chat=await get(match[1]);if(!chat)throw fail(404,'Conversation not found.');if(!match[2]&&method==='GET'){await workflowProcessDue(workflowCtx,{chatId:chat.id});return result(await view(await get(chat.id),true));}const data=await body();
+      if(match){const chat=await get(match[1]);if(!chat)throw fail(404,'Conversation not found.');if(!match[2]&&method==='GET'){await scheduleChatWork(chat.id);return result(await view(await get(chat.id),true));}const data=await body();
         if(match[2]==='mode'&&method==='PATCH'){if(!['ai','assist','manual'].includes(data.mode))throw fail(400,'Invalid mode.');if(chat.mode!==data.mode){await db.batch([stmt('UPDATE conversations SET mode=?,version=version+1,updated=? WHERE id=?',data.mode,Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id),stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id)]);await generate(chat.id);}return result(await view(await get(chat.id),true));}
-        if(match[2]==='retry'&&method==='POST'){if(chat.mode==='manual')throw fail(409,'Manual mode is active.');await stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id).run();await generate(chat.id);return result(await view(await get(chat.id),true));}
+        if(match[2]==='retry'&&method==='POST'){if(chat.mode==='manual')throw fail(409,'Manual mode is active.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await generate(chat.id);return result(await view(await get(chat.id),true));}
         if(match[2]==='reply'&&method==='POST'){const message=await pending(chat.id);if(chat.mode==='ai'||!message||message.id!==data.messageId||chat.version!==data.version)throw fail(409,'The chat changed. Refresh before sending.');if(typeof data.body!=='string'||!data.body.trim()||data.body.length>4000)throw fail(400,'Write a reply of 1–4000 characters.');await finish(chat,message,data.body.trim(),chat.mode==='assist'?'human-assisted':'human');return result(await view(await get(chat.id),true));}
       }
     }
@@ -136,11 +170,11 @@ export async function handleApi(request,env){
 }
 
 export default {
-  async fetch(request,env){
+  async fetch(request,env,executionContext){
     const url=new URL(request.url);
     const downloadHost=url.hostname==='rekhaastrology.in';
     if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani'))return fetch(request);
-    if(url.pathname.startsWith('/api/'))return handleApi(request,env);
+    if(url.pathname.startsWith('/api/'))return handleApi(request,env,executionContext);
     if(url.pathname==='/brand/logo'){
       if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers});
       const stmt=(sql,...args)=>env.DB.prepare(sql).bind(...args),one=(sql,...args)=>stmt(sql,...args).first();
@@ -190,6 +224,16 @@ export default {
   async scheduled(controller,env){
     const stmt=(sql,...args)=>env.DB.prepare(sql).bind(...args),one=(sql,...args)=>stmt(sql,...args).first(),all=async(sql,...args)=>(await stmt(sql,...args).all()).results;
     const ctx={env,stmt,one,all,fail};ctx.appSettings=(await appSettingsPublic(ctx)).settings;const deadline=Date.now()+20000;
+    await recoverWorkflowMessages(ctx);
+    const replyChats=await all(`SELECT c.id FROM conversations c LEFT JOIN chat_messaging s ON s.conversation_id=c.id
+      WHERE c.mode IN ('ai','assist') AND COALESCE(s.blocked,0)=0
+      AND NOT(c.mode='ai' AND EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))
+      AND (c.entitlement!='free' OR c.free_used<?+(SELECT COUNT(*) FROM reward_grants r WHERE r.conversation_id=c.id) OR EXISTS(SELECT 1 FROM chat_workflow f WHERE f.conversation_id=c.id))
+      AND EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed'))
+      AND NOT EXISTS(SELECT 1 FROM rate_limits l WHERE l.key='reply-lease:'||c.id AND l.expires>?)
+      AND NOT(c.mode='assist' AND EXISTS(SELECT 1 FROM drafts d WHERE d.conversation_id=c.id AND d.version=c.version AND d.message_id=(SELECT MAX(m.id) FROM messages m WHERE m.conversation_id=c.id AND m.role='user' AND m.status IN ('pending','failed'))))
+      ORDER BY c.updated LIMIT 20`,ctx.appSettings.service.freeReplies,Date.now());
+    for(const chat of replyChats){if(Date.now()>=deadline)break;await generateChatReply(ctx,chat.id);}
     // Polling delivers foreground steps; cron continues the same sequence when closed.
     for(;;){await workflowProcessDue(ctx,{limit:20});const next=await one("SELECT MIN(j.due) AS due FROM workflow_jobs j JOIN chat_workflow f ON f.conversation_id=j.conversation_id AND f.generation=j.generation JOIN conversations c ON c.id=j.conversation_id LEFT JOIN chat_messaging s ON s.conversation_id=c.id WHERE j.status='pending' AND f.status!='paused' AND c.mode='ai' AND COALESCE(s.blocked,0)=0");if(!next?.due||next.due>deadline||Date.now()>=deadline||!await one("SELECT 1 FROM workflow_settings WHERE key='config' AND json_extract(value,'$.enabled')=1"))break;await new Promise(resolve=>setTimeout(resolve,Math.max(100,next.due-Date.now())));}
     if(controller.cron!=='17 2 * * *')return;

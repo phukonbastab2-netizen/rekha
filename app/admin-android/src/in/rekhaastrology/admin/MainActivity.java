@@ -49,7 +49,7 @@ public final class MainActivity extends Activity {
     web=new WebView(this);web.setBackgroundColor(Color.rgb(239,234,226));WebSettings settings=web.getSettings();
     settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(true);
     settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setSafeBrowsingEnabled(true);settings.setGeolocationEnabled(true);settings.setMediaPlaybackRequiresUserGesture(false);
-    settings.setUserAgentString(settings.getUserAgentString()+" Rekha"+(OWNER?"Admin":"Astrology")+"Android/0.7.0");
+    settings.setUserAgentString(settings.getUserAgentString()+" Rekha"+(OWNER?"Admin":"Astrology")+"Android/0.8.0");
     CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);WebView.setWebContentsDebuggingEnabled(false);
     web.addJavascriptInterface(new DeviceOptions(),"RekhaDevice");
     web.setWebViewClient(new WebViewClient(){

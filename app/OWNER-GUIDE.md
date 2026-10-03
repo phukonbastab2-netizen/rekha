@@ -40,6 +40,12 @@ Use **Feature access** to enable microphone, camera and optional message alerts.
 
 On an owner call, choose Natural, Lower pitch, Higher pitch, Warm or Robot under **Your voice**. You can change the effect during a call. These are local effects, not a cloned voice. Mute silences both the microphone and processed outgoing audio. Both apps must remain open for calls.
 
+## Customer sending and connection status
+
+Customers can keep composing while earlier messages are sending. A sending indicator means that the server has not confirmed receipt yet. Failed sends remain visible with a retry action; retrying uses the same send ID so an already saved message is not duplicated. A sent check confirms server receipt, while a read check means the owner has opened that message. Receiving an automatic or personal reply is a separate event.
+
+Automatic workflow delivery runs after the message has been saved, with recovery from the saved trigger on later polls or scheduled processing. No message content is stored in the browser's local storage by the send queue.
+
 ## Protect customer information
 
 Use the owner panel on a private device, sign out when finished, and keep the owner password and signing backups private. Ask only for details needed for the conversation. Never request passwords, OTPs, banking credentials or another person's private messages. Respect the configured retention period and customer deletion requests.
