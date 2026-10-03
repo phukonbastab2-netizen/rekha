@@ -11,7 +11,7 @@ const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA
 const token=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
 const welcome={en:'Namaste. This is a quiet space for your questions. What’s on your mind today? A full kundli also needs birth time and birthplace; no chart has been calculated yet.',hi:'नमस्ते। आज आप किस विषय पर बात करना चाहते हैं? पूरी कुंडली के लिए जन्म समय और जन्म स्थान भी चाहिए। अभी कुंडली की गणना नहीं हुई है।',hinglish:'Namaste. Aaj aap kis baare mein baat karna chahte hain? Poori kundli ke liye birth time aur birthplace bhi chahiye. Abhi chart calculate nahi hua hai.'};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Permissions-Policy':'camera=(self), microphone=(self), geolocation=(self)','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
-function prefs(value={}){let location=null;if(value.location!=null){const {latitude,longitude}=value.location;if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180)throw fail(400,'Invalid location.');location={latitude:Math.round(latitude*10)/10,longitude:Math.round(longitude*10)/10};}return{remember:value.remember===true,location,consentVersion:'2026-09-24'};}
+function prefs(value={}){let location=null;if(value.location!=null){const {latitude,longitude}=value.location;if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180)throw fail(400,'Invalid location.');location={latitude:Math.round(latitude*10)/10,longitude:Math.round(longitude*10)/10};}return{remember:value.remember===true,location,consentVersion:'2026-10-03'};}
 function cookie(name,value,remember=false,remove=false){return`${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict${remove?'; Max-Age=0':remember?'; Max-Age=2592000':''}`;}
 function validDate(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value<'1900-01-01')return false;const date=new Date(`${value}T00:00:00Z`),cutoff=new Date();cutoff.setUTCFullYear(cutoff.getUTCFullYear()-18);return Number.isFinite(+date)&&date.toISOString().slice(0,10)===value&&date<=cutoff;}
 // Registered idle/manual/blocked profiles never enter this indexed window.
@@ -111,7 +111,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-install-guide-0.9.2'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-policies-0.9.2'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
@@ -185,7 +185,8 @@ export default {
   async fetch(request,env,executionContext){
     const url=new URL(request.url);
     const downloadHost=url.hostname==='rekhaastrology.in';
-    if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani'))return fetch(request);
+    const policy=url.pathname.match(/^\/(?:astrorani\/)?(privacy-policy|terms-and-conditions|refund-cancellation|disclaimer|shipping-policy|data-deletion|support|contact|about)(?:\.html|\/)?$/);
+    if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani')&&!policy&&!['/policies.css','/app-ads.txt'].includes(url.pathname))return fetch(request);
     if(url.pathname.startsWith('/api/'))return handleApi(request,env,executionContext);
     if(url.pathname==='/brand/logo'){
       if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers});
@@ -210,6 +211,9 @@ export default {
       return new Response(object?.body||null,{status:range?206:200,headers:{'Content-Type':'video/mp4','Content-Length':String(end-start+1),'Accept-Ranges':'bytes','Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff','ETag':meta.httpEtag,...(range?{'Content-Range':`bytes ${start}-${end}/${meta.size}`}:{})}});
     }
     let asset=url.pathname;
+    if(policy)asset='/'+policy[1]+'.html';
+    if(asset==='/astrorani/policies.css')asset='/policies.css';
+    if(asset==='/astrorani/app-ads.txt')asset='/app-ads.txt';
     if(downloadHost&&asset==='/')asset='/download.html';
     if(asset==='/admin'||asset==='/admin/')asset='/admin.html';
     if(asset==='/astrorani'||asset==='/astrorani/')asset='/download.html';
