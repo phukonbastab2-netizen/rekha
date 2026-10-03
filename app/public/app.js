@@ -5,6 +5,7 @@ import { installCalls } from './calls.js';
 import { createSendQueue } from './send-queue.js';
 import { createAdaptivePoll } from './adaptive-poll.js';
 import { createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor } from './chat-history.js';
+import { chatIcon } from './chat-icons.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
@@ -37,6 +38,7 @@ function text(key){
 const t=key=>key==='topics'?text(key):esc(text(key));
 const introEnabled=()=>config?.appSettings?.onboarding?.introEnabled!==false;
 const messagingPaused=()=>config?.appSettings?.chat?.customerMessagingEnabled===false;
+const messagePlaceholder=()=>config?.appSettings?.copy?.[lang]?.messagePlaceholder||(lang==='hi'?'संदेश':lang==='hinglish'?'Message':'Message');
 const logo=(portrait=false)=>brand().logoMediaId?`/brand/logo?revision=${encodeURIComponent(String(config?.settingsRevision??0))}`:portrait?'/rekha-portrait.png':'/icon-192.png';
 function applyPublishedConfig(next){
   const previous=JSON.stringify([config?.appSettings,config?.settingsRevision,config?.amount,config?.retentionDays]);
@@ -55,7 +57,7 @@ function applyPublishedConfig(next){
   if(config.appSettings){const title=document.querySelector('.story-copy h1'),subtitle=document.querySelector('.story-copy p');if(title)title.textContent=brandName();if(subtitle)subtitle.textContent=text('tagline');}
   for(const image of document.querySelectorAll('.rani-portrait,.loading>img,.avatar')){image.src=logo(image.classList.contains('rani-portrait'));image.alt=image.classList.contains('rani-portrait')?astrologerName():'';}
   const loadingTitle=app.querySelector('.loading h1');if(loadingTitle)loadingTitle.textContent=brandName();
-  if(stage==='chat'){app.querySelector('.chat-name').textContent=brandName();app.querySelector('.chat-caption').textContent=text('tagline');app.querySelector('.composer .footnote').textContent=text('reflection');app.querySelector('.send').setAttribute('aria-label',text('send'));fingerprint='';drawChat();}
+  if(stage==='chat'){app.querySelector('.chat-name').textContent=astrologerName();app.querySelector('.chat-caption').textContent=text('tagline');app.querySelector('.composer .footnote').textContent=text('reflection');fingerprint='';drawChat();updateComposePrimary();}
   window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));
 }
 const previewLabel = () => [!chat?.guidedConversation && config.aiMode === 'demo' ? (lang === 'hi' ? 'नमूना उत्तर' : 'Sample replies') : '', config.paymentMode === 'demo' || config.paymentTest ? (lang === 'hi' ? 'परीक्षण भुगतान · कोई असली शुल्क नहीं' : 'Payment preview · no real charges') : ''].filter(Boolean).join(' · ');
@@ -141,15 +143,16 @@ function renderChat() {
   stage = 'chat';sessionEnded=false; updateLanguage(chat.language); fingerprint = '';
   document.body.classList.add('chat-mode');
   const previewNotes = previewLabel();
-  app.innerHTML = `<section class="chat"><header class="chat-head"><img class="avatar" src="${esc(logo())}" alt=""><div><h1 class="chat-name">${esc(brandName())}</h1><div class="chat-caption">${t('tagline')}</div></div><button class="icon-button" id="chat-privacy" aria-label="${t('privacy')}" title="${t('privacy')}">⋯</button></header><div class="demo-ribbon">${esc(previewNotes)}</div><div class="chat-ribbon" id="chat-ribbon"></div><div class="chat-scroll" id="chat-scroll" role="log" aria-live="polite" aria-relevant="additions text"><div class="date-divider">${t('newChapter')}</div><div id="messages"></div><div id="chat-bottom"></div></div><form class="composer" id="composer"><div class="compose-row"><textarea id="message-input" rows="1" maxlength="2000" aria-label="${t('messagePlaceholder')}" placeholder="${t('messagePlaceholder')}"></textarea><button class="send" type="submit" aria-label="${t('send')}">↑</button></div><p class="error" id="send-error" role="alert"></p><p class="footnote">${t('reflection')}</p></form></section>`;
-  app.querySelector('#chat-privacy').textContent='⋮';
-  app.querySelector('.send').innerHTML='<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="currentColor" d="m3 3 19 9-19 9v-7l13-2L3 10z"/></svg>';
+  app.innerHTML = `<section class="chat" aria-label="${esc(astrologerName())} chat"><header class="chat-head"><button type="button" class="chat-back" id="chat-back" aria-label="${introEnabled()?'Back to introduction':'Conversation settings'}">${chatIcon('back')}</button><button type="button" class="chat-contact" id="chat-contact" aria-label="${esc(astrologerName())} conversation details"><img class="avatar" src="${esc(logo())}" alt=""><span class="chat-contact-copy"><strong class="chat-name">${esc(astrologerName())}</strong><span class="chat-caption">${t('tagline')}</span></span></button><button type="button" class="icon-button" id="chat-privacy" aria-label="Conversation menu" title="Conversation menu">${chatIcon('more')}</button></header><div class="chat-scroll" id="chat-scroll" role="log" aria-live="polite" aria-relevant="additions text"><div class="chat-notices"><div class="demo-ribbon">${esc(previewNotes)}</div><div class="chat-ribbon" id="chat-ribbon"></div></div><div class="date-divider">${t('newChapter')}</div><div id="messages"></div><div id="chat-bottom"></div></div><form class="composer" id="composer"><div class="compose-row"><div class="compose-input"><textarea id="message-input" rows="1" maxlength="2000" aria-label="${t('messagePlaceholder')}" placeholder="${esc(messagePlaceholder())}"></textarea></div><button class="send compose-primary" type="submit" aria-label="${t('send')}">${chatIcon('send')}</button></div><p class="error" id="send-error" role="alert"></p><p class="footnote">${t('reflection')}</p></form></section>`;
   app.querySelector('.date-divider').textContent=lang==='hi'?'बातचीत की शुरुआत':'Start of conversation';
   const older=document.createElement('button');older.id='load-earlier';older.className='history-more';older.type='button';older.onclick=loadEarlier;app.querySelector('.date-divider').before(older);
   const composerInput=app.querySelector('#message-input');
   composerInput.oninput=()=>{composerInput.style.height='auto';composerInput.style.height=Math.min(composerInput.scrollHeight,120)+'px';};
+  app.querySelector('#chat-back').onclick=()=>introEnabled()?introduction():privacy(true);
+  app.querySelector('#chat-contact').onclick=()=>privacy(true);
   app.querySelector('#chat-privacy').onclick = () => privacy(true);
   app.querySelector('#composer').onsubmit = send;
+  app.querySelector('#composer').addEventListener('rekha:compose-state',event=>updateComposePrimary(event.detail));
   let composing=false;composerInput.addEventListener('compositionstart',()=>composing=true);composerInput.addEventListener('compositionend',()=>composing=false);
   app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing&&!composing&&event.keyCode!==229) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
   messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy});
@@ -160,23 +163,35 @@ function renderChat() {
   window.dispatchEvent(new CustomEvent('rekha:chat-mounted',{detail:{header:app.querySelector('.chat-head'),conversationId:chat.id}}));
   if(!calls)calls=installCalls({role:'customer',getConversationId:()=>chat?.id,getAppSettings:()=>config?.appSettings,notify:toast});
   calls.mount(app.querySelector('.chat-head'));
+  updateComposePrimary();
+}
+function updateComposePrimary(state){
+  const button=app.querySelector('.compose-primary');if(!button)return;
+  const hasContent=state?.hasContent??messaging?.hasContent()??false;
+  const canRecord=state?.canRecord??messaging?.canRecord?.()??false;
+  const voice=!hasContent&&canRecord;
+  const mode=voice?'voice':'send';if(button.dataset.mode!==mode){button.dataset.mode=mode;button.innerHTML=chatIcon(voice?'mic':'send');}
+  button.type=voice?'button':'submit';button.title=voice?(lang==='hi'?'वॉइस संदेश रिकॉर्ड करें':'Record voice note'):messaging?.isEditing()?'Save edited message':text('send');button.setAttribute('aria-label',button.title);
+  button.onclick=voice?()=>messaging?.startRecord?.():null;
+  const disabled=voice?!canRecord:!(state?.canSend??messaging?.canSend?.()??hasContent);
+  button.disabled=Boolean(disabled||sessionEnded||chat?.blocked||messagingPaused()||(chat?.locked&&!messaging?.isEditing()));
 }
 function drawChat() {
   if (stage !== 'chat') return;
-  drawHistory();app.querySelector('.date-divider').hidden=history.state().hasOlder;
+  drawHistory();app.querySelector('.date-divider').hidden=history.state().hasOlder||chat.messages.some(message=>message.role!=='system');
   const visibleMessages=displayMessages(),print=JSON.stringify([chat,visibleMessages]);if(print===fingerprint)return;fingerprint=print;
   app.querySelector('.demo-ribbon').textContent = previewLabel();
   const scroller = app.querySelector('#chat-scroll'), nearBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 140;
-  app.querySelector('#chat-ribbon').textContent = chat.guidedConversation ? (lang === 'hi' ? `${astrologerName()} के साथ आपकी बातचीत` : lang === 'hinglish' ? `${astrologerName()} ke saath aapki baatcheet` : `Your conversation with ${astrologerName()}`) : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
-  let lastDay='';const format=dates(),quoteById=new Map(visibleMessages.map(m=>[m.id,m])),active=new Set();
+  app.querySelector('#chat-ribbon').textContent = chat.guidedConversation ? '' : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
+  let lastDay='',lastRole='',lastTime=0;const format=dates(),quoteById=new Map(visibleMessages.map(m=>[m.id,m])),active=new Set();
   const renderedMessages = visibleMessages.map(m => {
-    active.add(m.id);const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,quoteById.get(m.replyTo)]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;
+    active.add(m.id);const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,groupStart=separatorDay||m.role!==lastRole||date.getTime()-lastTime>300000,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,groupStart,quoteById.get(m.replyTo)]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;lastRole=m.role;lastTime=date.getTime();
     if(cached?.key===key)return{id:m.id,html:cached.html};
     if(m.role==='system'){const html=`<div class="system-note" data-message="${m.id}">${esc(m.kind === 'demo-payment' ? text('demoPaid') : m.kind === 'payment' ? text('paid') : m.kind === 'refund' ? text('refund') : m.body)}</div>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};}
     const separator=separatorDay?`<div class="day-label">${esc(format.day.format(date))}</div>`:'';
     const extras=messageExtras(m,{...chat,messages:visibleMessages},astrologerName());
     if(m.sendState){extras.actions='';extras.receipt='';const label=m.sendState==='sending'?(lang==='hi'?'भेजा जा रहा है…':'Sending…'):m.sendState==='queued'?(navigator.onLine===false?(lang==='hi'?'कनेक्शन का इंतज़ार':'Waiting for connection'):(lang==='hi'?'भेजने की कतार में':'Queued')):m.sendUncertain?(lang==='hi'?'डिलीवरी की पुष्टि नहीं हुई':'Delivery not confirmed'):(lang==='hi'?'भेजा नहीं गया':'Not sent');extras.metadata+=`<span class="outbox-state ${m.sendState}" data-send-state="${m.sendState}" title="${esc(m.sendError||label)}" aria-label="${esc(label)}">${esc(label)}</span>${m.sendState==='failed'?`<button type="button" class="outbox-retry" data-retry-send="${esc(m.clientId)}" ${sessionEnded?'disabled':''}>${lang==='hi'?'फिर भेजें':'Retry'}</button>`:''}`;}
-    const html=`<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m)}</div><span class="stamp">${extras.metadata}${format.time.format(date)}${extras.receipt}</span>${extras.reactionHtml}</div></article>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};
+    const html=`<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''} ${groupStart?'group-start':'group-continuation'}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m)}</div><span class="stamp">${extras.metadata}<time datetime="${esc(date.toISOString())}">${format.time.format(date)}</time>${extras.receipt}</span>${extras.reactionHtml}</div></article>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};
   });
   for(const id of messageMarkup.keys())if(!active.has(id))messageMarkup.delete(id);
   syncThread(app.querySelector('#messages'),renderedMessages);
@@ -188,16 +203,17 @@ function drawChat() {
   if (visibleMessages.length === 1) bottom = `<div class="prompt-chips">${t('topics').map(text => `<button class="chip" data-prompt="${esc(text)}">${esc(text)}</button>`).join('')}</div>`;
   app.querySelector('#chat-bottom').innerHTML = bottom;
   const input = app.querySelector('#message-input'); input.disabled = chat.locked;
-  input.placeholder = chat.blocked ? 'This conversation is unavailable.' : messagingPaused() ? (lang==='hi'?'संदेश भेजना अभी रोका गया है।':'Messaging is paused. You can still read your chat.') : chat.locked ? text('lockedPlaceholder') : text('messagePlaceholder');
+  input.placeholder = chat.blocked ? 'This conversation is unavailable.' : messagingPaused() ? (lang==='hi'?'संदेश भेजना अभी रोका गया है।':'Messaging is paused. You can still read your chat.') : chat.locked ? text('lockedPlaceholder') : messagePlaceholder();
   input.setAttribute('aria-label',text('messagePlaceholder'));
   input.disabled = (chat.locked && !messaging?.isEditing()) || chat.blocked || busy || messagingPaused() || sessionEnded;
   app.querySelector('.send').disabled = input.disabled;
-  for (const button of app.querySelectorAll('[data-prompt]')) button.onclick = () => { input.value = button.dataset.prompt; input.focus(); };
+  for (const button of app.querySelectorAll('[data-prompt]')) button.onclick = () => { input.value = button.dataset.prompt; input.dispatchEvent(new Event('input',{bubbles:true}));input.focus(); };
   if(app.querySelector('#retry'))app.querySelector('#retry').onclick=async()=>{try{acceptServerChat(await api('/api/retry','POST',{}));}catch(error){toast(error.message);} };
   if (app.querySelector('#unlock')) app.querySelector('#unlock').onclick = checkout;
   for(const button of app.querySelectorAll('[data-retry-send]'))button.onclick=()=>{if(sessionEnded||chat.blocked||messagingPaused())return toast('Messages are currently unavailable. Your unsent message is kept.');outbox.retry(button.dataset.retrySend);};
   if (nearBottom || chat.locked) scroller.scrollTop = scroller.scrollHeight;
   messaging?.refresh();
+  updateComposePrimary();
   window.dispatchEvent(new CustomEvent('rekha:chat-refreshed',{detail:{conversationId:chat.id}}));
 }
 function send(event) {
@@ -250,7 +266,9 @@ function privacy(editable) {
     dialog.querySelector('#save-privacy').onclick = async event => { const button = event.currentTarget; button.disabled = true; try { const prefs = await readChoices(dialog);acceptServerChat(await api('/api/preferences','PATCH',prefs));dialog.close();toast(text('privacySaved'));}catch(error){toast(error.message);}finally{button.disabled=false;} };
     dialog.querySelector('#delete-chat').onclick = confirmDelete;
   }
+  const title=dialog.querySelector('#privacy-title');title.tabIndex=-1;
   if (!dialog.open) dialog.showModal();
+  title.focus({preventScroll:true});dialog.scrollTop=0;
 }
 function confirmDelete() {
   dialog.innerHTML = `<h2 id="privacy-title">${t('deleteTitle')}</h2><p>${t('deleteText')}</p><div class="dialog-actions"><button class="secondary" id="cancel-delete">${t('cancel')}</button><button class="secondary danger" id="confirm-delete">${t('confirmDelete')}</button></div>`;

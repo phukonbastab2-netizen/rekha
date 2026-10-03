@@ -1,5 +1,6 @@
 import { messageBody, mediaItems, attachmentUrl } from './media.js';
 import { getFeatureMedia, openFeatureAccess } from './permissions.js';
+import { chatIcon } from './chat-icons.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const reactions=['👍','❤️','😂','😮','😢','🙏'];
 const emojis=['😀','😊','🙏','❤️','👍','✨','🌸','😂','🥰','🤔','😢','🙌','🌞','🌙','💐','💚','🤝','🎉','😮','👌','🙂','💫','🪔','🔮'];
@@ -17,13 +18,14 @@ export function messageExtras(message,chat,astrologerName='Rekha Astrology'){
   const grouped=new Map();for(const reaction of message.deleted?[]:message.reactions||[]){if(reactions.includes(reaction.emoji))grouped.set(reaction.emoji,(grouped.get(reaction.emoji)||0)+1);}
   const reactionHtml=grouped.size?`<div class="message-reactions">${[...grouped].map(([emoji,count])=>`<button type="button" data-reaction-message="${Number(message.id)}" data-emoji="${esc(emoji)}" aria-label="React ${esc(emoji)}">${emoji}${count>1?` <small>${count}</small>`:''}</button>`).join('')}</div>`:'';
   const receiptLabel=message.readByOther?`Read by ${astrologerName}`:'Sent to server';
-  return {reply,reactionHtml,actions:`<button type="button" class="message-actions" data-message-actions="${Number(message.id)}" aria-label="Message options" title="Message options">⌄</button>`,metadata:`${message.starred?'<span class="star-marker" title="Starred message" aria-label="Starred">★</span>':''}${message.edited&&!message.deleted?'<span class="edited-label">edited</span>':''}`,receipt:message.role==='user'?`<span class="sent-check ${message.readByOther?'read':''}" title="${esc(receiptLabel)}" aria-label="${esc(receiptLabel)}">${message.readByOther?'✓✓':'✓'}</span>`:''};
+  return {reply,reactionHtml,actions:`<button type="button" class="message-actions" data-message-actions="${Number(message.id)}" aria-label="Message options" title="Message options">${chatIcon('more',16)}</button>`,metadata:`${message.starred?'<span class="star-marker" title="Starred message" aria-label="Starred">★</span>':''}${message.edited&&!message.deleted?'<span class="edited-label">edited</span>':''}`,receipt:message.role==='user'?`<span class="sent-check ${message.readByOther?'read':''}" title="${esc(receiptLabel)}" aria-label="${esc(receiptLabel)}">${chatIcon(message.readByOther?'checks':'check',16)}</span>`:''};
 }
 export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy,introduction,isBusy=()=>false,getAppSettings=()=>null}){
   let replyTo=null,editing=null,editBackup=null,attachments=[],uploading=false,capturePending=false,voiceCaptureController=null,recorder=null,stream=null,recordTimer=null,recordStarted=0,recordChunks=[],discardRecording=false,lastTyping=0,typingTimer=null,readId=0,destroyed=false,legacySnapshot=null;
   const snapshots=new Set();
   const cameraReleases=new Map();
   const localDialogs=new Set();
+  let pressTimer=null,press=null,lastLongPress=0,lastLongPressId=null;
   const input=()=>app.querySelector('#message-input');
   const composer=()=>app.querySelector('#composer');
   const find=id=>getChat()?.messages.find(item=>Number(item.id)===Number(id));
@@ -32,8 +34,8 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   const features=()=>getAppSettings()?.chat||{};
   const paused=()=>features().customerMessagingEnabled===false;
   const astrologer=()=>getAppSettings()?.brand?.astrologerName||'Rekha Astrology';
-  function showDialog(title,html){
-    const modal=document.createElement('dialog');modal.className='messaging-dialog';modal.setAttribute('aria-label',title);modal.innerHTML=`<div class="messaging-dialog-head"><h2>${esc(title)}</h2><button type="button" data-close aria-label="Close">×</button></div>${html}`;
+  function showDialog(title,html,style=''){
+    const modal=document.createElement('dialog');modal.className='messaging-dialog'+(style?' '+style:'');modal.setAttribute('aria-label',title);modal.innerHTML=`<div class="messaging-dialog-head"><h2>${esc(title)}</h2><button type="button" data-close aria-label="Close">${chatIcon('close',22)}</button></div>${html}`;
     document.body.append(modal);localDialogs.add(modal);modal.querySelector('[data-close]').onclick=()=>modal.close();modal.addEventListener('close',()=>{localDialogs.delete(modal);modal.remove();});modal.addEventListener('click',event=>{if(event.target===modal)modal.close();});modal.showModal();return modal;
   }
   function jump(id){const node=app.querySelector(`[data-message="${Number(id)}"]`);if(!node)return toast('That message is no longer available.');node.scrollIntoView({behavior:'smooth',block:'center'});node.classList.add('message-highlight');setTimeout(()=>node.classList.remove('message-highlight'),2200);}
@@ -49,7 +51,19 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     const cancelCapture=draft.querySelector('#cancel-capture');if(cancelCapture)cancelCapture.onclick=()=>stopRecording(true);
     updateSend();
   }
-  function updateSend(){const send=app.querySelector('.send'),mic=app.querySelector('#record-voice'),attach=app.querySelector('#attach-file'),field=input();if(!send||!field)return;const unavailable=(getChat()?.locked&&!editing)||getChat()?.blocked||paused();send.classList.toggle('has-draft',Boolean(field.value.trim()||attachments.length||editing));send.title=editing?'Save edited message':'Send message';field.disabled=Boolean(unavailable);send.disabled=Boolean(unavailable||uploading||recorder||capturePending);if(mic){mic.hidden=features().voiceNotesEnabled===false||features().attachmentsEnabled===false;mic.disabled=Boolean(unavailable||uploading||editing||mic.hidden||capturePending);mic.setAttribute('aria-pressed',String(Boolean(recorder)));}if(attach)attach.hidden=features().attachmentsEnabled===false;for(const button of app.querySelectorAll('.compose-tool'))if(button.id!=='record-voice')button.disabled=Boolean(unavailable||uploading||recorder||capturePending);for(const button of app.querySelectorAll('[data-remove-draft],#cancel-context'))button.disabled=uploading;}
+  function hasContent(){return Boolean(input()?.value.trim()||attachments.length||editing);}
+  function unavailable(){return Boolean(destroyed||(getChat()?.locked&&!editing)||getChat()?.blocked||paused());}
+  function canSend(){return !unavailable()&&!uploading&&!recorder&&!capturePending&&Boolean(editing?input()?.value.trim():hasContent());}
+  function canRecord(){return !destroyed&&!getChat()?.locked&&!getChat()?.blocked&&!paused()&&features().voiceNotesEnabled!==false&&features().attachmentsEnabled!==false&&!uploading&&!editing&&!recorder&&!capturePending&&attachments.length<10&&recordingSupported();}
+  function updateSend(){
+    const send=app.querySelector('.send'),field=input();if(!send||!field)return;
+    const blocked=unavailable(),content=hasContent(),recordable=canRecord();
+    send.classList.toggle('has-draft',content);send.title=editing?'Save edited message':content?'Send message':'Record voice note';field.disabled=blocked;
+    send.disabled=content?!canSend():!recordable;
+    for(const button of app.querySelectorAll('.compose-tool')){button.disabled=Boolean(blocked||uploading||recorder||capturePending||(editing&&['attach-file','camera-photo'].includes(button.id)));if(['attach-file','camera-photo'].includes(button.id))button.hidden=features().attachmentsEnabled===false;}
+    for(const button of app.querySelectorAll('[data-remove-draft],#cancel-context'))button.disabled=uploading;
+    composer()?.dispatchEvent(new CustomEvent('rekha:compose-state',{detail:{hasContent:content,canRecord:recordable,canSend:canSend(),recording:Boolean(recorder),capturePending,editing:Boolean(editing)}}));
+  }
   function addFiles(files){
     if(destroyed||getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)return toast('Attachments are currently unavailable. Your existing draft is kept.');
     if(features().voiceNotesEnabled===false&&[...files].some(file=>file.type.startsWith('audio/')))return toast('Audio uploads are currently paused.');
@@ -59,10 +73,12 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   }
   function attachmentMenu(picker){
     if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false||uploading||recorder||capturePending)return;
-    const modal=showDialog('Attach',`<div class="message-option-list"><button type="button" data-attach="files">▧ Photos, videos, audio or PDF</button><button type="button" data-attach="camera">Camera photo</button></div>`);
-    modal.querySelector('[data-attach="files"]').onclick=()=>{modal.close();picker.click();};
+    if(editing)return toast('Finish editing your message before attaching a file.');
+    const modal=showDialog('Attach',`<div class="attachment-actions"><button type="button" class="attachment-action" data-attach="gallery"><span class="attachment-action-icon">${chatIcon('image',26)}</span><strong>Gallery</strong><small>Photos &amp; videos</small></button><button type="button" class="attachment-action" data-attach="document"><span class="attachment-action-icon">${chatIcon('file',26)}</span><strong>Document</strong><small>Files &amp; audio</small></button><button type="button" class="attachment-action" data-attach="camera"><span class="attachment-action-icon">${chatIcon('camera',26)}</span><strong>Camera</strong><small>Take a photo</small></button></div>`,'attachment-sheet');
+    for(const kind of ['gallery','document'])modal.querySelector(`[data-attach="${kind}"]`).onclick=()=>{modal.close();picker.accept=kind==='gallery'?ACCEPT.split(',').filter(type=>type.startsWith('image/')||type.startsWith('video/')).join(','):acceptedFiles();picker.click();};
     modal.querySelector('[data-attach="camera"]').onclick=()=>{modal.close();capturePhoto();};
   }
+  function acceptedFiles(){return features().voiceNotesEnabled===false?ACCEPT.split(',').filter(type=>!type.startsWith('audio/')).join(','):ACCEPT;}
   async function capturePhoto(){
     if(destroyed||getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false||uploading||recorder||capturePending)return;
     if(editing)return toast('Finish editing your message before taking a photo.');
@@ -94,7 +110,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     if(!recordingSupported())return toast('Voice recording is unavailable here. You can attach an audio file instead.');
     if(destroyed||getChat()?.locked||getChat()?.blocked||editing||uploading)return;
     if(attachments.length>=10)return toast('Send or remove an attachment before recording a voice note.');
-    const button=app.querySelector('#record-voice'),controller=new AbortController();voiceCaptureController=controller;capturePending=true;renderDraft();
+    const controller=new AbortController();voiceCaptureController=controller;capturePending=true;renderDraft();
     try{
       const acquired=await getFeatureMedia('microphone',{audio:true},{signal:controller.signal});
       if(controller.signal.aborted||voiceCaptureController!==controller||destroyed||getChat()?.locked||getChat()?.blocked||editing||paused()||features().voiceNotesEnabled===false||features().attachmentsEnabled===false){acquired.getTracks().forEach(track=>track.stop());return;}
@@ -111,7 +127,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
       recorder.start(1000);renderDraft();
       recordTimer=setInterval(()=>{const elapsed=Math.floor((Date.now()-recordStarted)/1000),time=app.querySelector('#record-time');if(time)time.textContent=`${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')}`;if(elapsed>=180||recordChunks.reduce((total,chunk)=>total+chunk.size,0)>=MAX_SIZE-1048576)stopRecording(false);},500);
     }catch(error){if(error.name==='AbortError')return;stream?.getTracks().forEach(track=>track.stop());stream=null;recorder=null;recordChunks=[];clearInterval(recordTimer);if(!destroyed){renderDraft();toast(error.name==='PermissionAccessError'?error.message:error.name==='NotAllowedError'?'Microphone permission was declined. You can attach an audio file instead.':'The microphone could not be opened. Please try again.');}}
-    finally{if(voiceCaptureController===controller){voiceCaptureController=null;capturePending=false;if(button.isConnected)renderDraft();}}
+    finally{if(voiceCaptureController===controller){voiceCaptureController=null;capturePending=false;if(!destroyed&&composer()?.isConnected)renderDraft();}}
   }
   function stopRecording(discard){if(capturePending&&!recorder){voiceCaptureController?.abort();voiceCaptureController=null;capturePending=false;if(!destroyed)renderDraft();return;}if(!recorder)return;discardRecording=discard;clearInterval(recordTimer);if(recorder.state!=='inactive')recorder.stop();stream?.getTracks().forEach(track=>track.stop());}
   function messageOptions(id){
@@ -156,20 +172,40 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     const latest=[...(getChat()?.messages||[])].reverse().find(message=>{if(message.role!=='assistant'||message.readByOther||Number(message.id)<=readId)return false;const node=app.querySelector(`[data-message="${Number(message.id)}"]`);if(!node)return false;const rect=node.getBoundingClientRect();return rect.height>0&&rect.bottom>=visible.top&&rect.top<=visible.bottom;});if(!latest)return;
     readId=Number(latest.id);api('/api/chat/read','POST',{lastId:readId}).catch(()=>{readId=0;});
   }
+  function pressTarget(target){
+    if(!(target instanceof Element)||target.closest('button,a,input,textarea,select,audio,video,[data-media-url],[data-jump-message],.image-open,.media-preview'))return null;
+    const node=target.closest('[data-message]'),id=Number(node?.dataset.message),message=find(id);
+    return node&&Number.isSafeInteger(id)&&id>0&&message&&message.role!=='system'?{node,id}:null;
+  }
+  function cancelPress(){clearTimeout(pressTimer);pressTimer=null;press=null;}
+  function mountMessagePress(messages){
+    messages.addEventListener('pointerdown',event=>{
+      cancelPress();if(event.button!==0||event.pointerType==='mouse')return;
+      const target=pressTarget(event.target);if(!target)return;
+      press={...target,pointer:event.pointerId,x:event.clientX,y:event.clientY};
+      pressTimer=setTimeout(()=>{const active=press;cancelPress();if(destroyed||!active?.node.isConnected||!find(active.id))return;lastLongPress=Date.now();lastLongPressId=active.id;messageOptions(active.id);},500);
+    },{passive:true});
+    messages.addEventListener('pointermove',event=>{if(press&&(event.pointerId!==press.pointer||Math.hypot(event.clientX-press.x,event.clientY-press.y)>10))cancelPress();},{passive:true});
+    for(const type of ['pointerup','pointercancel','pointerleave'])messages.addEventListener(type,cancelPress,{passive:true});
+    messages.addEventListener('contextmenu',event=>{const target=pressTarget(event.target);if(!target)return;event.preventDefault();cancelPress();if(lastLongPressId===target.id&&Date.now()-lastLongPress<1000)return;messageOptions(target.id);});
+  }
   function mount(){
     const row=app.querySelector('.compose-row'),draft=document.createElement('div');draft.id='compose-draft';composer().prepend(draft);
-    const tools=document.createElement('div');tools.className='compose-tools';tools.innerHTML='<button type="button" class="compose-tool" id="emoji-picker" aria-label="Add emoji" title="Emoji">☺</button><button type="button" class="compose-tool" id="attach-file" aria-label="Attach file or take a camera photo" title="Attachments"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></button><button type="button" class="compose-tool" id="record-voice" aria-label="Record voice note" title="Record voice note" aria-pressed="false"><svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v7a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12z"/></svg></button>';
-    row.prepend(tools);const picker=document.createElement('input');picker.type='file';picker.accept=ACCEPT;picker.multiple=true;picker.hidden=true;picker.id='attachment-picker';composer().append(picker);
-    picker.onchange=()=>{addFiles([...picker.files]);picker.value='';};app.querySelector('#attach-file').onclick=()=>attachmentMenu(picker);app.querySelector('#emoji-picker').onclick=emojiPicker;app.querySelector('#record-voice').onclick=recordVoice;
+    const field=input();let pill=row.querySelector('.compose-input');if(!pill){pill=document.createElement('div');pill.className='compose-input';row.insertBefore(pill,field);pill.append(field);}
+    const tool=(id,action,label,icon)=>{const button=document.createElement('button');button.type='button';button.className='compose-tool';button.id=id;button.dataset.composeAction=action;button.setAttribute('aria-label',label);button.title=label;button.innerHTML=chatIcon(icon,24);return button;};
+    const emoji=tool('emoji-picker','emoji','Add emoji','smile'),attach=tool('attach-file','attach','Attach photos, videos or documents','attach'),camera=tool('camera-photo','camera','Take a camera photo','camera');pill.insertBefore(emoji,field);pill.append(attach,camera);
+    const picker=document.createElement('input');picker.type='file';picker.accept=acceptedFiles();picker.multiple=true;picker.hidden=true;picker.id='attachment-picker';composer().append(picker);
+    picker.onchange=()=>{addFiles([...picker.files]);picker.value='';picker.accept=acceptedFiles();};attach.onclick=()=>attachmentMenu(picker);emoji.onclick=emojiPicker;camera.onclick=capturePhoto;
     input().addEventListener('input',inputChanged);input().addEventListener('paste',event=>{const files=[...event.clipboardData?.files||[]];if(files.length){event.preventDefault();addFiles(files);}});
     const headerButton=app.querySelector('#chat-privacy');headerButton.setAttribute('aria-label','Conversation menu');headerButton.title='Conversation menu';headerButton.onclick=openMenu;
-    app.querySelector('#messages').addEventListener('click',event=>{
+    const messages=app.querySelector('#messages');mountMessagePress(messages);messages.addEventListener('click',event=>{
+      const pressed=pressTarget(event.target);if(pressed?.id===lastLongPressId&&Date.now()-lastLongPress<1000){event.preventDefault();return;}
       const options=event.target.closest('[data-message-actions]');if(options)return messageOptions(Number(options.dataset.messageActions));
       const quote=event.target.closest('[data-jump-message]');if(quote)return jump(quote.dataset.jumpMessage);
       const reaction=event.target.closest('[data-reaction-message]');if(reaction)return messageOptions(Number(reaction.dataset.reactionMessage));
       const image=event.target.closest('[data-media-url]');if(image&&attachmentUrl(image.dataset.mediaUrl)){const modal=showDialog(image.dataset.mediaTitle||'Shared image',`<img class="full-image" src="${image.dataset.mediaUrl}" alt="${esc(image.dataset.mediaTitle)}"><a class="save-image" href="${image.dataset.mediaUrl}" download>Download image</a>`);}
     });
-    app.querySelector('#chat-scroll').addEventListener('scroll',markRead,{passive:true});renderDraft();
+    app.querySelector('#chat-scroll').addEventListener('scroll',()=>{cancelPress();markRead();},{passive:true});renderDraft();
   }
   function validateDraft(draft){
     const rejected=(message,status)=>Object.assign(new Error(message),{status});
@@ -224,7 +260,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   }
   function preserveDraft(){return {body:input()?.value||'',replyTo,editId:editing,editBackup,attachments:[...attachments],previewRevoked:true};}
   function restoreDraft(draft){if(!draft||destroyed)return;for(const item of attachments)URL.revokeObjectURL(item.preview);attachments=[...(draft.attachments||[])];revivePreviews(draft);replyTo=draft.replyTo||null;editing=draft.editId||null;editBackup=draft.editBackup||null;input().value=draft.body||'';input().dispatchEvent(new Event('input',{bubbles:true}));renderDraft();}
-  function refresh(){if(destroyed)return;if((recorder||capturePending)&&(getChat()?.locked||getChat()?.blocked||paused()||features().voiceNotesEnabled===false||features().attachmentsEnabled===false))stopRecording(true);if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)for(const [modal,release]of [...cameraReleases]){release();modal.close();}updateSend();const caption=app.querySelector('.chat-caption');if(caption)caption.textContent=getChat()?.typing?.owner?'typing…':getAppSettings()?.copy?.[getLang()]?.tagline||getAppSettings()?.brand?.tagline||(getLang()==='hi'?'आपकी निजी बातचीत':'Your personal conversation');const picker=app.querySelector('#attachment-picker');if(picker)picker.accept=features().voiceNotesEnabled===false?ACCEPT.split(',').filter(type=>!type.startsWith('audio/')).join(','):ACCEPT;markRead();}
-  function destroy(){if(destroyed)return;typing(false);destroyed=true;discardRecording=true;stopRecording(true);clearTimeout(typingTimer);clearInterval(recordTimer);for(const item of attachments)URL.revokeObjectURL(item.preview);for(const draft of snapshots)releasePreviews(draft);for(const modal of [...localDialogs]){cameraReleases.get(modal)?.();modal.close();}stream?.getTracks().forEach(track=>track.stop());}
-  mount();return {takeDraft,prepareDraft,finishDraft,preserveDraft,restoreDraft,preparePayload,sent,refresh,destroy,openMenu,hasLiveCapture:()=>Boolean(recorder||capturePending),isEditing:()=>Boolean(editing),hasContent:()=>Boolean(input()?.value.trim()||attachments.length||editing),draftSignature:()=>JSON.stringify({replyTo,editing,files:attachments.map(item=>[item.file.name,item.file.size,item.file.lastModified])})};
+  function refresh(){if(destroyed)return;if((recorder||capturePending)&&(getChat()?.locked||getChat()?.blocked||paused()||features().voiceNotesEnabled===false||features().attachmentsEnabled===false))stopRecording(true);if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)for(const [modal,release]of [...cameraReleases]){release();modal.close();}updateSend();const caption=app.querySelector('.chat-caption');if(caption)caption.textContent=getChat()?.typing?.owner?'typing…':getAppSettings()?.copy?.[getLang()]?.tagline||getAppSettings()?.brand?.tagline||(getLang()==='hi'?'आपकी निजी बातचीत':'Your personal conversation');const picker=app.querySelector('#attachment-picker');if(picker)picker.accept=acceptedFiles();markRead();}
+  function destroy(){if(destroyed)return;typing(false);destroyed=true;cancelPress();discardRecording=true;stopRecording(true);clearTimeout(typingTimer);clearInterval(recordTimer);for(const item of attachments)URL.revokeObjectURL(item.preview);for(const draft of snapshots)releasePreviews(draft);for(const modal of [...localDialogs]){cameraReleases.get(modal)?.();modal.close();}stream?.getTracks().forEach(track=>track.stop());}
+  mount();return {takeDraft,prepareDraft,finishDraft,preserveDraft,restoreDraft,preparePayload,sent,refresh,destroy,openMenu,startRecord:recordVoice,canRecord,canSend,hasLiveCapture:()=>Boolean(recorder||capturePending),isEditing:()=>Boolean(editing),hasContent,draftSignature:()=>JSON.stringify({replyTo,editing,files:attachments.map(item=>[item.file.name,item.file.size,item.file.lastModified])})};
 }

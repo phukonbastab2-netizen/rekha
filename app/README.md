@@ -2,7 +2,7 @@
 
 This directory contains the customer app, private owner panel, Cloudflare backend and two Android WebView projects. The website in the repository root is separate and stays unchanged. That static website can be hosted separately; the authenticated chat needs the Cloudflare Worker.
 
-Web and Android source package: **0.9.1-preview**, including direct feature permission requests and in-app retry, bounded chat updates, searchable customer pages, adaptive polling, reliable message retries, the owner app editor and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
+Web and Android source package: **0.9.2-preview**, including a familiar mobile chat layout with a compact contact header, grouped bubbles, attachment sheet and microphone/send composer, direct feature permission requests and in-app retry, bounded chat updates, searchable customer pages, adaptive polling, reliable message retries, the owner app editor and local admin call voice effects. Signed APK downloads are hosted separately from this source repository.
 
 Customers have one private conversation with Rekha. The owner can send text, images, video, audio, PDFs and ordered collections without waiting for a customer reply. Ads are disabled. Payments remain a preview with no real charges. No passwords, payment-card collection, OTP access or private-device scraping is implemented.
 

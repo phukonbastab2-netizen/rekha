@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.1-preview",
+  "version": "0.9.2-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -64,6 +64,7 @@
     "public/calls.css",
     "public/calls.js",
     "public/chat-history.js",
+    "public/chat-icons.js",
     "public/chat.css",
     "public/download.html",
     "public/icon-192.png",
