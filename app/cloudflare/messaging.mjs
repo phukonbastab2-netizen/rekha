@@ -129,6 +129,7 @@ export async function messagingRoutes(ctx){
   const compactAck=request.headers.get('X-Rekha-Ack')==='compact-v1'&&typeof acknowledge==='function';
   const savedView=async(chatId,messageId)=>{const current=await get(chatId);return compactAck?acknowledge(current,messageId):view(current,false,{acknowledgedId:messageId});};
   const appChat=ctx.appSettings?.chat||{},freeTurns=ctx.appSettings?.service?.freeReplies??3,unlockPrice=ctx.appSettings?.service?.unlockPriceRupees??49;
+  const quotaEnabled=ctx.automationEnabled!==false;
   const customerMayWrite=()=>{if(appChat.customerMessagingEnabled===false)throw fail(403,'Customer messages are currently paused.');};
   const ensure=chatId=>stmt('INSERT OR IGNORE INTO chat_messaging(conversation_id) VALUES(?)',chatId).run();
   const settings=async chatId=>await one('SELECT * FROM chat_messaging WHERE conversation_id=?',chatId)||{};
@@ -138,7 +139,7 @@ export async function messagingRoutes(ctx){
   if(route.startsWith('/api/attachments/'))return messagingAttachmentResponse(ctx);
   if(route==='/api/uploads'&&method==='POST'){
     const chat=await customer();customerMayWrite();if(appChat.attachmentsEnabled===false)throw fail(403,'Customer attachments are currently unavailable.');if((await settings(chat.id)).blocked)throw fail(403,'Messages to this chat are paused.');await rate('upload:'+chat.id,8,60000);
-    if(chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!await isGuided?.(chat.id))throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
+    if(quotaEnabled&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!await isGuided?.(chat.id))throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
     if(!env.MEDIA)throw fail(503,'Media storage is unavailable.');
     const mime=request.headers.get('Content-Type')?.split(';')[0].trim();if(!messagingMimes.has(mime))throw fail(415,'Choose an image, video, audio file or PDF.');
     if(mime.startsWith('audio/')&&appChat.voiceNotesEnabled===false)throw fail(403,'Customer voice notes are currently unavailable.');
@@ -159,12 +160,12 @@ export async function messagingRoutes(ctx){
     const selected=await attachments(data.mediaIds||[],chat.id);
     if(selected.some(item=>item.type==='audio')&&appChat.voiceNotesEnabled===false)throw fail(403,'Customer voice notes are currently unavailable.');
     if((await settings(chat.id)).blocked)throw fail(403,'Messages to this chat are paused.');
-    if(chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!guided)throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
+    if(quotaEnabled&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!guided)throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
     const replyTo=await quote(data.replyTo,chat.id);
     if(!data.body.trim()&&!selected.length)throw fail(400,'Write a message or attach a file.');
     const payload=selected.length?JSON.stringify({text:data.body.trim(),title:'',items:selected}):data.body.trim(),kind=selected.length?'media':'customer',now=Date.now();
     const batch=await env.DB.batch([
-      stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'user',?,?,'pending',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND (entitlement!='free' OR free_used<?+(SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) OR EXISTS(SELECT 1 FROM chat_workflow WHERE conversation_id=conversations.id))) AND NOT EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked=1)",chat.id,kind,payload,data.clientId,now,chat.id,freeTurns,chat.id),
+      stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'user',?,?,'pending',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND (?=0 OR entitlement!='free' OR free_used<?+(SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) OR EXISTS(SELECT 1 FROM chat_workflow WHERE conversation_id=conversations.id))) AND NOT EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked=1)",chat.id,kind,payload,data.clientId,now,chat.id,quotaEnabled?1:0,freeTurns,chat.id),
       stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',now,chat.id),
       stmt('INSERT INTO chat_messaging(conversation_id,archived,customer_typing) SELECT ?,0,0 WHERE changes()=1 ON CONFLICT(conversation_id) DO UPDATE SET archived=0,customer_typing=0',chat.id),
       stmt('DELETE FROM drafts WHERE conversation_id=? AND changes()=1',chat.id),

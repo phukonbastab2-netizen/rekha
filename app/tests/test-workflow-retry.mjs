@@ -17,7 +17,7 @@ source=source.replace(backgroundHook,"const run=async()=>{if(!fixtureBackgroundF
 const mf = new Miniflare(convertV4MiniflareOptions({
   modules: true, script: source, compatibilityDate: '2026-09-24',
   d1Databases: { DB: 'workflow-retry-test' }, r2Buckets: { MEDIA: 'workflow-retry-media' },
-  bindings: { ADMIN_PASSWORD_HASH: createHash('sha256').update('local-retry-fixture').digest('hex') }
+  bindings: { CUSTOMER_AUTOMATION_ENABLED:'true', ADMIN_PASSWORD_HASH: createHash('sha256').update('local-retry-fixture').digest('hex') }
 }));
 console.log('Local workflow retry fixture starting.');
 try {

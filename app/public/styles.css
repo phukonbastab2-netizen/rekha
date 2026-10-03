@@ -6,10 +6,9 @@
 
 .media-message{white-space:normal;min-width:0}.media-message p{white-space:pre-wrap}.media-message h3{font-size:20px}.media-collection{display:grid;gap:14px}.media-collection figure{margin:0}.media-collection img,.media-collection video{display:block;width:100%;max-width:380px;max-height:360px;object-fit:contain;border-radius:8px;background:#e7dbc4}.media-collection figcaption{font-size:12px;margin-top:7px}.media-link{display:block;padding:14px;border:1px solid var(--line);border-radius:8px;overflow-wrap:anywhere}.media-link small{display:block;margin-top:6px;font-size:10px}
 
-/* Rekha Astrology introduction */
-.intro h1{font:42px Georgia,serif;color:#652f2c;margin:16px 0}.intro video{width:100%;max-height:48vh;aspect-ratio:4/5;background:#251c14;object-fit:contain;border-radius:22px;border:1px solid #c9ab70;box-shadow:0 12px 36px #652f2c18}.intro-choices{display:flex;gap:8px;margin:18px 0 24px}.intro-choice{flex:1;border:1px solid #d8c7a6;border-radius:14px;padding:12px 6px;background:#fffaf0;color:#652f2c;cursor:pointer}.intro-choice small{display:block;margin-bottom:5px;opacity:.65}.intro-choice.selected{background:#652f2c;color:#fffaf0}.intro .footnote{text-align:center}.wordmark{font-size:16px;flex-wrap:wrap}.chat-name{font-size:27px}.rani-portrait{object-fit:contain!important;border-radius:28px}.intro{animation:rekha-arrive .5s ease both}@keyframes rekha-arrive{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}@media(prefers-reduced-motion:reduce){.intro{animation:none}}
-.screen h2{white-space:pre-line}.brand-wordmark-label{margin-left:0!important;letter-spacing:1px;overflow-wrap:anywhere}.small-brand{overflow-wrap:anywhere}.story-copy p,.intro .subtitle,.kundli-note strong,.kundli-note small{white-space:pre-line}
-.primary,.intro-choice.selected{color:var(--brand-on-primary,#fff3da)}.primary:hover{background:color-mix(in srgb,var(--wine) 86%,black)}.intro h1,.intro-choice{color:var(--wine)}.intro-choice.selected{background:var(--wine);color:var(--brand-on-primary,#fffaf0)}
+.wordmark{font-size:16px;flex-wrap:wrap}.chat-name{font-size:27px}.rani-portrait{object-fit:contain!important;border-radius:28px}
+.screen h2{white-space:pre-line}.brand-wordmark-label{margin-left:0!important;letter-spacing:1px;overflow-wrap:anywhere}.small-brand{overflow-wrap:anywhere}.story-copy p,.kundli-note strong,.kundli-note small{white-space:pre-line}
+.primary{color:var(--brand-on-primary,#fff3da)}.primary:hover{background:color-mix(in srgb,var(--wine) 86%,black)}
 
 /* One video, two details, then the existing private conversation. */
 .kundli-onboarding{max-width:520px;padding:24px 28px 30px;animation:page-in .25s ease}

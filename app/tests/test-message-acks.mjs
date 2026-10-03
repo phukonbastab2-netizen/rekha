@@ -17,7 +17,7 @@ script=script.replace(providerCall,`
   if(fixtureControl.fail)throw Error('Local delayed reply fixture failure');
   ${providerCall}`);
 const password='local-fast-ack-fixture',origin='https://rekha.test';
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'fast-message-acks'},r2Buckets:{MEDIA:'fast-message-acks-media'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex')}}));
+const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'fast-message-acks'},r2Buckets:{MEDIA:'fast-message-acks-media'},bindings:{CUSTOMER_AUTOMATION_ENABLED:'true',ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex')}}));
 const latency=[];
 try{
   const db=await mf.getD1Database('DB');

@@ -7,7 +7,7 @@ import path from 'node:path';
 const root=path.resolve('.');
 const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/worker.mjs'];
 const script=files.map(name=>readFileSync(path.join(root,name),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n');
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'messaging-test'},r2Buckets:{MEDIA:'messaging-media'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update('local-test-password').digest('hex')}}));
+const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'messaging-test'},r2Buckets:{MEDIA:'messaging-media'},bindings:{CUSTOMER_AUTOMATION_ENABLED:'true',ADMIN_PASSWORD_HASH:createHash('sha256').update('local-test-password').digest('hex')}}));
 const db=await mf.getD1Database('DB');
 for(const sql of splitSqlStatements(readFileSync(path.join(root,'cloudflare/schema.sql'),'utf8')))await db.prepare(sql).run();
 async function call(route,method='GET',data,cookie='',headers={}){const response=await mf.dispatchFetch('https://rekha.test'+route,{method,headers:{Origin:'https://rekha.test','Content-Type':'application/json',Cookie:cookie,...headers},...(data===undefined?{}:{body:JSON.stringify(data)})});return{status:response.status,data:await response.json(),cookie:response.headers.get('Set-Cookie')?.split(';')[0]};}

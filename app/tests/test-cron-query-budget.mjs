@@ -19,7 +19,7 @@ export default {
    await fixtureWorker.scheduled(controller,{...env,DB,MEDIA},ctx);fixtureCounts.push(metrics);
  }
 };`;
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'cron-query-budget'},r2Buckets:{MEDIA:'cron-query-budget-media'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update('local-budget-fixture').digest('hex')}}));
+const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'cron-query-budget'},r2Buckets:{MEDIA:'cron-query-budget-media'},bindings:{CUSTOMER_AUTOMATION_ENABLED:'true',ADMIN_PASSWORD_HASH:createHash('sha256').update('local-budget-fixture').digest('hex')}}));
 const counts=[];
 try{
  const db=await mf.getD1Database('DB'),bucket=await mf.getR2Bucket('MEDIA'),worker=await mf.getWorker(),now=Date.now(),old=now-100*86400000;

@@ -12,7 +12,7 @@ const bundleSha256=createHash('sha256').update(bundle).digest('hex');
 const mf=new Miniflare(convertV4MiniflareOptions({
   modules:true,script:bundle,compatibilityDate:'2026-09-24',host:'127.0.0.1',port:0,
   d1Databases:{DB:'bundled-editor-test'},r2Buckets:{MEDIA:'bundled-editor-media'},
-  bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex')}
+  bindings:{CUSTOMER_AUTOMATION_ENABLED:'true',ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex')}
 }));
 
 try{

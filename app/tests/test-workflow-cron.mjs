@@ -11,7 +11,7 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   modules: true, script: fs.readFileSync(root + 'cloudflare/worker-bundle.mjs', 'utf8'),
   compatibilityDate: '2026-09-24', host: '127.0.0.1', port: 0,
   d1Databases: { DB: 'workflow-cron-test' }, r2Buckets: { MEDIA: 'workflow-cron-media' },
-  bindings: { ADMIN_PASSWORD_HASH: createHash('sha256').update('local-cron-fixture').digest('hex') }
+  bindings: { CUSTOMER_AUTOMATION_ENABLED:'true', ADMIN_PASSWORD_HASH: createHash('sha256').update('local-cron-fixture').digest('hex') }
 }));
 console.log('Local bundled Worker cron fixture starting.');
 try {

@@ -6,6 +6,8 @@ Web and Android source package: **0.9.2-preview**, including a familiar mobile c
 
 Customers have one private conversation with Rekha. The owner can send text, images, video, audio, PDFs and ordered collections without waiting for a customer reply. Ads are disabled. Payments remain a preview with no real charges. No passwords, payment-card collection, OTP access or private-device scraping is implemented.
 
+The current customer startup requires the complete signup video, name and date of birth, Send, and a five-second preparation screen. Chat begins with only the configured shared kundli image and “Your kundli.” The old three-video customer page is removed. `CUSTOMER_AUTOMATION_ENABLED` defaults to false: previous sample replies, workflow triggers and scheduled deliveries are stopped; customer sends stay uncapped by old free-reply credits. Manual owner replies, media access, rate/storage limits and retention cleanup remain available.
+
 ## Run the checks
 
 Install Node.js 24.15 or newer, then run these commands from this directory:
@@ -73,7 +75,7 @@ Open the local address printed by Wrangler. The owner panel is `/admin`. Intro p
 npx wrangler secret put ADMIN_PASSWORD_HASH --config wrangler.jsonc
 ```
 
-5. Put the three intro videos into the bucket under `intro/welcome.mp4`, `intro/introduction.mp4` and `intro/testimonials.mp4`. Use the local commands above with `--remote` and your private config. Upload guided library assets through the owner panel instead of publishing customer files.
+5. Upload the current required MP4 under `intro/onboarding.mp4` and choose the shared kundli image from the private owner library. The owner upload route is `/api/admin/intro/onboarding`. Old introduction clips remain stored for compatibility, but no customer page selects them. Keep `CUSTOMER_AUTOMATION_ENABLED` false until a new sequence is deliberately implemented. Upload library assets through the owner panel instead of publishing customer files.
 6. Run `npm run build`, `npm test`, then review a dry-run before deploying:
 
 ```sh

@@ -9,6 +9,7 @@ const fail=(status,message)=>Object.assign(new Error(message),{status});
 const encoder=new TextEncoder();
 const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(text))),b=>b.toString(16).padStart(2,'0')).join('');
 const token=()=>Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');
+const customerAutomationEnabled=env=>env.CUSTOMER_AUTOMATION_ENABLED==='true';
 const welcome={en:'Namaste. This is a quiet space for your questions. What’s on your mind today? A full kundli also needs birth time and birthplace; no chart has been calculated yet.',hi:'नमस्ते। आज आप किस विषय पर बात करना चाहते हैं? पूरी कुंडली के लिए जन्म समय और जन्म स्थान भी चाहिए। अभी कुंडली की गणना नहीं हुई है।',hinglish:'Namaste. Aaj aap kis baare mein baat karna chahte hain? Poori kundli ke liye birth time aur birthplace bhi chahiye. Abhi chart calculate nahi hua hai.'};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Permissions-Policy':'camera=(self), microphone=(self), geolocation=(self)','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
 function prefs(value={}){let location=null;if(value.location!=null){const {latitude,longitude}=value.location;if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180)throw fail(400,'Invalid location.');location={latitude:Math.round(latitude*10)/10,longitude:Math.round(longitude*10)/10};}return{remember:value.remember===true,location,consentVersion:'2026-10-03'};}
@@ -35,6 +36,7 @@ async function finishChatReply(ctx,chat,message,text,kind,lease=null){
   return !!batch[0].meta.changes;
 }
 async function generateChatReply(ctx,id){
+  if(!customerAutomationEnabled(ctx.env))return false;
   if(ctx.queryBudget&&!ctx.queryBudget.can(20))return false;
   const {stmt,one,all,appSettings}=ctx;
   const get=()=>one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE id=?',id);
@@ -74,6 +76,7 @@ async function generateChatReply(ctx,id){
 }
 export async function handleApi(request,env,executionContext){
   const url=new URL(request.url),route=url.pathname,method=request.method,db=env.DB;
+  const automationEnabled=customerAutomationEnabled(env);
   const queryBudget={used:0,limit:50,can(reserve){return this.used+reserve<=this.limit;}},stmt=(sql,...args)=>{queryBudget.used++;return db.prepare(sql).bind(...args);},one=(sql,...args)=>stmt(sql,...args).first(),all=async(sql,...args)=>(await stmt(sql,...args).all()).results;
   let releaseBackground;const backgroundStart=new Promise(resolve=>{releaseBackground=resolve;});
   let appSettings=appSettingsDefaults,settingsRevision=0;
@@ -85,17 +88,17 @@ export async function handleApi(request,env,executionContext){
   const insert=(id,role,kind,body,status='sent',clientId=null)=>stmt('INSERT INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,?,?,?,?,?,?)',id,role,kind,body,status,clientId,Date.now());
   async function view(chat,admin=false,options={}){
     const bounded=request.headers.get('X-Rekha-History')==='bounded-v1',history=bounded?await messagingHistory({request,chat,all,fail,options}):{rows:messages(chat.id)};
-    const [guidedConversation,messaging,draft]=await Promise.all([workflowIsEnrolled(one,chat.id),messagingView({chat,messages:history.rows,admin,one,all,bounded,acknowledgedId:options.acknowledgedId}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;
-    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
+    const [guidedConversation,messaging,draft]=await Promise.all([automationEnabled&&workflowIsEnrolled(one,chat.id),messagingView({chat,messages:history.rows,admin,one,all,bounded,acknowledgedId:options.acknowledgedId}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;
+    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
   }
   async function acknowledge(chat,acknowledgedId){
     if(!chat)throw fail(409,'The chat changed. Please refresh.');
-    const [guidedConversation,messaging]=await Promise.all([workflowIsEnrolled(one,chat.id),messagingAcknowledgment({chat,acknowledgedId,one})]);
+    const [guidedConversation,messaging]=await Promise.all([automationEnabled&&workflowIsEnrolled(one,chat.id),messagingAcknowledgment({chat,acknowledgedId,one})]);
     if(!messaging)throw fail(409,'The saved message is unavailable. Please refresh.');
     const freeTurns=appSettings.service.freeReplies;
     // An ACK is a partial snapshot, never a history/delta cursor. A client must
     // retain its previous cursor so concurrent incoming messages and edits sync.
-    return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
+    return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
   }
   async function customer(){const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));if(!c)throw fail(401,'Your chat session has ended. Please start again.');return c;}
   async function owner(){if(!cookies.ar_admin||!await one('SELECT 1 FROM admin_sessions WHERE token_hash=? AND expires>?',await hash(cookies.ar_admin),Date.now()))throw fail(401,'Please sign in to the owner panel.');}
@@ -104,8 +107,9 @@ export async function handleApi(request,env,executionContext){
   const finish=(chat,message,text,kind)=>finishChatReply(workflowCtx,chat,message,text,kind);
   const generate=id=>generateChatReply(workflowCtx,id);
   const workflowCtx={env,stmt,one,all,fail,owner,body,result,get,route,method,queryBudget};
-  async function onCustomerMessage(chat,message){await flowOnCustomer(workflowCtx,chat,message);}
+  async function onCustomerMessage(chat,message){if(automationEnabled)await flowOnCustomer(workflowCtx,chat,message);}
   async function scheduleChatWork(id,knownChat=null){
+    if(!automationEnabled)return;
     if(knownChat){
       if(knownChat.mode==='manual'||knownChat.inbox_blocked)return;
       let pendingReply=knownChat.waiting_count>0&&(knownChat.entitlement!=='free'||knownChat.free_used<appSettings.service.freeReplies+(knownChat.rewards||0));
@@ -120,14 +124,15 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-video-kundli-0.9.2'});
-    if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-kundli-only-0.9.2'});
+    if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
     if(['POST','PUT','PATCH','DELETE'].includes(method)){if(request.headers.get('Origin')!==url.origin)throw fail(403,'Request origin not allowed.');await rate(`write:${request.headers.get('CF-Connecting-IP')||'unknown'}`,240);}
     const edited=await appSettingsRoutes(workflowCtx);if(edited)return edited;
-    const workflow=await workflowRoutes(workflowCtx);if(workflow)return workflow;
-    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,acknowledge,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>workflowIsEnrolled(one,id),appSettings});if(messaging)return messaging;
+    const flowCtx=automationEnabled?workflowCtx:{...workflowCtx,body:async()=>{const data=await body();if(route==='/api/admin/workflow/settings'&&data.enabled===true||/^\/api\/admin\/conversations\/[a-f0-9-]{36}\/workflow$/.test(route)&&['start','resume','restart'].includes(data.action))throw fail(409,'Automatic replies and previous sequences are paused.');return data;}};
+    const workflow=await workflowRoutes(flowCtx);if(workflow)return workflow;
+    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,acknowledge,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>automationEnabled&&workflowIsEnrolled(one,id),appSettings,automationEnabled});if(messaging)return messaging;
     const calls=await callsRoutes({request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate,appSettings});if(calls)return calls;
     if(route==='/api/start'&&method==='POST'){
       await rate(`signup:${request.headers.get('CF-Connecting-IP')||'unknown'}`,12,3600000);const data=await body();
@@ -143,18 +148,18 @@ export async function handleApi(request,env,executionContext){
         kundli=typeof mediaId==='string'&&/^[a-f0-9-]{36}$/.test(mediaId)?await one("SELECT id,type,object_key,mime,size FROM media_items WHERE id=? AND type='image' AND archived=0",mediaId):null;
         if(!kundli?.object_key||!['image/jpeg','image/png','image/webp'].includes(kundli.mime)||!env.MEDIA||!(await env.MEDIA.head(kundli.object_key))?.size)throw fail(503,'The kundli image is temporarily unavailable. Please try again later.');
       }
-      const now=Date.now(),createSql='INSERT INTO conversations(id,token_hash,name,dob,language,preferences,created,updated) '+(kundli?"SELECT ?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM media_items WHERE id=? AND type='image' AND archived=0 AND object_key=? AND mime=?)":'VALUES(?,?,?,?,?,?,?,?)');
-      const startBatch=[stmt(createSql,id,await hash(session),data.name.trim(),data.dob,data.language,JSON.stringify(preferences),now,now,...(kundli?[kundli.id,kundli.object_key,kundli.mime]:[]))];
+      const now=Date.now(),createSql='INSERT INTO conversations(id,token_hash,name,dob,language,preferences,mode,created,updated) '+(kundli?"SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM media_items WHERE id=? AND type='image' AND archived=0 AND object_key=? AND mime=?)":'VALUES(?,?,?,?,?,?,?,?,?)');
+      const startBatch=[stmt(createSql,id,await hash(session),data.name.trim(),data.dob,data.language,JSON.stringify(preferences),automationEnabled?'ai':'manual',now,now,...(kundli?[kundli.id,kundli.object_key,kundli.mime]:[]))];
       if(kundli){
         const payload=JSON.stringify({text:'Your kundli',title:'',items:[{id:kundli.id,title:'Shared kundli image',type:'image',url:'/api/media/'+kundli.id,mime:kundli.mime,size:kundli.size}]});
         // One transaction stores both the first message and its private grant.
         // A concurrent library archive causes rollback rather than a half-profile.
         startBatch.push(insert(id,'assistant','media',payload,'sent','onboarding:kundli-v1'),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,kundli.id));
       }
-      startBatch.push(insert(id,'assistant','welcome',welcome[data.language]));
+      if(automationEnabled&&!kundli)startBatch.push(insert(id,'assistant','welcome',welcome[data.language]));
       await db.batch(startBatch);
       // A missing or archived library item must not prevent a customer signing up.
-      try{await flowOnStart(workflowCtx,await get(id));}catch{}
+      if(automationEnabled&&!kundli)try{await flowOnStart(workflowCtx,await get(id));}catch{}
       return result(await view(await get(id)),201,{'Set-Cookie':cookie('ar_session',session,preferences.remember)});
     }
     if(route==='/api/rewards/attempt'&&method==='POST'){
@@ -169,7 +174,7 @@ export async function handleApi(request,env,executionContext){
     if(route==='/api/chat'&&method==='GET'){const chat=await customer();await scheduleChatWork(chat.id,chat);return result(await view(chat));}
     if(route==='/api/chat'&&method==='DELETE'){const chat=await customer();await messagingDeleteAttachments({env,all,chatId:chat.id});await stmt('DELETE FROM conversations WHERE id=?',chat.id).run();return result({deleted:true},200,{'Set-Cookie':cookie('ar_session','',false,true)});}
     if(route==='/api/preferences'&&method==='PATCH'){const chat=await customer(),data=prefs(await body());await db.batch([stmt('UPDATE conversations SET preferences=?,version=version+1,updated=? WHERE id=?',JSON.stringify(data),Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),200,{'Set-Cookie':cookie('ar_session',cookies.ar_session,data.remember)});}
-    if(route==='/api/retry'&&method==='POST'){const chat=await customer();await rate(`retry:${chat.id}`,5);if(chat.mode==='manual'||!await pending(chat.id))throw fail(409,'No reply to retry.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),202);}
+    if(route==='/api/retry'&&method==='POST'){const chat=await customer();if(!automationEnabled)throw fail(409,'Automatic replies are paused.');await rate(`retry:${chat.id}`,5);if(chat.mode==='manual'||!await pending(chat.id))throw fail(409,'No reply to retry.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),202);}
     if(route==='/api/payment/demo'&&method==='POST'){const chat=await customer();await db.batch([stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,'system','demo-payment',?,'sent','demo-unlock',?)",chat.id,'₹'+appSettings.service.unlockPriceRupees,Date.now()),stmt("UPDATE conversations SET entitlement='demo',version=version+CASE WHEN entitlement!='demo' OR changes()=1 THEN 1 ELSE 0 END,updated=? WHERE id=?",Date.now(),chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)));}
     if(route.startsWith('/api/payment'))throw fail(409,'Real payments are not enabled in this preview. No charge is taken.');
     if(route==='/api/admin/login'&&method==='POST'){await rate(`login:${request.headers.get('CF-Connecting-IP')||'unknown'}`,6,300000);const data=await body();if(typeof data.password!=='string'||await hash(data.password)!==env.ADMIN_PASSWORD_HASH)throw fail(401,'Incorrect owner password.');const session=token();await stmt('INSERT INTO admin_sessions(token_hash,expires) VALUES(?,?)',await hash(session),Date.now()+8*3600000).run();return result({ok:true},200,{'Set-Cookie':cookie('ar_admin',session)});}
@@ -200,7 +205,7 @@ export async function handleApi(request,env,executionContext){
       const match=route.match(/^\/api\/admin\/conversations\/([a-f0-9-]+)(?:\/(mode|reply|retry))?$/);
       if(match){const chat=await get(match[1]);if(!chat)throw fail(404,'Conversation not found.');if(!match[2]&&method==='GET'){await scheduleChatWork(chat.id,chat);return result(await view(chat,true));}const data=await body();
         if(match[2]==='mode'&&method==='PATCH'){if(!['ai','assist','manual'].includes(data.mode))throw fail(400,'Invalid mode.');if(chat.mode!==data.mode){await db.batch([stmt('UPDATE conversations SET mode=?,version=version+1,updated=? WHERE id=?',data.mode,Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id),stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id)]);await generate(chat.id);}return result(await view(await get(chat.id),true));}
-        if(match[2]==='retry'&&method==='POST'){if(chat.mode==='manual')throw fail(409,'Manual mode is active.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await generate(chat.id);return result(await view(await get(chat.id),true));}
+        if(match[2]==='retry'&&method==='POST'){if(!automationEnabled)throw fail(409,'Automatic replies are paused.');if(chat.mode==='manual')throw fail(409,'Manual mode is active.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await generate(chat.id);return result(await view(await get(chat.id),true));}
         if(match[2]==='reply'&&method==='POST'){const message=await pending(chat.id);if(chat.mode==='ai'||!message||message.id!==data.messageId||chat.version!==data.version)throw fail(409,'The chat changed. Refresh before sending.');if(typeof data.body!=='string'||!data.body.trim()||data.body.length>4000)throw fail(400,'Write a reply of 1–4000 characters.');await finish(chat,message,data.body.trim(),chat.mode==='assist'?'human-assisted':'human');return result(await view(await get(chat.id),true));}
       }
     }
@@ -270,6 +275,7 @@ export default {
     const ctx={env,stmt,one,all,fail,queryBudget,get:id=>one('SELECT * FROM conversations WHERE id=?',id)};ctx.appSettings=(await appSettingsPublic(ctx)).settings;const deadline=Date.now()+20000;
     if(controller.cron==='17 2 * * *')await stmt("INSERT INTO workflow_settings(key,value) VALUES('retention-before',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(Date.now()-ctx.appSettings.service.retentionDays*86400000)).run();
     const sweeping=await one("SELECT 1 FROM workflow_settings WHERE key='retention-before'");if(sweeping)queryBudget.limit=36;
+    if(customerAutomationEnabled(env)){
     await workflowRecoverMessages(ctx,null,1);
     let cursor={updated:-1,id:''};try{const saved=JSON.parse((await one("SELECT value FROM workflow_settings WHERE key='reply-scan-cursor'"))?.value||'null');if(saved&&Number.isSafeInteger(saved.updated)&&typeof saved.id==='string')cursor=saved;}catch{}
     const replyChats=await all(replyCandidateSql,cursor.updated,cursor.id,ctx.appSettings.service.freeReplies,Date.now());
@@ -281,6 +287,7 @@ export default {
     }
     // Polling delivers foreground steps; cron continues the same sequence when closed.
     for(;;){if(!queryBudget.can(8))break;await workflowProcessDue(ctx,{limit:20});if(!queryBudget.can(3))break;const next=await one("SELECT due FROM workflow_jobs WHERE status='pending' ORDER BY due,id LIMIT 1");if(!next?.due||next.due>deadline||Date.now()>=deadline||!await one("SELECT 1 FROM workflow_settings WHERE key='config' AND json_extract(value,'$.enabled')=1"))break;await new Promise(resolve=>setTimeout(resolve,Math.max(100,next.due-Date.now())));}
+    }
     // A daily trigger starts a sweep; minute ticks continue bounded pages.
     // Soft query guards stop before complete units and leave durable work queued.
     queryBudget.limit=50;

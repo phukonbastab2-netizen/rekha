@@ -6,31 +6,25 @@ Open `/admin` on the app host or open Rekha Admin on your phone. Sign in with th
 
 Select a customer in the inbox. You can send multiple text or media messages in succession without waiting for their reply. The composer supports files, voice notes, replies to earlier messages, reactions, stars, search and shared media. Message checks show actual read state rather than a simulated online status.
 
-Choose the private reply mode for each chat:
-
-- **Automatic:** the configured guided sequence can advance. Unguided preview chats can receive sample automatic replies.
-- **Draft assistance:** review a suggested reply before sending it.
-- **Personal replies:** send your own messages. Automatic guided delivery is held.
+Personal replies are active. Previous automatic replies, draft generation and scheduled sequences are stopped. Customers can keep sending without spending free-reply credits. You can reply or send media yourself at any time.
 
 The customer still sees the single configured astrologer identity. Pin or archive chats to organise the inbox; labels and private notes stay on the owner side. Blocking a conversation prevents customer sends and pauses automated delivery while preserving the history.
 
 ## Change the customer app
 
-Open **Edit app**. Change the name, astrologer identity, tagline, logo, colours, introduction order, language wording, message features, free-reply allowance, preview unlock price and retention period.
+Open **Edit app**. Change the name, astrologer identity, tagline, logo, colours, language wording, message features and retention period. Legacy introduction order and free-reply/offer settings do not control the current customer flow.
 
 Save a draft, review the phone preview, then publish it. Draft changes do not appear to customers. Discard restores the published version. If another owner screen changes the same draft, refresh and review the conflict before publishing.
 
-Published settings update an open customer chat periodically, while its unfinished text and attachments stay in place. Feature switches hide unavailable attachment/voice/call controls. Pausing customer messaging leaves their existing history readable. The payment-preview disclosure and privacy controls remain present.
+Published settings update an open customer chat periodically, while its unfinished text and attachments stay in place. Feature switches hide unavailable attachment/voice/call controls. Pausing customer messaging leaves their existing history readable. Privacy and deletion controls remain present.
 
 Changing a published logo makes that image public. Customer attachments and other library images remain protected by their own access rules. Choose a logo you have permission to publish.
 
-## Set automatic replies and videos
+## Current customer startup
 
-Open **Replies & video flow**. Upload and select the six required items in the private media library: instruction video, testimonials video, example kundli image, guidance image, puja information image and follow-up audio. Review the wording in Hindi, English and Hinglish and set the delivery delays before enabling the flow.
+New customers watch the required signup video, enter their name and date of birth, then tap Send. A five-second preparation screen opens their private chat with only the configured shared kundli image and “Your kundli.” No greeting, video sequence, reminder or automatic follow-up is sent afterward. Existing chats resume directly.
 
-New customers are enrolled when the flow is enabled. Their first inbound message starts the greeting, instruction video, testimonials and final information in order. A customer attachment can schedule the image/audio follow-up campaign. Videos wait for a tap to play. Guided conversations do not use the old free-reply counter or ads.
-
-Existing customers require an explicit **Start**. Each chat also has **Pause**, **Resume** and **Restart** controls. Global disabling holds queued deliveries. Changes apply to future flows or an explicitly restarted chat; an existing flow keeps its saved wording and price. Switching to draft assistance or personal replies holds guided automatic delivery.
+The old three-video customer page and its chat navigation links are removed. Saved media and conversation history remain available in admin. **Replies & video flow** still lets you choose the kundli library image; the old Enable/Start/Resume/Restart controls remain unavailable while `CUSTOMER_AUTOMATION_ENABLED` is false. Previous queued jobs are cancelled in the rollout, so they cannot be resumed accidentally. Define and implement the next steps before enabling a new automation.
 
 The preview payment QR remains inactive. Do not collect card details or try to reuse a customer's payment information. Configure a legitimate payment provider separately before accepting real payments.
 
@@ -44,7 +38,7 @@ On an owner call, choose Natural, Lower pitch, Higher pitch, Warm or Robot under
 
 Customers can keep composing while earlier messages are sending. A sending indicator means that the server has not confirmed receipt yet. Failed sends remain visible with a retry action; retrying uses the same send ID so an already saved message is not duplicated. A sent check confirms server receipt, while a read check means the owner has opened that message. Receiving an automatic or personal reply is a separate event.
 
-Automatic workflow delivery runs after the message has been saved, with recovery from the saved trigger on later polls or scheduled processing. No message content is stored in the browser's local storage by the send queue.
+Messages are saved for personal replies without triggering the previous workflow. No message content is stored in the browser's local storage by the send queue.
 
 ## Protect customer information
 

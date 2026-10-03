@@ -37,7 +37,7 @@ export default {async fetch(request,env,ctx){
  ctx.waitUntil(Promise.allSettled(tasks).then(()=>fixtureMetrics.push(metrics)));return response;
 }};`;
 const password='local-owner-scale-fixture',origin='https://rekha.test',header={'X-Rekha-History':'bounded-v1'};
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'owner-send-scale'},r2Buckets:{MEDIA:'owner-send-scale-media'},bindings:{ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex')}}));
+const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'owner-send-scale'},r2Buckets:{MEDIA:'owner-send-scale-media'},bindings:{CUSTOMER_AUTOMATION_ENABLED:'true',ADMIN_PASSWORD_HASH:createHash('sha256').update(password).digest('hex')}}));
 try{
  const db=await mf.getD1Database('DB'),bucket=await mf.getR2Bucket('MEDIA'),stmt=(sql,...args)=>db.prepare(sql).bind(...args),one=(sql,...args)=>stmt(sql,...args).first();
  for(const sql of splitSqlStatements(readFileSync('cloudflare/schema.sql','utf8')))await db.prepare(sql).run();

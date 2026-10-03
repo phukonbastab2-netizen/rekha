@@ -42,14 +42,14 @@ function text(key){
   return String(languages[lang]?.[key]??languages.en[key]??'').replace(/<br\s*\/?\s*>/gi,'\n').replaceAll('₹49',price()).replaceAll('Rekha',astrologerName()).replaceAll('रेखा',astrologerName()==='Rekha'?'रेखा':astrologerName());
 }
 const t=key=>key==='topics'?text(key):esc(text(key));
-const introEnabled=()=>config?.appSettings?.onboarding?.introEnabled!==false;
+const automationEnabled=()=>config?.automationEnabled===true;
 const messagingPaused=()=>config?.appSettings?.chat?.customerMessagingEnabled===false;
 const messagePlaceholder=()=>config?.appSettings?.copy?.[lang]?.messagePlaceholder||(lang==='hi'?'संदेश':lang==='hinglish'?'Message':'Message');
 const logo=(portrait=false)=>brand().logoMediaId?`/brand/logo?revision=${encodeURIComponent(String(config?.settingsRevision??0))}`:portrait?'/rekha-portrait.png':'/icon-192.png';
 function applyPublishedConfig(next){
-  const previous=JSON.stringify([config?.appSettings,config?.settingsRevision,config?.amount,config?.retentionDays]);
+  const previous=JSON.stringify([config?.appSettings,config?.settingsRevision,config?.amount,config?.retentionDays,config?.automationEnabled]);
   config=next;configReadAt=Date.now();
-  const changed=previous!==JSON.stringify([config?.appSettings,config?.settingsRevision,config?.amount,config?.retentionDays]);
+  const changed=previous!==JSON.stringify([config?.appSettings,config?.settingsRevision,config?.amount,config?.retentionDays,config?.automationEnabled]);
   if(!changed)return;
   const primary=/^#[\da-f]{6}$/i.test(brand().primaryColor||'')?brand().primaryColor:'#075e54',accent=/^#[\da-f]{6}$/i.test(brand().accentColor||'')?brand().accentColor:'#008069';
   const contrast=color=>{const channels=color.slice(1).match(/../g).map(value=>parseInt(value,16)/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4);return channels[0]*.2126+channels[1]*.7152+channels[2]*.0722>.179?'#111b21':'#ffffff';};
@@ -66,7 +66,7 @@ function applyPublishedConfig(next){
   if(stage==='chat'){app.querySelector('.chat-name').textContent=astrologerName();app.querySelector('.chat-caption').textContent=text('tagline');app.querySelector('.composer .footnote').textContent=text('reflection');fingerprint='';drawChat();updateComposePrimary();}
   window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));
 }
-const previewLabel = () => [!chat?.guidedConversation && config.aiMode === 'demo' ? (lang === 'hi' ? 'नमूना उत्तर' : 'Sample replies') : '', config.paymentMode === 'demo' || config.paymentTest ? (lang === 'hi' ? 'परीक्षण भुगतान · कोई असली शुल्क नहीं' : 'Payment preview · no real charges') : ''].filter(Boolean).join(' · ');
+const previewLabel = () => automationEnabled() ? [!chat?.guidedConversation && config.aiMode === 'demo' ? (lang === 'hi' ? 'नमूना उत्तर' : 'Sample replies') : '', config.paymentMode === 'demo' || config.paymentTest ? (lang === 'hi' ? 'परीक्षण भुगतान · कोई असली शुल्क नहीं' : 'Payment preview · no real charges') : ''].filter(Boolean).join(' · ') : '';
 async function api(route, method = 'GET', body, {signal,compactAck=false}={}) {
   let response;
   try{response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(compactAck&&method==='POST'&&route==='/api/messages'?{'X-Rekha-Ack':'compact-v1'}:{}),...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});}catch(error){if(signal?.aborted)throw error;throw new Error(navigator.onLine===false?'You are offline. Your unsent message is kept.':'Could not confirm delivery. Please retry your message.');}
@@ -115,34 +115,7 @@ function pendingMessages(){return outbox.list().filter(r=>r.conversationId===cha
 function displayMessages(){const local=pendingMessages(),edits=new Map(local.filter(m=>m.editId).map(m=>[m.editId,m]));return[...chat.messages.map(m=>edits.has(m.id)?{...m,...edits.get(m.id),created:m.created}:m),...local.filter(m=>!m.editId)];}
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.hidden = true; }, 5500); }
 function updateLanguage(value) { lang = Object.hasOwn(languages,value)?value:'en'; document.documentElement.lang = lang === 'hinglish' ? 'hi-Latn' : lang;if(config?.appSettings){const subtitle=document.querySelector('.story-copy p');if(subtitle)subtitle.textContent=text('tagline');document.querySelector('meta[name="description"]')?.setAttribute('content',text('tagline'));} }
-function screen(number, body) {
-  releaseChatLayout();
-  calls?.destroy(); calls=null;
-  messaging?.destroy(); messaging = null;
-  document.body.classList.remove('chat-mode');
-  app.innerHTML = `<section class="screen"><div class="screen-top"><span class="small-brand">${esc(brandName())} <span aria-hidden="true">✦</span></span><span class="step">${t('step')} 0${number} ${t('of')} 03</span></div><div class="steps" aria-hidden="true">${[1,2,3].map(n => `<span class="${n <= number ? 'active' : ''}"></span>`).join('')}</div>${body}<div class="center"><button class="text-button privacy-open">${t('privacy')}</button></div></section>`;
-  app.querySelector('.privacy-open').onclick = () => privacy(false);
-}
-function chooseLanguage() {
-  stage = 'language';
-  screen(1, `<h2>${t('languageTitle')}</h2><p class="subtitle">${t('languageSubtitle')}</p><div class="language-grid" role="group" aria-label="Language">${[['hi','अ','हिन्दी','Hindi'],['en','Aa','English','English'],['hinglish','अa','Hinglish','Hindi, in English letters']].map(([key,glyph,title,sub]) => `<button class="language ${lang === key ? 'selected' : ''}" data-language="${key}" aria-pressed="${lang === key}"><span class="glyph">${glyph}</span><span><strong>${title}</strong><small>${sub}</small></span><span class="radio" aria-hidden="true"></span></button>`).join('')}</div><button class="primary" id="language-next">${t('continue')} <span aria-hidden="true">→</span></button><div class="ornament" aria-hidden="true">✧</div>`);
-  for (const button of app.querySelectorAll('[data-language]')) button.onclick = () => { updateLanguage(button.dataset.language); chooseLanguage(); app.querySelector(`[data-language="${lang}"]`).focus(); };
-  app.querySelector('#language-next').onclick = details;
-}
-function details() {
-  stage = 'details'; const max = new Date(); max.setUTCFullYear(max.getUTCFullYear() - 18);
-  screen(2, `<h2>${t('detailsTitle')}</h2><p class="subtitle">${t('detailsSubtitle')}</p><form id="details-form"><label class="field">${t('name')}<input name="name" autocomplete="given-name" maxlength="60" required placeholder="${t('namePlaceholder')}" value="${esc(profile.name || '')}"></label><label class="field">${t('dob')}<input name="dob" type="date" required min="1900-01-01" max="${max.toISOString().slice(0,10)}" value="${esc(profile.dob || '')}"></label><div class="kundli-note"><strong>${t('kundli')}</strong><small>${t('kundliNote')}</small></div><p class="privacy-note"><a href="https://rekhaastrology.in/astrorani/privacy-policy.html" target="_blank" rel="noopener noreferrer">${t('fullPrivacy')}</a></p><label class="check-row"><input type="checkbox" name="consent" required ${profile.consent ? 'checked' : ''}><span>${t('consent')}</span></label><p class="error" id="form-error" role="alert"></p><button class="primary" type="submit">${t('continue')} <span aria-hidden="true">→</span></button><button class="text-button" id="details-back" type="button">← ${t('back')}</button></form>`);
-  app.querySelector('#details-form').onsubmit = event => { event.preventDefault(); const data = new FormData(event.target); profile = { name: data.get('name').trim(), dob: data.get('dob'), consent: data.get('consent') === 'on' }; if (!profile.name) { app.querySelector('#form-error').textContent = text('required'); return; } permissionScreen(); };
-  app.querySelector('#details-back').onclick = chooseLanguage;
-}
 function choices(prefs = {}) { return `<label class="permission"><input id="location-choice" type="checkbox" ${prefs.location ? 'checked' : ''}><span><strong>${t('location')}</strong><p>${t('locationText')}</p></span></label><label class="permission"><input id="remember-choice" type="checkbox" ${prefs.remember ? 'checked' : ''}><span><strong>${t('remember')}</strong><p>${t('rememberText')}</p></span></label>`; }
-function permissionScreen() {
-  stage = 'permissions';
-  screen(3, `<h2>${t('permissionsTitle')}</h2><p class="subtitle">${t('permissionsSubtitle')}</p>${choices()}<p class="privacy-note"><span aria-hidden="true">◇</span>${t('permissionNote')}</p><button class="primary" id="enter-chat">${t('enterChat')} <span aria-hidden="true">→</span></button><div class="center"><button class="text-button" id="skip-permissions">${t('skip')}</button></div><p class="error" id="form-error" role="alert"></p><button class="text-button" id="permissions-back">← ${t('back')}</button>`);
-  app.querySelector('#enter-chat').onclick = () => start(false);
-  app.querySelector('#skip-permissions').onclick = () => start(true);
-  app.querySelector('#permissions-back').onclick = details;
-}
 async function readChoices(container, skip = false) {
   const result = { remember: !skip && container.querySelector('#remember-choice').checked, location: null };
   if (!skip && container.querySelector('#location-choice').checked) {
@@ -157,13 +130,6 @@ async function readChoices(container, skip = false) {
   }
   return result;
 }
-async function start(skip) {
-  if (busy) return; busy = true;
-  app.querySelectorAll('button').forEach(b => { b.disabled = true; });
-  try { const preferences = await readChoices(app, skip); chat = await api('/api/start', 'POST', { ...profile, language: lang, preferences }); profile = {}; renderChat(); }
-  catch (error) { app.querySelector('#form-error').textContent = error.message; }
-  finally { busy = false; if(stage==='chat'){fingerprint='';drawChat();}else app.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
-}
 function renderChat() {
   releaseOnboarding();
   releaseChatLayout();forceLatest=true;unreadIncoming=0;incomingHighWater=Math.max(0,...chat.messages.filter(message=>message.role==='assistant').map(message=>Number(message.id)||0));
@@ -176,7 +142,7 @@ function renderChat() {
   sounds.observe(chat,{kind:'initial'});
   document.body.classList.add('chat-mode');
   const previewNotes = previewLabel();
-  app.innerHTML = `<section class="chat" aria-label="${esc(astrologerName())} chat"><header class="chat-head"><button type="button" class="chat-back" id="chat-back" aria-label="${introEnabled()?'Back to introduction':'Conversation settings'}">${chatIcon('back')}</button><button type="button" class="chat-contact" id="chat-contact" aria-label="${esc(astrologerName())} conversation details"><img class="avatar" src="${esc(logo())}" alt=""><span class="chat-contact-copy"><strong class="chat-name">${esc(astrologerName())}</strong><span class="chat-caption">${t('tagline')}</span></span></button><button type="button" class="icon-button" id="chat-privacy" aria-label="Conversation menu" title="Conversation menu">${chatIcon('more')}</button></header><div class="chat-scroll" id="chat-scroll" role="log" aria-live="polite" aria-relevant="additions text"><div class="chat-notices"><div class="demo-ribbon">${esc(previewNotes)}</div><div class="chat-ribbon" id="chat-ribbon"></div></div><div class="date-divider">${t('newChapter')}</div><div id="messages"></div><div id="chat-bottom"></div></div><form class="composer" id="composer"><div class="compose-row"><div class="compose-input"><textarea id="message-input" rows="1" maxlength="2000" aria-label="${t('messagePlaceholder')}" placeholder="${esc(messagePlaceholder())}"></textarea></div><button class="send compose-primary" type="submit" aria-label="${t('send')}">${chatIcon('send')}</button></div><p class="error" id="send-error" role="alert"></p><p class="footnote">${t('reflection')}</p></form></section>`;
+  app.innerHTML = `<section class="chat" aria-label="${esc(astrologerName())} chat"><header class="chat-head"><button type="button" class="chat-back" id="chat-back" aria-label="Conversation settings">${chatIcon('back')}</button><button type="button" class="chat-contact" id="chat-contact" aria-label="${esc(astrologerName())} conversation details"><img class="avatar" src="${esc(logo())}" alt=""><span class="chat-contact-copy"><strong class="chat-name">${esc(astrologerName())}</strong><span class="chat-caption">${t('tagline')}</span></span></button><button type="button" class="icon-button" id="chat-privacy" aria-label="Conversation menu" title="Conversation menu">${chatIcon('more')}</button></header><div class="chat-scroll" id="chat-scroll" role="log" aria-live="polite" aria-relevant="additions text"><div class="chat-notices"><div class="demo-ribbon">${esc(previewNotes)}</div><div class="chat-ribbon" id="chat-ribbon"></div></div><div class="date-divider">${t('newChapter')}</div><div id="messages"></div><div id="chat-bottom"></div></div><form class="composer" id="composer"><div class="compose-row"><div class="compose-input"><textarea id="message-input" rows="1" maxlength="2000" aria-label="${t('messagePlaceholder')}" placeholder="${esc(messagePlaceholder())}"></textarea></div><button class="send compose-primary" type="submit" aria-label="${t('send')}">${chatIcon('send')}</button></div><p class="error" id="send-error" role="alert"></p><p class="footnote">${t('reflection')}</p></form></section>`;
   const connection=document.createElement('div');connection.id='chat-connection';connection.className='chat-connection';connection.hidden=true;connection.setAttribute('role','status');connection.setAttribute('aria-live','polite');connection.innerHTML='<span></span><button type="button" id="connection-retry"></button>';app.querySelector('.chat-head').after(connection);
   connection.querySelector('button').onclick=()=>{if(networkOffline||navigator.onLine===false)return;outbox.resume({retryUncertain:true});chatPoll.poke({immediate:true});};
   const jump=document.createElement('button');jump.id='jump-latest';jump.className='jump-latest';jump.type='button';jump.hidden=true;jump.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 7 6 6 6-6M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="jump-latest-count" hidden></span>';app.querySelector('#composer').before(jump);jump.onclick=()=>{const scroller=app.querySelector('#chat-scroll');scroller.scrollTop=scroller.scrollHeight;unreadIncoming=0;updateJump();};
@@ -185,14 +151,14 @@ function renderChat() {
   const composerInput=app.querySelector('#message-input');
   composerInput.oninput=()=>{composerInput.style.height='auto';composerInput.style.height=Math.max(48,Math.min(composerInput.scrollHeight,120))+'px';};
   composerInput.setAttribute('enterkeyhint',matchMedia('(pointer: coarse)').matches?'enter':'send');
-  app.querySelector('#chat-back').onclick=()=>introEnabled()?introduction():privacy(true);
+  app.querySelector('#chat-back').onclick=()=>privacy(true);
   app.querySelector('#chat-contact').onclick=()=>privacy(true);
   app.querySelector('#chat-privacy').onclick = () => privacy(true);
   app.querySelector('#composer').onsubmit = send;
   app.querySelector('#composer').addEventListener('rekha:compose-state',event=>updateComposePrimary(event.detail));
   let composing=false;composerInput.addEventListener('compositionstart',()=>composing=true);composerInput.addEventListener('compositionend',()=>composing=false);
   app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing&&!composing&&event.keyCode!==229&&(!matchMedia('(pointer: coarse)').matches||event.ctrlKey||event.metaKey)) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
-  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,introduction,isBusy:()=>busy,sounds});
+  messaging=createMessagingUI({app,api,getChat:()=>chat,getAppSettings:()=>config?.appSettings,setChat:acceptServerChat,toast,getLang:()=>lang,privacy,isBusy:()=>busy,sounds});
   if(composerDraft){messaging.restoreDraft?.(composerDraft);composerDraft=null;}
   window.RekhaChatUI=messaging;
   outbox.resume();
@@ -222,7 +188,7 @@ function drawChat() {
   app.querySelector('.demo-ribbon').textContent = previewLabel();
   const scroller = app.querySelector('#chat-scroll'), nearBottom=nearLatest(scroller),anchor=!nearBottom&&!forceLatest?captureThreadAnchor(scroller):null;
   const incoming=visibleMessages.filter(message=>message.role==='assistant'&&Number(message.id)>incomingHighWater);if(incoming.length){incomingHighWater=Math.max(incomingHighWater,...incoming.map(message=>Number(message.id)));if(!nearBottom&&!forceLatest)unreadIncoming+=incoming.length;}
-  app.querySelector('#chat-ribbon').textContent = chat.guidedConversation ? '' : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
+  app.querySelector('#chat-ribbon').textContent = !automationEnabled() || chat.guidedConversation ? '' : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
   let lastDay='',lastRole='',lastTime=0;const format=dates(),quoteById=new Map(visibleMessages.map(m=>[m.id,m])),active=new Set();
   const renderedMessages = visibleMessages.map(m => {
     active.add(m.id);const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,groupStart=separatorDay||m.role!==lastRole||date.getTime()-lastTime>300000,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,groupStart,quoteById.get(m.replyTo)]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;lastRole=m.role;lastTime=date.getTime();
@@ -237,10 +203,10 @@ function drawChat() {
   syncThread(app.querySelector('#messages'),renderedMessages);
   const waiting = chat.messages.find(m => m.role === 'user' && ['pending','failed'].includes(m.status));
   let bottom = '';
-  if (waiting?.status === 'pending') bottom = `<div class="waiting"><span class="flame" aria-hidden="true"></span>${t('thinking')}</div>`;
-  if (waiting?.status === 'failed') bottom = `<p class="error">${t('failed')}</p><button class="secondary" id="retry">${t('retry')}</button>`;
-  if (chat.locked) bottom = `<section class="offer"><span class="eyebrow">${t('offerEyebrow')}</span><h3>${t('offerTitle')}</h3><p>${t('offerText')}</p><div class="price-line"><span class="price">${esc(price())}</span><span>${t('oneTime')}</span></div><button class="primary" id="unlock" ${checkoutBusy ? 'disabled' : ''}>${config.paymentMode === 'demo' ? t('demoUnlock') : t('unlock')}</button><p class="footnote">${t('offerFooter')}</p></section>`;
-  if (visibleMessages.length === 1) bottom = `<div class="prompt-chips">${t('topics').map(text => `<button class="chip" data-prompt="${esc(text)}">${esc(text)}</button>`).join('')}</div>`;
+  if (automationEnabled() && waiting?.status === 'pending') bottom = `<div class="waiting"><span class="flame" aria-hidden="true"></span>${t('thinking')}</div>`;
+  if (automationEnabled() && waiting?.status === 'failed') bottom = `<p class="error">${t('failed')}</p><button class="secondary" id="retry">${t('retry')}</button>`;
+  if (automationEnabled() && chat.locked) bottom = `<section class="offer"><span class="eyebrow">${t('offerEyebrow')}</span><h3>${t('offerTitle')}</h3><p>${t('offerText')}</p><div class="price-line"><span class="price">${esc(price())}</span><span>${t('oneTime')}</span></div><button class="primary" id="unlock" ${checkoutBusy ? 'disabled' : ''}>${config.paymentMode === 'demo' ? t('demoUnlock') : t('unlock')}</button><p class="footnote">${t('offerFooter')}</p></section>`;
+  if (automationEnabled() && visibleMessages.length === 1) bottom = `<div class="prompt-chips">${t('topics').map(text => `<button class="chip" data-prompt="${esc(text)}">${esc(text)}</button>`).join('')}</div>`;
   const bottomElement=app.querySelector('#chat-bottom');if(bottomElement.innerHTML!==bottom)bottomElement.innerHTML=bottom;
   const input = app.querySelector('#message-input'); input.disabled = chat.locked;
   input.placeholder = chat.blocked ? 'This conversation is unavailable.' : messagingPaused() ? (lang==='hi'?'संदेश भेजना अभी रोका गया है।':'Messaging is paused. You can still read your chat.') : chat.locked ? text('lockedPlaceholder') : messagePlaceholder();
@@ -301,7 +267,6 @@ async function checkout() {
 function privacy(editable) {
   dialog.innerHTML = `<h2 id="privacy-title">${t('privacy')}</h2><p>${t('privacyUse')}</p><p><a href="https://rekhaastrology.in/astrorani/privacy-policy.html" target="_blank" rel="noopener noreferrer">${t('fullPrivacy')}</a> · <a href="https://rekhaastrology.in/astrorani/data-deletion.html" target="_blank" rel="noopener noreferrer">${t('deletionHelp')}</a></p><p>${esc(text('retention').replace('{days}',config.retentionDays??config.appSettings?.service?.retentionDays??30))}</p>${editable ? `<h3>${t('optionalEdit')}</h3>${choices(chat.preferences)}<button class="primary" id="save-privacy">${t('save')}</button><button class="text-button danger" id="delete-chat">${t('delete')}</button>` : ''}<div class="dialog-actions"><button class="secondary" id="close-dialog">${t('close')}</button></div>`;
   dialog.querySelector('#close-dialog').onclick = () => dialog.close();
-  if(introEnabled()){const introButton=document.createElement('button');introButton.className='text-button';introButton.textContent='Watch our introduction';introButton.onclick=()=>{dialog.close();introduction();};dialog.querySelector('.dialog-actions').before(introButton);}
   if (editable) {
     dialog.querySelector('#save-privacy').onclick = async event => { const button = event.currentTarget; button.disabled = true; try { const prefs = await readChoices(dialog);acceptServerChat(await api('/api/preferences','PATCH',prefs));dialog.close();toast(text('privacySaved'));}catch(error){toast(error.message);}finally{button.disabled=false;} };
     dialog.querySelector('#delete-chat').onclick = confirmDelete;
@@ -335,24 +300,6 @@ async function createKundliChat(details,progress){
     await waitForPreparation(started);chat=next;profile={};renderChat();
   }catch(error){videoSignup(progress);onboarding.setError(error.message);}
   finally{busy=false;}
-}
-function introduction() {
-  if(!chat){videoSignup();return;}
-  if(!introEnabled()){if(stage==='chat'){toast(lang==='hi'?'परिचय अभी उपलब्ध नहीं है।':'The introduction is currently unavailable.');return;}if(chat)renderChat();else chooseLanguage();return;}
-  if(messaging?.hasLiveCapture?.()){toast('Finish or cancel your recording or permission request first.');return;}
-  releaseChatLayout();
-  calls?.destroy();calls=null;
-  if(stage==='chat'&&messaging)composerDraft=messaging.preserveDraft?.()||null;
-  outbox.pause();
-  messaging?.destroy(); messaging=null;
-  document.body.classList.remove('chat-mode');
-  stage='intro';chatPoll.stop();
-  const labels={welcome:'Welcome',introduction:'Meet us',testimonials:'Testimonials'},configured=config.appSettings?.onboarding?.introOrder,order=Array.isArray(configured)&&configured.length===3&&new Set(configured).size===3&&configured.every(id=>Object.hasOwn(labels,id))?configured:['welcome','introduction','testimonials'],first=order[0];
-  app.innerHTML=`<section class="intro screen"><span class="eyebrow">WELCOME · स्वागत है</span><h1>${esc(brandName())}</h1><p class="subtitle">${t('tagline')}</p><video id="intro-video" controls playsinline preload="none" poster="${esc(logo(true))}" src="/intro/${first}.mp4"></video><p id="video-note" class="footnote" role="status">Tap play to watch. You can continue whenever you are ready.</p><div class="intro-choices" role="group" aria-label="Introduction videos">${order.map((id,index)=>`<button class="intro-choice ${id===first?'selected':''}" data-video="${id}" aria-pressed="${id===first}"><small>0${index+1}</small>${labels[id]}</button>`).join('')}</div><button class="primary" id="intro-continue">Continue to chat →</button><p class="footnote">Your own space for questions and conversation.</p></section>`;
-  const video=app.querySelector('video');
-  video.onerror=()=>{app.querySelector('#video-note').textContent='The video could not load. You can still continue to chat.';};
-  for(const button of app.querySelectorAll('[data-video]'))button.onclick=()=>{video.pause();video.src='/intro/'+button.dataset.video+'.mp4';video.load();for(const item of app.querySelectorAll('[data-video]')){item.classList.toggle('selected',item===button);item.setAttribute('aria-pressed',String(item===button));}app.querySelector('#video-note').textContent='Tap play to watch.';};
-  app.querySelector('#intro-continue').onclick=()=>{video.pause();try{localStorage.setItem('rekha-intro-v1','seen');}catch{}if(chat)renderChat();else chooseLanguage();};
 }
 async function boot() {
   try {
