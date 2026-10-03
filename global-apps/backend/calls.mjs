@@ -1,4 +1,5 @@
 // Private foreground call signaling. Media travels between the two devices.
+import { generateTurnConfig } from './turn.mjs';
 export async function callsRoutes(ctx){
   const {request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate}=ctx;
   const prefix=route.startsWith('/api/admin/calls')?'/api/admin/calls':route.startsWith('/api/calls')?'/api/calls':null;
@@ -11,6 +12,15 @@ export async function callsRoutes(ctx){
   await stmt("UPDATE calls SET status='ended',reason='blocked',updated=? WHERE status!='ended' AND conversation_id IN (SELECT conversation_id FROM chat_messaging WHERE blocked=1)",Date.now()).run();
   await stmt("DELETE FROM call_signals WHERE call_id IN (SELECT id FROM calls WHERE status='ended')").run();
   if(route===prefix+'/config'&&method==='GET'){
+    if(env.TURN_KEY_ID||env.TURN_API_TOKEN){
+      const callId=new URL(request.url).searchParams.get('callId');
+      if(!/^[a-f0-9-]{36}$/.test(callId||''))throw fail(400,'Start or answer a call before requesting its connection settings.');
+      const permitted=await one("SELECT conversation_id FROM calls WHERE id=? AND status!='ended' AND expires>?",callId,Date.now());
+      if(!permitted||actor==='customer'&&permitted.conversation_id!==chat.id)throw fail(404,'Call not found.');
+      await rate('relay:'+actor+':'+callId,4,60000);
+      try{return result({enabled:true,...await generateTurnConfig(env,{ttl:3600}),foregroundOnly:true});}
+      catch(error){throw fail(503,error.message);}
+    }
     let iceServers=[{urls:'stun:stun.l.google.com:19302'}];
     if(env.CALL_ICE_SERVERS){try{const parsed=JSON.parse(env.CALL_ICE_SERVERS);if(Array.isArray(parsed)&&parsed.length&&parsed.length<=6&&parsed.every(s=>s&&typeof s==='object'&&!Array.isArray(s)&&(typeof s.urls==='string'||Array.isArray(s.urls))&&[s.urls].flat().length<=6&&[s.urls].flat().every(u=>typeof u==='string'&&u.length<=512&&/^(stun|stuns|turn|turns):[^\s]+$/.test(u))&&(s.username==null||(typeof s.username==='string'&&s.username.length<=256))&&(s.credential==null||(typeof s.credential==='string'&&s.credential.length<=1024))))iceServers=parsed.map(s=>({urls:s.urls,...(s.username!=null?{username:s.username}:{}),...(s.credential!=null?{credential:s.credential}:{})}));}catch{}}
     return result({enabled:true,iceServers,relayConfigured:iceServers.some(s=>[s.urls].flat().some(u=>/^turns?:/.test(u))),foregroundOnly:true});

@@ -1,18 +1,24 @@
-# Connected deployment — 3 October 2026
-
-All 12 country services are deployed at `https://rekha-<app-id>.phukonbastab2.workers.dev/`. Their private owner panels are at `/admin`. The collection hub links to each. Android 1.2.0-connected (versionCode 3) loads its own live HTTPS service; preserve the existing package and signing key when updating. The bundled offline web demos remain available separately.
-
-Replies are manual. Live AI, real payments, a TURN relay and voice cloning are not configured. Owner credentials are private and are not in this repository. See docs/CONNECTED-DEPLOYMENT.md for infrastructure and verification details.
-
 # Rekha Global — 12 country apps
 
-Twelve independently branded astrology-themed web apps and signed Android **offline previews**, adapted from the Rekha Astrology messaging project. Includes a connected server package and private owner web inbox for each app.
+Twelve independently branded astrology-themed web apps and connected Android customer apps, adapted from the Rekha Astrology messaging project. Each app has its own private owner inbox. The separate **Rekha Global Admin** Android app opens the collection's 12 owner inboxes.
 
-**Start here:** [Open the online preview collection](https://rekhaastrology.in/global-apps/preview/) · [Owner control centre](https://rekhaastrology.in/global-apps/preview/control.html) · [Android APK downloads](preview/apks) · [Deployment guide](docs/DEPLOYMENT.md)
+**Start here:** [Apps and customer APKs](https://rekhaastrology.in/global-apps/preview/) · [Owner control centre](https://rekhaastrology.in/global-apps/preview/control.html) · [Admin Android APK](https://rekhaastrology.in/global-apps/preview/apks/rekha-global-admin.apk) · [Connected deployment](docs/CONNECTED-DEPLOYMENT.md)
 
-Published and checked on 3 October 2026: all 12 web preview URLs and APK downloads returned successfully; every downloaded APK matched its locally verified SHA-256. See [delivery status](docs/DELIVERY.md).
+All 12 services run at `https://rekha-<app-id>.phukonbastab2.workers.dev/`; their owner panels are at `/admin`. The collection also keeps separate offline web demos. APK 1.3.0-connected (versionCode 4) loads the live service, so messaging needs an internet connection. Preserve existing customer package IDs and the signing key for updates.
 
-The preview collection is static and can be hosted on GitHub Pages or another static host. A file shown on GitHub is source/download content; it is not proof that a web server is live.
+Release 1.3 adds incoming-call polling while the customer chat stays open, safer cancellation during permission prompts and a bounded timeout after a call loses its connection. It includes 12 customer APKs and one admin APK. See [release notes](docs/RELEASE-NOTES-1.3.md) and [verification](docs/VERIFICATION.md).
+
+Replies are manual. Live AI, real payments and voice cloning are disabled. A TURN relay has not been activated: the current Cloudflare credential received HTTP 403 from TURN management. Calls need both apps open and may fail on restrictive networks. Real device and cross-network calls remain untested.
+
+## Use the admin app
+
+1. Install **Rekha Global Admin** or open the owner control centre in a browser.
+2. Choose a country's **Owner inbox** link.
+3. Sign in with that app's existing private owner password. Each app uses a separate password and session; the admin APK contains no passwords.
+4. Open a customer conversation to reply, view deliberately shared attachments or start a foreground voice/video call. Choose Natural, Warm, Bright, Radio or Robot in the call controls for the outgoing microphone effect.
+5. In the Android admin app, tap **Apps** to return to the 12-app list and choose another inbox.
+
+Owner passwords stay outside GitHub and the APKs. The admin app can access conversations and submitted files; it does not read a customer's SMS or entire gallery.
 
 | Country | App | Customer languages | Android package |
 |---|---|---|---|
@@ -36,7 +42,7 @@ The preview collection is static and can be hosted on GitHub Pages or another st
 - `shared/app.js` and `shared/style.css`: common customer behaviour and design.
 - `shared/admin.*`: private owner inbox, personal replies, private notes/labels, pin/archive/block, saved replies, media library and per-conversation reply modes.
 - `backend/`: the inherited messaging, private media, call signaling and workflow foundation. The build creates a distinct deployment per app.
-- `android/`: Android launcher project with 12 independently installable country flavours.
+- `android/`: Android launcher project with 12 independently installable customer flavours and one owner flavour.
 
 Change a file through GitHub's pencil button, commit it, then rebuild with the steps below. Generated previews must be rebuilt after source edits. Source control is separate from the private customer inbox.
 
@@ -57,11 +63,11 @@ To refresh the committed static previews after a build, copy `dist/` into `previ
 
 ## Current boundaries
 
-- **Offline web/APK previews:** localized onboarding, optional culture/reflection cards, sample conversations, text export and deletion. Conversation data lives only in the open device session and is cleared on reload. These previews have no remote owner inbox.
-- **Connected packages:** real server-side sessions and owner-to-customer chat; private attachments and inherited owner tools. Tested locally, not deployed for these new apps. Each needs its own database, storage and owner secret. Owner controls and advanced call/media labels use English.
-- **Android:** all 12 release APKs are signed preview builds; Android 8+ required. They bundle the preview and work without a hosted server. They do not silently point at the existing Rekha customer service. No phone/emulator was connected for runtime testing.
+- **Offline web demos:** localized onboarding, optional culture/reflection cards and sample conversations. Their conversation data lives only in the open device session and is cleared on reload; they have no remote owner inbox.
+- **Connected services:** server-side sessions, owner-to-customer chat, private submitted attachments and owner tools. The 12 deployed Workers use fixed database namespaces and private storage prefixes. Owner controls and advanced call/media labels use English.
+- **Android:** 12 customer APKs and one admin APK; Android 8+ required. They load their live HTTPS pages and require internet access. Physical phone/emulator runtime behavior remains unverified.
 - No live payments, AI-provider credentials, birth-chart calculations, calendar conversion, auspicious-time calculation, app-store listing, practitioner certification or cloned testimonials are supplied. Prices are not invented for new markets.
-- Voice/video signaling is inherited; reliable calling needs HTTPS, permissions and usually a TURN service. No background ringing, instant push or end-to-end encryption is claimed.
+- Voice/video signaling and local microphone effects are included. Optional short-lived TURN configuration is supported in source but no relay is active. Successful call signaling does not establish audible two-device calls. Background ringing and instant push are not implemented; end-to-end encryption is not claimed.
 - Translations and cultural wording are drafts for native-speaker/cultural review before a commercial launch. Country selection uses a comparable survey proxy, not a global ranking of astrology belief. See [research notes](docs/COUNTRIES.md).
 
 Existing Rekha website files and customer data are outside this folder and were not changed.

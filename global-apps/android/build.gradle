@@ -4,11 +4,21 @@ def catalog = new JsonSlurper().parse(file('../dist/catalog.json'))
 android {
     namespace 'in.rekha.global'
     compileSdk 36
-    defaultConfig { applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 3; versionName '1.2.0-connected' }
+    defaultConfig {
+        applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 4; versionName '1.3.0-connected'
+        buildConfigField 'boolean', 'IS_OWNER', 'false'
+    }
     sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs = ['src']; res.srcDirs = ['res'] } }
     buildFeatures { buildConfig true }
     flavorDimensions += 'country'
     productFlavors {
+        owner {
+            dimension 'country'
+            applicationId 'in.rekha.global.owner'
+            resValue 'string', 'app_name', 'Rekha Global Admin'
+            buildConfigField 'boolean', 'IS_OWNER', 'true'
+            buildConfigField 'String', 'LIVE_URL', '"https://rekhaastrology.in/global-apps/preview/control.html"'
+        }
         catalog.each { country ->
             create(country.id.replace('-','')) {
                 dimension 'country'

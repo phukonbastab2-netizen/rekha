@@ -1,10 +1,12 @@
-# Connected Android update
+# Android 1.3.0-connected
 
-Version 1.2.0-connected (versionCode 3) loads each app's live HTTPS service. It preserves the existing package IDs and signing key. The permission handling from 1.1.0 remains in place. All 12 APKs have been checked for their correct compiled live URL, allowed permissions and signatures; device runtime behavior remains unverified.
+Version 1.3.0-connected (versionCode 4) includes 12 customer APKs and one **Rekha Global Admin** APK. Customer apps load their own live HTTPS services and preserve existing package IDs and the signing key. The new admin package is `in.rekha.global.owner`; it opens [the owner control centre](https://rekhaastrology.in/global-apps/preview/control.html), where the owner chooses one of 12 inboxes and signs in with that app's existing private password. Its **Apps** button returns to the collection list. No password is bundled in an APK.
 
-# Build the 12 Android previews
+All 13 APKs were built locally. Runtime device validation remains outstanding; builds and signature checks do not establish phone permission behavior or a successful call. See [release notes](RELEASE-NOTES-1.3.md) and [verification](VERIFICATION.md).
 
-The source has 12 product flavours and distinct package IDs. Release APKs require your persistent signing key. Use JDK 17, Android SDK platform 36 / build-tools 35.0.0, and Gradle 8.11.1. These versions were used for the initial verified builds. No external Android libraries are required.
+## Build customer and admin APKs
+
+The source has 12 customer product flavours and one owner flavour with distinct package IDs. Release APKs require your persistent signing key. Use JDK 17, Android SDK platform 36 / build-tools 35.0.0, and Gradle 8.11.1. No external Android libraries are required.
 
 Set environment variables:
 
@@ -22,7 +24,7 @@ node scripts/build.mjs
 node scripts/android.mjs
 ```
 
-The outputs are `dist/apks/<app-id>.apk`. The script checks APK v2/v3 signatures. Version 1.1.0 (versionCode 2) declares INTERNET, RECORD_AUDIO and CAMERA. Microphone and camera runtime permission requests begin only after a feature tap. File selection uses the system picker; no SMS, contacts, location or broad gallery permission is requested. See VOICE-AND-PERMISSIONS.md.
+The outputs are `dist/apks/<app-id>.apk` plus `dist/apks/rekha-global-admin.apk`. The script checks APK v2/v3 signatures. APK permissions are INTERNET, RECORD_AUDIO and CAMERA. Microphone and camera requests begin after a feature tap, and grants are restricted to the current permitted HTTPS origin. File selection uses the system picker and returns only the selected file to its requesting page; no SMS, contacts, location or broad gallery permission is requested. See [voice and permission details](VOICE-AND-PERMISSIONS.md).
 
 The initial private signing key is stored in the creating workspace's `work/android-signing/` folder, outside the deliverables and GitHub. Back it up securely before moving to another machine. A plain copied APK is not a backup of the signing key.
 
