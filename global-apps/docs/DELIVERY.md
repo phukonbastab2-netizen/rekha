@@ -21,4 +21,4 @@ The current local download bundle **Android-Apps-and-Admin-v1.3.1.zip** contains
 
 The 12 connected owner services are deployed. Live AI, actual payments, chart calculation, voice cloning and app-store publishing are not enabled.
 
-Machine-readable public checks are in [PUBLIC-VERIFICATION.json](PUBLIC-VERIFICATION.json); read their recorded version and timestamp. Build and test details, including outstanding checks, are in [VERIFICATION.md](VERIFICATION.md). Changes are listed in [release notes](RELEASE-NOTES-1.3.md).
+Machine-readable public checks are in [PUBLIC-VERIFICATION.json](PUBLIC-VERIFICATION.json); read their recorded version and timestamp. Build and test details, including outstanding checks, are in [VERIFICATION.md](VERIFICATION.md). Changes are listed in [release notes](RELEASE-NOTES-1.3.1.md), with [two-phone test instructions](PHONE-CALL-TEST.md).

@@ -3,7 +3,8 @@
 - All **49 local tests passed**, including blocked playback recovery and stale asynchronous results, private two-party call leases, tenant isolation and the existing messaging/relay checks.
 - All **13 signed APKs** passed independent package, version, compiled-URL, allowed-permission and signing checks. Customer embedded assets match the new generated files. Android versionCode 5 / 1.3.1-connected uses the original signing certificate.
 - APK permissions are exactly INTERNET, MODIFY_AUDIO_SETTINGS, RECORD_AUDIO and CAMERA. The added permission supports communication-audio routing; no new runtime consent dialog or broad phone-data permission was added.
-- Public APK readback and live call-flow checks for this patch are pending publication. Existing evidence below records the preceding release until these checks complete.
+- All **13 public APK downloads** matched the signed builds by SHA-256 and byte count. All **12 live services** report `global-1.3.1-connected`, serve the prepared call-client code and have their owner links in the control centre. Evidence: `preview/PUBLIC-VERIFICATION.json` and `preview/PUBLIC-SERVICES-VERIFICATION.json`.
+- All **12 live call flows** passed owner authentication, incoming-call discovery, accept, signal delivery, private heartbeat filtering, hang-up and a second call initiated from the other side. Disposable conversations were deleted. These HTTPS signaling checks do not test microphone media or audible phone calls. Evidence: `preview/LIVE-CALL-VERIFICATION.json`.
 - No physical Android device is attached and no emulator is configured. Real-phone audio, cross-network media, TURN traversal and background ringing are not verified. The current Cloudflare credential still rejects TURN management, and the dashboard requires sign-in. No relay was activated.
 
 ## Historical release 1.3.0 verification
