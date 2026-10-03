@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.2-preview",
+  "version": "0.9.3-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -72,6 +72,7 @@
     "public/chat.css",
     "public/contact.html",
     "public/data-deletion.html",
+    "public/device-chat-store.js",
     "public/disclaimer.html",
     "public/download.html",
     "public/icon-192.png",
@@ -120,6 +121,7 @@
     "src/server.mjs",
     "tests/app.test.mjs",
     "tests/chat-sounds.test.mjs",
+    "tests/device-chat-store.test.mjs",
     "tests/editor-integration.mjs",
     "tests/permissions.test.mjs",
     "tests/rewards.test.mjs",
@@ -130,6 +132,7 @@
     "tests/test-calls-scale.mjs",
     "tests/test-calls.mjs",
     "tests/test-cron-query-budget.mjs",
+    "tests/test-device-session.mjs",
     "tests/test-history-scale.mjs",
     "tests/test-message-acks.mjs",
     "tests/test-messaging.mjs",

@@ -1,9 +1,11 @@
 {
   "name": "rekha-astrology-app",
-  "version": "0.9.2-preview",
+  "version": "0.9.3-preview",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.15.0" },
+  "engines": {
+    "node": ">=24.15.0"
+  },
   "scripts": {
     "build": "node scripts/check-source.mjs && node cloudflare/package-deployment.mjs",
     "test": "node scripts/test.mjs",
@@ -14,6 +16,7 @@
     "worker:dry-run": "wrangler deploy --config wrangler.example.jsonc --dry-run --outdir build/worker"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
     "miniflare": "5.20260921.0-alpha",
     "wrangler": "4.147.0"
   }

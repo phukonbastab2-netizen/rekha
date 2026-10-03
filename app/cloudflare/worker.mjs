@@ -13,7 +13,7 @@ const customerAutomationEnabled=env=>env.CUSTOMER_AUTOMATION_ENABLED==='true';
 const welcome={en:'Namaste. This is a quiet space for your questions. What’s on your mind today? A full kundli also needs birth time and birthplace; no chart has been calculated yet.',hi:'नमस्ते। आज आप किस विषय पर बात करना चाहते हैं? पूरी कुंडली के लिए जन्म समय और जन्म स्थान भी चाहिए। अभी कुंडली की गणना नहीं हुई है।',hinglish:'Namaste. Aaj aap kis baare mein baat karna chahte hain? Poori kundli ke liye birth time aur birthplace bhi chahiye. Abhi chart calculate nahi hua hai.'};
 const headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Strict-Transport-Security':'max-age=31536000','Permissions-Policy':'camera=(self), microphone=(self), geolocation=(self)','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
 function prefs(value={}){let location=null;if(value.location!=null){const {latitude,longitude}=value.location;if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||Math.abs(latitude)>90||Math.abs(longitude)>180)throw fail(400,'Invalid location.');location={latitude:Math.round(latitude*10)/10,longitude:Math.round(longitude*10)/10};}return{remember:value.remember===true,location,consentVersion:'2026-10-03'};}
-function cookie(name,value,remember=false,remove=false){return`${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict${remove?'; Max-Age=0':remember?'; Max-Age=2592000':''}`;}
+function cookie(name,value,remember=false,remove=false){return`${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict${remove?'; Max-Age=0':remember?'; Max-Age=31536000':''}`;}
 function validDate(value){if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(value)||value<'1900-01-01')return false;const date=new Date(`${value}T00:00:00Z`),cutoff=new Date();cutoff.setUTCFullYear(cutoff.getUTCFullYear()-18);return Number.isFinite(+date)&&date.toISOString().slice(0,10)===value&&date<=cutoff;}
 // Registered idle/manual/blocked profiles never enter this indexed window.
 // A persisted cursor makes skipped guided/drafted/backoff rows fair and bounded.
@@ -100,7 +100,16 @@ export async function handleApi(request,env,executionContext){
     // retain its previous cursor so concurrent incoming messages and edits sync.
     return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
   }
-  async function customer(){const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));if(!c)throw fail(401,'Your chat session has ended. Please start again.');return c;}
+  async function customer(){
+    const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));
+    if(!c)throw fail(401,'Your chat session has ended. Please start again.');
+    // A different tab can replace the HttpOnly cookie while a queued send or
+    // upload is in progress. Bind new clients' writes to their displayed chat;
+    // old clients omit this header, and reads still discover the current chat.
+    const expected=request.headers.get('X-Rekha-Chat');
+    if(['POST','PUT','PATCH','DELETE'].includes(method)&&expected!==null&&expected!==c.id)throw fail(409,'This chat session changed. Reopen your saved conversation before sending.');
+    return c;
+  }
   async function owner(){if(!cookies.ar_admin||!await one('SELECT 1 FROM admin_sessions WHERE token_hash=? AND expires>?',await hash(cookies.ar_admin),Date.now()))throw fail(401,'Please sign in to the owner panel.');}
   async function rate(key,max,ms=60000){const bucket=Math.floor(Date.now()/ms),hashed=await hash(`${key}:${bucket}`);const row=await stmt('INSERT INTO rate_limits(key,count,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',hashed,Date.now()+ms).first();if(row.count>max)throw fail(429,'Too many requests. Please wait and try again.');}
   async function body(){if(!request.headers.get('Content-Type')?.startsWith('application/json'))throw fail(415,'JSON required.');const limit=['/api/admin/app-settings','/api/admin/workflow/settings'].includes(route)&&method==='PATCH'?128*1024:16384,reader=request.body?.getReader();let bytes=0,chunks=[];if(reader){for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>limit){await reader.cancel();throw fail(413,'Request too large.');}chunks.push(value);}}const content=new Uint8Array(bytes);let offset=0;for(const chunk of chunks){content.set(chunk,offset);offset+=chunk.length;}try{const d=JSON.parse(new TextDecoder().decode(content)||'{}');if(!d||typeof d!=='object'||Array.isArray(d))throw Error();return d;}catch{throw fail(400,'Invalid request.');}}
@@ -124,7 +133,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-kundli-only-0.9.2'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-device-resume-0.9.3'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
@@ -160,7 +169,7 @@ export async function handleApi(request,env,executionContext){
       await db.batch(startBatch);
       // A missing or archived library item must not prevent a customer signing up.
       if(automationEnabled&&!kundli)try{await flowOnStart(workflowCtx,await get(id));}catch{}
-      return result(await view(await get(id)),201,{'Set-Cookie':cookie('ar_session',session,preferences.remember)});
+      return result(await view(await get(id)),201,{'Set-Cookie':cookie('ar_session',session,true)});
     }
     if(route==='/api/rewards/attempt'&&method==='POST'){
       const chat=await customer();
@@ -171,9 +180,9 @@ export async function handleApi(request,env,executionContext){
       return result({attempt},201);
     }
     if(route.startsWith('/api/media/'))return await mediaResponse({request,env,route,one,owner,customer,fail});
-    if(route==='/api/chat'&&method==='GET'){const chat=await customer();await scheduleChatWork(chat.id,chat);return result(await view(chat));}
+    if(route==='/api/chat'&&method==='GET'){const chat=await customer();await scheduleChatWork(chat.id,chat);return result(await view(chat),200,{'Set-Cookie':cookie('ar_session',cookies.ar_session,true)});}
     if(route==='/api/chat'&&method==='DELETE'){const chat=await customer();await messagingDeleteAttachments({env,all,chatId:chat.id});await stmt('DELETE FROM conversations WHERE id=?',chat.id).run();return result({deleted:true},200,{'Set-Cookie':cookie('ar_session','',false,true)});}
-    if(route==='/api/preferences'&&method==='PATCH'){const chat=await customer(),data=prefs(await body());await db.batch([stmt('UPDATE conversations SET preferences=?,version=version+1,updated=? WHERE id=?',JSON.stringify(data),Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),200,{'Set-Cookie':cookie('ar_session',cookies.ar_session,data.remember)});}
+    if(route==='/api/preferences'&&method==='PATCH'){const chat=await customer(),data=prefs(await body());await db.batch([stmt('UPDATE conversations SET preferences=?,version=version+1,updated=? WHERE id=?',JSON.stringify(data),Date.now(),chat.id),stmt('DELETE FROM drafts WHERE conversation_id=?',chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),200,{'Set-Cookie':cookie('ar_session',cookies.ar_session,true)});}
     if(route==='/api/retry'&&method==='POST'){const chat=await customer();if(!automationEnabled)throw fail(409,'Automatic replies are paused.');await rate(`retry:${chat.id}`,5);if(chat.mode==='manual'||!await pending(chat.id))throw fail(409,'No reply to retry.');await db.batch([stmt("UPDATE messages SET status='pending' WHERE conversation_id=? AND status='failed'",chat.id),stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',Date.now(),chat.id),stmt('DELETE FROM rate_limits WHERE key=? AND count<0','reply-lease:'+chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)),202);}
     if(route==='/api/payment/demo'&&method==='POST'){const chat=await customer();await db.batch([stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) VALUES(?,'system','demo-payment',?,'sent','demo-unlock',?)",chat.id,'₹'+appSettings.service.unlockPriceRupees,Date.now()),stmt("UPDATE conversations SET entitlement='demo',version=version+CASE WHEN entitlement!='demo' OR changes()=1 THEN 1 ELSE 0 END,updated=? WHERE id=?",Date.now(),chat.id)]);await scheduleChatWork(chat.id);return result(await view(await get(chat.id)));}
     if(route.startsWith('/api/payment'))throw fail(409,'Real payments are not enabled in this preview. No charge is taken.');

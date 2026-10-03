@@ -93,13 +93,15 @@ export function createApp(config, dependencies = {}) {
     })();
   }
   function cookie(res, key, value, remember = false, remove = false) {
-    res.setHeader('Set-Cookie', `${key}=${value}; Path=/; HttpOnly; SameSite=Strict${config.production ? '; Secure' : ''}${remove ? '; Max-Age=0' : remember ? `; Max-Age=${config.retentionDays * 86400}` : ''}`);
+    res.setHeader('Set-Cookie', `${key}=${value}; Path=/; HttpOnly; SameSite=Strict${config.production ? '; Secure' : ''}${remove ? '; Max-Age=0' : remember ? '; Max-Age=31536000' : ''}`);
   }
   function cookies(req) { return Object.fromEntries((req.headers.cookie || '').split(';').map(part => part.trim().split('='))); }
   function customer(req) {
     const value = cookies(req).ar_session;
     const chat = value && db.prepare('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards FROM conversations WHERE token_hash=?').get(hash(value));
     if (!chat) throw fail(401, 'Your chat session has ended. Please start again.');
+    const expected = req.headers['x-rekha-chat'];
+    if (['POST','PUT','PATCH','DELETE'].includes(req.method) && expected !== undefined && expected !== chat.id) throw fail(409, 'This chat session changed. Reopen your saved conversation before sending.');
     return chat;
   }
   function admin(req) {
@@ -171,11 +173,11 @@ export function createApp(config, dependencies = {}) {
         const prefs = preferences(data.preferences), id = randomUUID(), session = token();
         db.prepare('INSERT INTO conversations(id,token_hash,name,dob,language,preferences,created,updated) VALUES(?,?,?,?,?,?,?,?)').run(id, hash(session), data.name.trim(), data.dob, data.language, JSON.stringify(prefs), Date.now(), Date.now());
         addMessage(id, 'assistant', 'welcome', welcome[data.language]);
-        cookie(res, 'ar_session', session, prefs.remember);
+        cookie(res, 'ar_session', session, true);
         return json(res, 201, view(getChat(id)));
       }
       if(route.startsWith('/api/media/')){await ownerAdapter({req,res,url,readBody,owner:()=>admin(req),customer:()=>customer(req),get:getChat,view,pending,fail});return;}
-      if (route === '/api/chat' && req.method === 'GET') return json(res, 200, view(customer(req)));
+      if (route === '/api/chat' && req.method === 'GET') {const chat=customer(req);cookie(res,'ar_session',cookies(req).ar_session,true);return json(res,200,view(chat));}
       if (route === '/api/chat' && req.method === 'DELETE') {
         const chat = customer(req); cancelJob(chat.id);
         db.prepare('DELETE FROM conversations WHERE id=?').run(chat.id);
@@ -187,7 +189,7 @@ export function createApp(config, dependencies = {}) {
         cancelJob(chat.id);
         db.prepare('UPDATE conversations SET preferences=?,version=version+1,updated=? WHERE id=?').run(JSON.stringify(prefs), Date.now(), chat.id);
         db.prepare('DELETE FROM drafts WHERE conversation_id=?').run(chat.id);
-        cookie(res, 'ar_session', cookies(req).ar_session, prefs.remember); schedule(chat.id);
+        cookie(res, 'ar_session', cookies(req).ar_session, true); schedule(chat.id);
         return json(res, 200, view(getChat(chat.id)));
       }
       if (route === '/api/messages' && req.method === 'POST') {

@@ -53,6 +53,7 @@ const copy={
   hinglish:{watch:'Video dekhiye, phir apni details bhejiye',note:'Neeche ka form kholne ke liye poora video dekhiye.',done:'Video poora hua. Apna naam aur birth date bhariye.',name:'Aapka naam',placeholder:'Apna poora naam likhiye',dob:'Date of birth',send:'Send',retry:'Video dobara load karein',failed:'Video load nahi hua. Aage badhne ke liye dobara load karein.',privacy:'Send dabakar aap confirm karte hain ki aap 18+ hain aur Privacy Policy se agree karte hain.',use:'Naam aur birth date is private chat ke liye save honge. Pehli kundli photo hamare existing flow ka shared reference hai.',preparing:'Aapki kundli taiyar ho rahi hai…',prepareNote:'Kuch seconds mein aapki conversation khul jayegi.',invalid:'Apna naam aur sahi birth date bhariye. Yeh app adults 18+ ke liye hai.'},
 };
 
+const deviceNotice={en:'Your chat and drafts are saved on this device and resume when you reopen the app.',hi:'आपकी चैट और ड्राफ़्ट इस डिवाइस पर सहेजे जाते हैं और ऐप दोबारा खोलने पर लौटते हैं।',hinglish:'Chat aur drafts is device par save honge aur app dobara kholne par wapas milenge.'};
 export function mountVideoSignup(app,{brandName='Rekha Astrology',language='en',profile={},progress={},onLanguage=()=>{},onSubmit=()=>{}}={}){
   let lang=Object.hasOwn(copy,language)?language:'en',failed=false,submitting=false;
   const cutoff=new Date();cutoff.setUTCFullYear(cutoff.getUTCFullYear()-18);
@@ -61,7 +62,7 @@ export function mountVideoSignup(app,{brandName='Rekha Astrology',language='en',
   const draft=()=>({name:form.elements.name.value.trim(),dob:form.elements.dob.value});
   let gate;
   const refresh=state=>{state??=gate?.state()||progress;fieldset.disabled=!state.complete||submitting;button.disabled=!state.complete||submitting||!validSignupDraft(draft());form.dataset.videoComplete=String(state.complete===true);app.querySelector('#watch-progress').value=state.percent||0;app.querySelector('#watch-percent').textContent=(state.percent||0)+'%';const label=copy[lang][failed?'failed':state.complete?'done':'note'];if(status.textContent!==label)status.textContent=label;};
-  const translate=()=>{for(const node of app.querySelectorAll('[data-onboarding-copy]'))node.textContent=copy[lang][node.dataset.onboardingCopy];form.elements.name.placeholder=copy[lang].placeholder;refresh();};
+  const translate=()=>{for(const node of app.querySelectorAll('[data-onboarding-copy]'))node.textContent=copy[lang][node.dataset.onboardingCopy];app.querySelector('.onboarding-use').append(' '+deviceNotice[lang]);form.elements.name.placeholder=copy[lang].placeholder;refresh();};
   gate=bindVideoGate(video,{initial:progress,onState:refresh,onError:()=>{failed=true;app.querySelector('#reload-onboarding-video').hidden=false;refresh();}});
   translate();form.addEventListener('input',()=>{error.textContent='';refresh();});
   app.querySelector('#onboarding-language').onchange=event=>{lang=event.target.value;onLanguage(lang);translate();};

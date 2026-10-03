@@ -238,7 +238,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
       for(const attachment of draft.attachments)if(!attachment.uploaded){
         validateDraft(draft);if(draft.finished)throw new Error('This draft was cancelled.');
         const timeout=AbortSignal.timeout(120000),uploadSignal=signal?AbortSignal.any([signal,timeout]):timeout;
-        const response=await fetch('/api/uploads?name='+encodeURIComponent(attachment.file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':attachment.file.type},body:attachment.file,signal:uploadSignal});
+        const response=await fetch('/api/uploads?name='+encodeURIComponent(attachment.file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':attachment.file.type,'X-Rekha-Chat':getChat().id},body:attachment.file,signal:uploadSignal});
         let data;try{data=await response.json();}catch{throw new Error('The attachment upload could not be completed.');}if(!response.ok)throw Object.assign(new Error(data.error||'Attachment upload failed.'),{status:response.status});if(!data?.id)throw new Error('The attachment upload did not return a file reference.');attachment.uploaded=data;
       }
       validateDraft(draft);if(draft.finished)throw new Error('This draft was cancelled.');

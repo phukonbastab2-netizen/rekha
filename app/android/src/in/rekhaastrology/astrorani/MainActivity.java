@@ -43,6 +43,10 @@ public final class MainActivity extends Activity {
   private boolean alertsRequested;
   private String saveUrl;
   private byte[] saveText;
+  private final Handler exitHandler=new Handler(Looper.getMainLooper());
+  private Runnable exitFallback;
+  private boolean exitRequested;
+  private android.window.OnBackInvokedCallback systemBackCallback;
   private boolean trusted(String value){if(value==null)return false;Uri uri=Uri.parse(value);return "https".equals(uri.getScheme())&&HOST.equals(uri.getHost())&&(uri.getPort()==-1||uri.getPort()==443);}
   @Override public void onCreate(Bundle state){
     super.onCreate(state);root=new FrameLayout(this);root.setBackgroundColor(Color.rgb(239,234,226));setContentView(root);
@@ -50,7 +54,7 @@ public final class MainActivity extends Activity {
     web=new WebView(this);web.setBackgroundColor(Color.rgb(239,234,226));WebSettings settings=web.getSettings();
     settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);settings.setAllowFileAccess(false);settings.setAllowContentAccess(true);
     settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);settings.setSafeBrowsingEnabled(true);settings.setGeolocationEnabled(true);settings.setMediaPlaybackRequiresUserGesture(false);
-    settings.setUserAgentString(settings.getUserAgentString()+" Rekha"+(OWNER?"Admin":"Astrology")+"Android/0.9.2");
+    settings.setUserAgentString(settings.getUserAgentString()+" Rekha"+(OWNER?"Admin":"Astrology")+"Android/0.9.3");
     CookieManager.getInstance().setAcceptCookie(true);CookieManager.getInstance().setAcceptThirdPartyCookies(web,false);WebView.setWebContentsDebuggingEnabled(false);
     web.addJavascriptInterface(new DeviceOptions(),"RekhaDevice");
     web.setWebViewClient(new WebViewClient(){
@@ -91,7 +95,9 @@ public final class MainActivity extends Activity {
       if(trusted(url)&&!mime.equals("application/vnd.android.package-archive")){if(length>25*1024*1024){Toast.makeText(this,"File is too large.",Toast.LENGTH_LONG).show();return;}saveUrl=url;saveText=null;chooseSave(mime,"Rekha attachment"+(mime.equals("application/pdf")?".pdf":mime.startsWith("image/")?".jpg":mime.startsWith("audio/")?".audio":mime.startsWith("video/")?".mp4":".txt"));}
       else if(url.startsWith("https://"))try{startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse(url)));}catch(Exception ignored){}
     });
-    root.addView(web,new FrameLayout.LayoutParams(-1,-1));web.loadUrl(HOME);
+    root.addView(web,new FrameLayout.LayoutParams(-1,-1));
+    if(Build.VERSION.SDK_INT>=33){systemBackCallback=this::requestCustomerBack;getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,systemBackCallback);}
+    web.loadUrl(HOME);
   }
   private void grantMedia(){
     if(mediaRequest==null)return;PermissionRequest request=mediaRequest;mediaRequest=null;
@@ -140,6 +146,12 @@ public final class MainActivity extends Activity {
   private void showOffline(String message){if(offline!=null)root.removeView(offline);offline=new LinearLayout(this);offline.setOrientation(LinearLayout.VERTICAL);offline.setGravity(Gravity.CENTER);offline.setPadding(36,40,36,40);offline.setBackgroundColor(Color.rgb(239,234,226));TextView title=new TextView(this);title.setText(OWNER?"Rekha Admin":"Rekha Astrology");title.setTextSize(30);title.setGravity(Gravity.CENTER);offline.addView(title);TextView text=new TextView(this);text.setText(message);text.setTextSize(16);text.setGravity(Gravity.CENTER);text.setPadding(0,28,0,28);offline.addView(text);Button retry=new Button(this);retry.setText("Try again");retry.setOnClickListener(v->{root.removeView(offline);offline=null;web.loadUrl(HOME);});offline.addView(retry);root.addView(offline,new FrameLayout.LayoutParams(-1,-1));}
   public final class DeviceOptions {
     @JavascriptInterface public int permissionBridgeVersion(){return 1;}
+    // The trusted page persists its archive before calling this explicit exit.
+    // Closing never clears WebView cookies, localStorage or IndexedDB.
+    @JavascriptInterface public void closeApp(){runOnUiThread(()->{
+      if(destroyed||web==null||!trusted(web.getUrl())||!recentInteraction())return;
+      finishCustomerApp();
+    });}
     @JavascriptInterface public void requestPermissionsForFeature(String requestId,String feature){runOnUiThread(()->requestFeature(requestId,feature));}
     @JavascriptInterface public void openPermissionSettings(){runOnUiThread(()->{
       if(destroyed||!trusted(web.getUrl())||!recentInteraction())return;
@@ -169,8 +181,37 @@ public final class MainActivity extends Activity {
     if(code==52){if(alertsRequested&&trusted(web.getUrl())&&results.length>0&&results[0]==PackageManager.PERMISSION_GRANTED)enableAlerts();else alertsRequested=false;}
     if(code==54&&nativePermissions!=null){boolean[] granted=new boolean[nativePermissions.length],rationale=new boolean[nativePermissions.length];for(int i=0;i<nativePermissions.length;i++){granted[i]=checkSelfPermission(nativePermissions[i])==PackageManager.PERMISSION_GRANTED;rationale[i]=shouldShowRequestPermissionRationale(nativePermissions[i]);}finishFeature(PermissionPolicy.resultStatus(nativePermissions,permissions,results,granted,rationale));}
   }
-  @Override public void onBackPressed(){if(fullScreen!=null)hideFullScreen();else if(web.canGoBack())web.goBack();else super.onBackPressed();}
+  private void requestCustomerBack(){
+    if(destroyed||isFinishing())return;
+    // Android's picker, permission and native dialog windows retain their own
+    // Back handling. A fullscreen video returns to its embedded player first.
+    if(fullScreen!=null){hideFullScreen();return;}
+    if(exitRequested)return;
+    lastInteraction=SystemClock.elapsedRealtime();
+    if(web==null||!trusted(web.getUrl())){finishCustomerApp();return;}
+    exitRequested=true;
+    // A listener must preventDefault synchronously, then flush its device
+    // archive asynchronously and call RekhaDevice.closeApp(). If the page
+    // claims this event, its timeout only releases the pending state: failed
+    // storage must keep unsaved content on screen for the customer to retry.
+    // Unclaimed/older pages still close without navigating browser history.
+    exitFallback=this::finishCustomerApp;exitHandler.postDelayed(exitFallback,5000);
+    try{web.evaluateJavascript("(function(){var event=new CustomEvent('rekha:native-back',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;})()",value->{
+      if(destroyed||isFinishing())return;
+      if(!"true".equals(value)){finishCustomerApp();return;}
+      if(exitFallback!=null)exitHandler.removeCallbacks(exitFallback);
+      exitFallback=this::releasePendingExit;exitHandler.postDelayed(exitFallback,5000);
+    });}
+    catch(Exception ignored){finishCustomerApp();}
+  }
+  private void releasePendingExit(){if(destroyed||isFinishing())return;exitFallback=null;exitRequested=false;}
+  private void finishCustomerApp(){
+    if(destroyed||isFinishing())return;
+    exitRequested=true;if(exitFallback!=null){exitHandler.removeCallbacks(exitFallback);exitFallback=null;}
+    CookieManager.getInstance().flush();finishAndRemoveTask();
+  }
+  @Override public void onBackPressed(){requestCustomerBack();}
   @Override protected void onPause(){CookieManager.getInstance().flush();web.onPause();super.onPause();}
   @Override protected void onResume(){super.onResume();if(web!=null){web.onResume();MessageAlerts.checkpoint(this,OWNER);}}
-  @Override protected void onDestroy(){destroyed=true;cancelPagePermissions();if(fileCallback!=null)fileCallback.onReceiveValue(null);if(web!=null){web.removeJavascriptInterface("RekhaDevice");web.destroy();}super.onDestroy();}
+  @Override protected void onDestroy(){destroyed=true;if(exitFallback!=null){exitHandler.removeCallbacks(exitFallback);exitFallback=null;}if(Build.VERSION.SDK_INT>=33&&systemBackCallback!=null){getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(systemBackCallback);systemBackCallback=null;}cancelPagePermissions();if(fileCallback!=null)fileCallback.onReceiveValue(null);if(web!=null){web.removeJavascriptInterface("RekhaDevice");web.destroy();}super.onDestroy();}
 }
