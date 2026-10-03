@@ -4,15 +4,17 @@ def catalog = new JsonSlurper().parse(file('../dist/catalog.json'))
 android {
     namespace 'in.rekha.global'
     compileSdk 36
-    defaultConfig { applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 2; versionName '1.1.0-preview' }
+    defaultConfig { applicationId 'in.rekha.global'; minSdk 26; targetSdk 35; versionCode 3; versionName '1.2.0-connected' }
     sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs = ['src']; res.srcDirs = ['res'] } }
+    buildFeatures { buildConfig true }
     flavorDimensions += 'country'
     productFlavors {
         catalog.each { country ->
             create(country.id.replace('-','')) {
                 dimension 'country'
                 applicationId "in.rekha.global.${country.id.replace('-','')}"
-                resValue 'string', 'app_name', "${country.name} Preview"
+                resValue 'string', 'app_name', "${country.name}"
+                buildConfigField 'String', 'LIVE_URL', '"https://rekha-'+country.id+'.phukonbastab2.workers.dev/"'
             }
         }
     }

@@ -34,7 +34,7 @@ public final class MainActivity extends Activity {
     }
     if(allowed.size()==request.getResources().length)request.grant(allowed.toArray(new String[0]));else request.deny();
   }
-  private static final String HOST="appassets.androidplatform.net";
+  private static final String HOST=Uri.parse(BuildConfig.LIVE_URL).getHost();
   @Override public void onCreate(Bundle state) {
     super.onCreate(state);
     web=new WebView(this);
@@ -43,6 +43,7 @@ public final class MainActivity extends Activity {
     web.getSettings().setAllowFileAccess(false);
     web.getSettings().setAllowContentAccess(false);
     web.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+    web.getSettings().setMediaPlaybackRequiresUserGesture(false);
     web.setWebChromeClient(new WebChromeClient(){
       @Override public void onPermissionRequest(PermissionRequest request){runOnUiThread(()->{
         if(!("https://"+HOST).equals(request.getOrigin().toString().replaceAll("/$",""))||pendingPermission!=null){request.deny();return;}
@@ -68,6 +69,7 @@ public final class MainActivity extends Activity {
       @Override public void onReceivedSslError(WebView view,SslErrorHandler handler,SslError error){handler.cancel();}
       @Override public WebResourceResponse shouldInterceptRequest(WebView view,WebResourceRequest request){
         if(!"https".equals(request.getUrl().getScheme())||!HOST.equals(request.getUrl().getHost()))return error();
+        if(!"appassets.androidplatform.net".equals(HOST))return null;
         String name=request.getUrl().getPath();
         if(name==null||!name.startsWith("/assets/")||name.contains("..")||name.contains("\\"))return error();
         name=name.substring(8);if(name.isEmpty())name="index.html";
@@ -78,7 +80,7 @@ public final class MainActivity extends Activity {
       }
       private WebResourceResponse error(){return new WebResourceResponse("text/plain","UTF-8",404,"Not found",Collections.emptyMap(),new ByteArrayInputStream(new byte[0]));}
     });
-    setContentView(web);web.loadUrl("https://"+HOST+"/assets/index.html");
+    setContentView(web);web.loadUrl(BuildConfig.LIVE_URL);
   }
   @Override public void onBackPressed(){if(web.canGoBack())web.goBack();else super.onBackPressed();}
   @Override public void onRequestPermissionsResult(int code,String[] permissions,int[] results){super.onRequestPermissionsResult(code,permissions,results);if(code==41)completePermission();}

@@ -1,3 +1,9 @@
+# Connected deployment — 3 October 2026
+
+All 12 country services are deployed at `https://rekha-<app-id>.phukonbastab2.workers.dev/`. Their private owner panels are at `/admin`. The collection hub links to each. Android 1.2.0-connected (versionCode 3) loads its own live HTTPS service; preserve the existing package and signing key when updating. The bundled offline web demos remain available separately.
+
+Replies are manual. Live AI, real payments, a TURN relay and voice cloning are not configured. Owner credentials are private and are not in this repository. See docs/CONNECTED-DEPLOYMENT.md for infrastructure and verification details.
+
 # Rekha Global — 12 country apps
 
 Twelve independently branded astrology-themed web apps and signed Android **offline previews**, adapted from the Rekha Astrology messaging project. Includes a connected server package and private owner web inbox for each app.

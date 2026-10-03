@@ -6,9 +6,10 @@
     "package": "in.rekha.global.lunaharbor",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "72a84cfe940e8d3a930c08b5098c04b2426bd08617e51b15a3f3c10d62252a06",
+    "sha256": "79122d1be9f8847a942b496e5519bbc13a2cd0eba5a68300b99b10bba016035f",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-luna-harbor.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -18,9 +19,10 @@
     "package": "in.rekha.global.willowmoon",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "e4d70dd8c2c633bd2adc9a81b1a7ea4257c27770a148effb605c10a80f1da76c",
+    "sha256": "1000a47ce47bab7124cee5a5e7ce6421885daa96809e5467a6549dd09b7a67bc",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-willow-moon.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -30,9 +32,10 @@
     "package": "in.rekha.global.southernstar",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "9ffbedd08d2b65781f61fb2541ee3b31043e66423c2f2e344d363559e67554dc",
+    "sha256": "15a90114387448380e47e9f3d828e1ca1dc6ea6bbdaecf31f5ac7abd1cfe46dc",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-southern-star.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -42,9 +45,10 @@
     "package": "in.rekha.global.siamdao",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "3acb375106aabfd2ed3e3d9beb6680a1d3c1f854561fd90e6b4e4170c559a5d7",
+    "sha256": "666ff6d2a4049addb40b18b5bafd7ebd14df4315abb949e2e35f39c0f329f78c",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-siam-dao.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -54,9 +58,10 @@
     "package": "in.rekha.global.nyotapath",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "5d127538d65221f63159dc4e271ffaf597dfae5b8d3249ab3006ca8a9b17b1f2",
+    "sha256": "117b3547d0c96ae72d0e73f316d3e574c24562e00ca005dbe66cd9854ef28227",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-nyota-path.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -66,9 +71,10 @@
     "package": "in.rekha.global.talaguide",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "a191e1691074ec2e52dbbd84ddceade95115c349807e7e3ae71392bfda632f5b",
+    "sha256": "fc0d62fe6840e08b5e907421aedd58b75009453f56ddb3d5c9bcfdf79d690403",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-tala-guide.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -78,9 +84,10 @@
     "package": "in.rekha.global.orionnaija",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "b49384884e76e29401c539c63fc9beddc5f8ae4326cc91fc47deeb688381896e",
+    "sha256": "66cb47f510f26559965d41baef370a080b6f9bfbfd7e9d5a314de2b2a9a37ff8",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-orion-naija.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -90,9 +97,10 @@
     "package": "in.rekha.global.byeolsaju",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "06d8d4bd3425f8add875f73774ef268f388f16e3b2293339c1050ada02c7c4ee",
+    "sha256": "00c44b545fabc18a9b26771bb08377602b59c1c4e6b9c681ca7a1908b78f8e08",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-byeol-saju.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -102,9 +110,10 @@
     "package": "in.rekha.global.serendibstars",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "d9a8d9e87465f2e9f769ca83043b4a5e2e58ef7f665167a7b6d57295551a9b84",
+    "sha256": "2d5998189de4ec1eabe89b94bbc09791c031b2f60b8d8716ef6e6e51063e5671",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-serendib-stars.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -114,9 +123,10 @@
     "package": "in.rekha.global.hoshinote",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "ca20141d011adc2b593c86c72e8be1aa5c80f20c331c87118c6c02639236ab47",
+    "sha256": "b3497cc832d34bf2396de6a70329b47ae83fc3638f07de4be7d72c54f825d56b",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-hoshi-note.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -126,9 +136,10 @@
     "package": "in.rekha.global.xinglight",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "f83db922f8cd9056d53aa0de0c9f2a6b7483f676236fc054f5beebd3604b7cf8",
+    "sha256": "fccffced32fe36f4e0045ecafb16cc108c02383a5d7d5c2c993edeee17f3c410",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-xing-light.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   },
   {
@@ -138,9 +149,10 @@
     "package": "in.rekha.global.csillagut",
     "version": "1.1.0-preview",
     "minAndroid": 26,
-    "sha256": "5ba83882c9830121ae143b1c74f6ae7d54d134a68f575ffcf000c92152556ea1",
+    "sha256": "c8159da347f15c6318a7f0935c5fc7f00934acaab8d2875a88d231c013cd4529",
     "bytes": 50754,
     "assetsMatch": true,
+    "connectedUrl": "https://rekha-csillag-ut.phukonbastab2.workers.dev/",
     "signature": "v2 and v3 verified during build"
   }
 ]

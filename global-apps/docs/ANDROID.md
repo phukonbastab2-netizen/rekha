@@ -1,3 +1,7 @@
+# Connected Android update
+
+Version 1.2.0-connected (versionCode 3) loads each app's live HTTPS service. It preserves the existing package IDs and signing key. The permission handling from 1.1.0 remains in place. All 12 APKs have been checked for their correct compiled live URL, allowed permissions and signatures; device runtime behavior remains unverified.
+
 # Build the 12 Android previews
 
 The source has 12 product flavours and distinct package IDs. Release APKs require your persistent signing key. Use JDK 17, Android SDK platform 36 / build-tools 35.0.0, and Gradle 8.11.1. These versions were used for the initial verified builds. No external Android libraries are required.

@@ -1,5 +1,5 @@
 {
-  "name": "rekha-global-apps", "version": "1.1.0-preview", "private": true, "type": "module",
+  "name": "rekha-global-apps", "version": "1.2.0-connected", "private": true, "type": "module",
   "engines": {"node": ">=24"},
   "scripts": {"build": "node scripts/build.mjs", "test": "node --test tests/*.test.mjs", "preview": "node scripts/serve.mjs", "android": "node scripts/android.mjs"},
   "devDependencies": {"miniflare": "5.20260921.0-alpha"}
