@@ -11,6 +11,7 @@ import { mountVideoSignup,renderKundliPreparation,waitForPreparation } from './v
 import { createDeviceChatStore } from './device-chat-store.js';
 import { createStartupDelivery,orderDeliveredMessages,followupChoiceState,isFollowupChoiceResponse } from './startup-delivery.js';
 import { setCountdownClock } from './countdown.js';
+import { DONATION_INTEREST_TEXT,donationInterestState,isDonationInterestResponse } from './customer-followup.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
@@ -33,7 +34,8 @@ function acceptSendHold(error){
   const existing=startupDelivery.state().customerSendHold;chat.customerSendHold={startsAt:Math.min(existing.startsAt??Math.floor(startupDelivery.now()),Math.floor(startupDelivery.now())),endsAt:Math.max(existing.endsAt??0,error.retryAt),active:true};
   startupDelivery.refresh();void deviceStore.merge({...chat,messages:[],clockOffsetMs:startupDelivery.clockOffsetMs()});fingerprint='';requestChatDraw();return true;
 }
-const prepareQueuedSnapshot=(draft,options)=>isFollowupChoiceResponse(draft.clientId)?Promise.resolve({body:'Yes',clientId:draft.clientId}):messaging.prepareDraft(draft,options);
+const isQueuedInterest=id=>isFollowupChoiceResponse(id)||isDonationInterestResponse(id);
+const prepareQueuedSnapshot=(draft,options)=>isQueuedInterest(draft.clientId)?Promise.resolve({body:isDonationInterestResponse(draft.clientId)?DONATION_INTEREST_TEXT:'Yes',clientId:draft.clientId}):messaging.prepareDraft(draft,options);
 function observeVisibleSounds(kind){
   const view=visibleChat();if(!view)return;
   if(soundChatId!==view.id){soundChatId=view.id;soundStartupIds=new Set();}
@@ -109,7 +111,9 @@ async function api(route, method = 'GET', body, {signal,compactAck=false}={}) {
 function endSession(){if(sessionEnded){updateConnection();return;}sessionVerified=false;chatPoll.stop();sessionEnded=true;composerDraft=messaging?.preserveDraft?.()||composerDraft;void persistPending();outbox.pause({abort:true});messaging?.destroy();messaging=null;calls?.destroy();calls=null;toast(text('expired'));const input=app.querySelector('#message-input'),send=app.querySelector('.send');if(input)input.disabled=true;if(send)send.disabled=true;updateConnection();}
 function acceptServerChat(next,{kind='mutation'}={}){
   if(!next||!Array.isArray(next.messages)||chat&&next.id!==chat.id)return false;
+  const kundliDonationInterested=chat?.kundliDonationInterested===true||next.kundliDonationInterested===true;
   chat=history.accept(chat,next,{kind});
+  if(kundliDonationInterested)chat.kundliDonationInterested=true;
   startupDelivery.accept(next);chat.clockOffsetMs=startupDelivery.clockOffsetMs();
   void deviceStore.merge({...chat,messages:next.messages},{kind,history:history.state()});
   chatMutation++;outbox.reconcile(chat);observeVisibleSounds(kind);if(stage==='chat')drawChat();return true;
@@ -159,7 +163,7 @@ function schedulePendingSave(){if(suppressDeviceSave||closingApp||stage!=='chat'
 function restorePending(saved){
   if(!saved?.pending||saved.chat.id!==chat?.id)return;
   suppressDeviceSave=true;
-  try{if(saved.pending.draft)messaging?.restoreDraft?.(saved.pending.draft);for(const pending of saved.pending.records){const record=outbox.enqueue({...pending,prepare:prepareQueuedSnapshot,finish:isFollowupChoiceResponse(pending.clientId)?undefined:draft=>messaging?.finishDraft?.(draft)});record.state=pending.state;record.uncertain=pending.uncertain;record.attempts=pending.attempts||0;}outbox.reconcile(chat);}
+  try{if(saved.pending.draft)messaging?.restoreDraft?.(saved.pending.draft);for(const pending of saved.pending.records){const record=outbox.enqueue({...pending,prepare:prepareQueuedSnapshot,finish:isQueuedInterest(pending.clientId)?undefined:draft=>messaging?.finishDraft?.(draft)});record.state=pending.state;record.uncertain=pending.uncertain;record.attempts=pending.attempts||0;}outbox.reconcile(chat);}
   finally{suppressDeviceSave=false;}
   fingerprint='';drawChat();
 }
@@ -214,7 +218,7 @@ function renderChat() {
   app.querySelector('#chat-contact').onclick=()=>privacy(true);
   app.querySelector('#chat-privacy').onclick = () => privacy(true);
   app.querySelector('#composer').onsubmit = send;
-  app.querySelector('#messages').addEventListener('click',event=>{const button=event.target.closest('[data-followup-yes]');if(button&&!button.disabled)sendFollowupYes(Number(button.dataset.followupYes));});
+  app.querySelector('#messages').addEventListener('click',event=>{const button=event.target.closest('[data-followup-yes]');if(button){if(!button.disabled)sendFollowupYes(Number(button.dataset.followupYes));return;}const interest=event.target.closest('[data-donation-interest]');if(interest&&!interest.disabled)sendDonationInterest(Number(interest.dataset.donationInterest));});
   app.querySelector('#composer').addEventListener('rekha:compose-state',event=>updateComposePrimary(event.detail));
   let composing=false;composerInput.addEventListener('compositionstart',()=>composing=true);composerInput.addEventListener('compositionend',()=>composing=false);
   app.querySelector('#message-input').onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing&&!composing&&event.keyCode!==229&&(!matchMedia('(pointer: coarse)').matches||event.ctrlKey||event.metaKey)) { event.preventDefault(); app.querySelector('#composer').requestSubmit(); } };
@@ -255,13 +259,13 @@ function drawChat() {
   app.querySelector('#chat-ribbon').textContent = !automationEnabled() || chat.guidedConversation ? '' : chat.entitlement !== 'free' ? text('unlocked') : `${chat.freeRemaining} ${text('free')}`;
   let lastDay='',lastRole='',lastTime=0;const format=dates(),quoteById=new Map(visibleMessages.map(m=>[m.id,m])),active=new Set();
   const renderedMessages = visibleMessages.map(m => {
-    active.add(m.id);const choice=m.kind==='kundli-followup-choice'?followupChoiceState(visibleChat(),m,outbox.list()):null;if(choice)choice.disabled||=sessionEnded||chat.blocked||chat.locked||messagingPaused();const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,groupStart=separatorDay||m.role!==lastRole||date.getTime()-lastTime>300000,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,groupStart,quoteById.get(m.replyTo),choice]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;lastRole=m.role;lastTime=date.getTime();
+    active.add(m.id);const choice=m.kind==='kundli-followup-choice'?followupChoiceState(visibleChat(),m,outbox.list()):null,interest=m.kind==='media'?donationInterestState(visibleChat(),m,outbox.list()):null;for(const action of [choice,interest])if(action)action.disabled||=sessionEnded||chat.blocked||chat.locked||messagingPaused();const date=new Date(m.created),day=`${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`,separatorDay=m.role!=='system'&&day!==lastDay,groupStart=separatorDay||m.role!==lastRole||date.getTime()-lastTime>300000,key=JSON.stringify([m,lang,astrologerName(),config.settingsRevision,separatorDay,groupStart,quoteById.get(m.replyTo),choice,interest]),cached=messageMarkup.get(m.id);if(m.role!=='system')lastDay=day;lastRole=m.role;lastTime=date.getTime();
     if(cached?.key===key)return{id:m.id,html:cached.html};
     if(m.role==='system'){const html=`<div class="system-note" data-message="${m.id}">${esc(m.kind === 'demo-payment' ? text('demoPaid') : m.kind === 'payment' ? text('paid') : m.kind === 'refund' ? text('refund') : m.body)}</div>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};}
     const separator=separatorDay?`<div class="day-label">${esc(format.day.format(date))}</div>`:'';
     const extras=messageExtras(m,{...chat,messages:visibleMessages},astrologerName());
     if(m.sendState){extras.actions='';extras.receipt='';const label=m.sendState==='sending'?(lang==='hi'?'भेजा जा रहा है…':'Sending…'):m.sendState==='queued'?(navigator.onLine===false?(lang==='hi'?'कनेक्शन का इंतज़ार':'Waiting for connection'):(lang==='hi'?'भेजने की कतार में':'Queued')):m.sendUncertain?(lang==='hi'?'डिलीवरी की पुष्टि नहीं हुई':'Delivery not confirmed'):(lang==='hi'?'भेजा नहीं गया':'Not sent');extras.metadata+=`<span class="outbox-state ${m.sendState}" data-send-state="${m.sendState}" title="${esc(m.sendError||label)}" aria-label="${esc(label)}">${esc(label)}</span>${m.sendState==='failed'?`<button type="button" class="outbox-retry" data-retry-send="${esc(m.clientId)}" ${sessionEnded?'disabled':''}>${lang==='hi'?'फिर भेजें':'Retry'}</button>`:''}`;}
-    const html=`<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''} ${groupStart?'group-start':'group-continuation'}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m,{followupChoice:choice})}</div><span class="stamp">${extras.metadata}<time datetime="${esc(date.toISOString())}">${format.time.format(date)}</time>${extras.receipt}</span>${extras.reactionHtml}</div></article>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};
+    const html=`<article data-message="${m.id}" class="message ${m.role === 'user' ? 'user' : ''} ${groupStart?'group-start':'group-continuation'}">${separator}<span class="sender">${m.role === 'user' ? t('you') : esc(astrologerName())}</span><div class="bubble">${extras.actions}${extras.reply}<div class="message-content">${messageBody(m,{followupChoice:choice,donationInterest:interest})}</div><span class="stamp">${extras.metadata}<time datetime="${esc(date.toISOString())}">${format.time.format(date)}</time>${extras.receipt}</span>${extras.reactionHtml}</div></article>`;messageMarkup.set(m.id,{key,html});return{id:m.id,html};
   });
   for(const id of messageMarkup.keys())if(!active.has(id))messageMarkup.delete(id);
   syncThread(app.querySelector('#messages'),renderedMessages);
@@ -305,6 +309,12 @@ function sendFollowupYes(id){
   const view=visibleChat(),message=view?.messages.find(row=>row.id===id),choice=followupChoiceState(view,message,outbox.list());
   if(choice.disabled||sessionEnded||chat.blocked||chat.locked||messagingPaused()||customerComposeHeld())return;
   chatMutation++;forceLatest=true;outbox.enqueue({snapshot:{body:'Yes',clientId:choice.clientId},conversationId:chat.id,baseVersion:Number(chat.version)||0,prepare:prepareQueuedSnapshot});
+  void persistPending();requestChatDraw();chatPoll.poke({immediate:true});
+}
+function sendDonationInterest(id){
+  const view=visibleChat(),message=view?.messages.find(row=>row.id===id),interest=donationInterestState(view,message,outbox.list());
+  if(interest.disabled||sessionEnded||chat.blocked||chat.locked||messagingPaused()||customerComposeHeld())return;
+  chatMutation++;forceLatest=true;outbox.enqueue({snapshot:{body:DONATION_INTEREST_TEXT,clientId:interest.clientId},conversationId:chat.id,baseVersion:Number(chat.version)||0,prepare:prepareQueuedSnapshot});
   void persistPending();requestChatDraw();chatPoll.poke({immediate:true});
 }
 async function refresh({signal}={}) {

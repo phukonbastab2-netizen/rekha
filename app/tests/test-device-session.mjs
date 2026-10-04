@@ -23,7 +23,7 @@ try{
   for(const sql of splitSqlStatements(fs.readFileSync('cloudflare/schema.sql','utf8')))await db.prepare(sql).run();
   async function api(route,method='GET',body,cookie='',extra={}){const response=await mf.dispatchFetch(origin+route,{method,headers:{Origin:origin,'Content-Type':'application/json','CF-Connecting-IP':'192.0.2.'+(ip++),'X-Rekha-History':'bounded-v1',Cookie:cookie,...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});return{status:response.status,data:await response.json(),setCookie:response.headers.get('Set-Cookie')};}
   const expect=(response,status)=>{assert.equal(response.status,status,JSON.stringify(response.data));return response;};
-  const health=expect(await api('/api/health'),200);assert.equal(health.data.build,'rekha-kundli-choice-0.9.7');
+  const health=expect(await api('/api/health'),200);assert.equal(health.data.build,'rekha-donation-invite-0.9.8');
   const config=expect(await api('/api/config'),200).data;assert.equal(config.automationEnabled,false);assert.equal(config.rewardsEnabled,false);assert.equal(config.paymentMode,'demo');
   const anonymous=expect(await api('/api/chat'),401);assert.equal(anonymous.setCookie,null,'Unauthenticated reads must not mint a replacement session.');
   const unknown=expect(await api('/api/chat','GET',undefined,'ar_session='+'1'.repeat(64)),401);assert.equal(unknown.setCookie,null);

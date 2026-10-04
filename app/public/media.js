@@ -1,4 +1,6 @@
 import {kundliWaitBody,bindCountdowns} from './countdown.js';
+import {voiceNoteBody,bindVoiceNotes} from './voice-note.js';
+import {DONATION_INTEREST_TEXT} from './customer-followup.js';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const bindings=new WeakMap();let viewerNumber=0;
 export function safeBoldText(value){
@@ -24,12 +26,12 @@ function mediaCard(item,index,total){
   let preview='';
   if(type==='image')preview=`<button type="button" class="image-open media-preview" data-open-media="${index}" data-media-url="${source}" data-media-title="${escape(title)}" aria-label="Open ${escape(title)}"><img src="${source}" alt="${escape(title)}" loading="lazy"></button>`;
   if(type==='video')preview=`<div class="media-preview"><video controls playsinline preload="none" src="${source}" aria-label="${escape(title)}"></video></div>`;
-  if(type==='audio')preview=`<div class="media-preview voice-note"><audio controls preload="none" src="${source}" aria-label="${escape(title)}"></audio></div>`;
+  if(type==='audio')preview=data.presentation==='voice-note'?voiceNoteBody({url:source,title}):`<div class="media-preview voice-note"><audio controls preload="none" src="${source}" aria-label="${escape(title)}"></audio></div>`;
   if(type==='document'||type==='pdf')preview=`<a class="document-message media-document" href="${source}" target="_blank" rel="noopener noreferrer" download="${escape(title)}"><span aria-hidden="true">▤</span><span>Open PDF<small>Private attachment</small></span><span aria-hidden="true">↓</span></a>`;
   if(type==='link')preview=`<a class="media-link" href="${escape(source)}" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span> Open link<small>${escape(new URL(source).hostname)}</small></a>`;
   return `<figure class="media-card" ${attrs}>${preview}${info}${statusMarkup()}</figure>`;
 }
-export function messageBody(message,{followupChoice=null}={}){
+export function messageBody(message,{followupChoice=null,donationInterest=null}={}){
   if(message.deleted)return '<span class="deleted-message">This message was deleted</span>';
   if(message.kind==='kundli-wait')return kundliWaitBody(message);
   if(message.kind==='kundli-review-line')return safeBoldText(message.body);
@@ -40,7 +42,9 @@ export function messageBody(message,{followupChoice=null}={}){
   if(message.kind!=='media')return escape(message.body);
   try{const data=JSON.parse(message.body);if(!Array.isArray(data.items))throw Error();
     const title=data.title?`<h3>${escape(data.title)}</h3>`:'',collection=data.items.length>1?`<div class="media-collection-head"><span>${data.items.length} attachments · in order</span><button type="button" data-open-collection>View collection</button></div>`:'';
-    return `<div class="media-message" data-media-message>${data.text?`<p>${escape(data.text)}</p>`:''}${title}${collection}<div class="media-collection" role="list" aria-label="${escape(data.title||'Shared attachments')}">${data.items.map((item,index)=>`<div class="media-list-item" role="listitem">${mediaCard(item,index,data.items.length)}</div>`).join('')}</div>${data.items.length?'':'<p class="media-unavailable-note">No attachments are available.</p>'}</div>`;
+    const interestState=['available','pending','failed','answered'].includes(donationInterest?.state)?donationInterest.state:'available',interestNote=interestState==='answered'?'Sent':interestState==='pending'?'Queued':interestState==='failed'?'Not sent':'';
+    const donation=data.donation?.action==='interest-v1'&&donationInterest?.clientId?`<div class="kundli-donation-interest"><button type="button" class="kundli-donate-button" data-donation-interest="${escape(message.id)}" data-interest-state="${interestState}"${donationInterest.disabled?' disabled':''}>${escape(DONATION_INTEREST_TEXT)}</button><span class="kundli-choice-status" role="status">${interestNote}</span></div>`:'';
+    return `<div class="media-message" data-media-message>${data.text?`<p>${escape(data.text)}</p>`:''}${title}${collection}<div class="media-collection" role="list" aria-label="${escape(data.title||'Shared attachments')}">${data.items.map((item,index)=>`<div class="media-list-item" role="listitem">${mediaCard(item,index,data.items.length)}</div>`).join('')}</div>${data.items.length?'':'<p class="media-unavailable-note">No attachments are available.</p>'}${donation}</div>`;
   }catch{return '<span class="media-unavailable-note">Media unavailable.</span>';}
 }
 function stopPlayers(container){for(const player of container.querySelectorAll('audio,video')){player.pause();player.removeAttribute('src');player.load();}}
@@ -86,7 +90,7 @@ function openViewer(collection,start,binding){
 // Preserve player nodes during receipt/reaction updates; restore ordered search results.
 export function syncThread(container,html){
   const binding=bindMedia(container);
-  if(typeof html==='string'&&binding.lastHTML===html){bindCountdowns(container);return binding;}
+  if(typeof html==='string'&&binding.lastHTML===html){bindCountdowns(container);bindVoiceNotes(container);return binding;}
   const keyed=Array.isArray(html),template=document.createElement('template');
   if(!keyed)template.innerHTML=html;
   const fragments=keyed?html:[...template.content.children].map(node=>({id:node.dataset.message,html:node.outerHTML,node}));
@@ -97,7 +101,7 @@ export function syncThread(container,html){
     // typing tick need not parse 250 unchanged bubbles or restart their media.
     if(!previous||markup.get(id)!==fragment.html){
       let replacement=fragment.node;if(!replacement){template.innerHTML=fragment.html;replacement=template.content.firstElementChild;}if(!replacement)continue;
-      if(previous){const players=[...previous.querySelectorAll('audio,video')],retained=new Set();for(const player of replacement.querySelectorAll('audio,video')){const match=players.find(oldPlayer=>!retained.has(oldPlayer)&&oldPlayer.tagName===player.tagName&&oldPlayer.getAttribute('src')===player.getAttribute('src'));if(match){retained.add(match);player.replaceWith(match);}}for(const player of players)if(!retained.has(player)){player.pause();player.removeAttribute('src');player.load();}previous.replaceWith(replacement);if(cursor===previous)cursor=replacement;}
+      if(previous){const players=[...previous.querySelectorAll('audio,video')],retained=new Set();for(const player of replacement.querySelectorAll('audio,video')){const voice=player.closest('[data-recorded-voice]'),match=players.find(oldPlayer=>!retained.has(oldPlayer)&&oldPlayer.tagName===player.tagName&&oldPlayer.getAttribute('src')===player.getAttribute('src')&&Boolean(oldPlayer.closest('[data-recorded-voice]'))===Boolean(voice));if(match){retained.add(match);if(voice){const oldVoice=match.closest('[data-recorded-voice]');oldVoice.dataset.voiceTitle=voice.dataset.voiceTitle;match.setAttribute('aria-label',player.getAttribute('aria-label')||'Voice message');voice.replaceWith(oldVoice);}else player.replaceWith(match);}}for(const player of players)if(!retained.has(player)){player.pause();player.removeAttribute('src');player.load();}previous.replaceWith(replacement);if(cursor===previous)cursor=replacement;}
       activeNode=replacement;changed.push(activeNode);
     }
     if(activeNode!==cursor)container.insertBefore(activeNode,cursor);cursor=activeNode.nextElementSibling;
@@ -106,5 +110,6 @@ export function syncThread(container,html){
   for(const node of changed)for(const card of node.querySelectorAll('.media-card')){const player=card.querySelector('audio,video'),image=card.querySelector('img');if(player?.error||image?.complete&&!image.naturalWidth)statusOf(card,true);else if(player?.readyState>=1){const formatted=duration(player.duration),target=card.querySelector('.media-duration');if(target)target.textContent=formatted?' · '+formatted:'';}}
   binding.markup=nextMarkup;binding.lastHTML=keyed?null:html;
   bindCountdowns(container);
+  bindVoiceNotes(container);
   return binding;
 }

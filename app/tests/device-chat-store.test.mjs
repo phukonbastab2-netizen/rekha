@@ -8,6 +8,13 @@ const message=(n,extra={})=>({id:n,role:n%2?'user':'assistant',kind:'customer',b
 const view=(messages,extra={})=>({id,name:'Local fixture',dob:'1990-01-01',language:'en',version:1,updated:1,inboxRevision:1,blocked:false,locked:false,messages,historyComplete:false,...extra});
 const history=(extra={})=>({id,revision:250,oldestId:171,hasOlder:true,...extra});
 
+test('donation voice and interest state survive offline cache while former donation URLs are discarded',async t=>{
+  const f=fixture(t),store=f.create(),url='/api/media/12345678-1234-4234-8234-123456789abc',payload={text:'Exact saved invitation',items:[{type:'audio',url,title:'Owned.mp3',presentation:'voice-note',mime:'audio/mpeg',size:42}],donation:{label:'मैं दान करना चाहता/चाहती हूँ · I want to donate',action:'interest-v1'},autoplay:true};
+  await store.merge(view([message(38,{role:'assistant',kind:'media',body:JSON.stringify({...payload,donation:{...payload.donation,url:'https://example.com/removed'}}),deliveryAt:12345678})],{kundliDonationInterested:true}));
+  await store.merge(view([],{kundliDonationInterested:false,version:2}));store.close();const cached=await f.create().read({id}),body=JSON.parse(cached.chat.messages[0].body);
+  assert.equal(body.items[0].presentation,'voice-note');assert.equal(body.items[0].url,url);assert.equal(body.items[0].mime,'audio/mpeg');assert.deepEqual(body.donation,payload.donation);assert.equal(body.autoplay,undefined);assert.equal(cached.chat.messages[0].deliveryAt,12345678);assert.equal(cached.chat.kundliDonationInterested,true);
+});
+
 test('hold boundaries and confirmed Yes survive sparse offline reopen without freezing sampled active state',async t=>{
   const f=fixture(t),store=f.create(),startsAt=Date.parse('2026-10-04T01:00:00Z'),endsAt=startsAt+145000;
   await store.merge(view([message(35,{role:'assistant',kind:'kundli-followup-choice',created:endsAt,deliveryAt:endsAt})],{customerSendHold:{startsAt,endsAt,active:true},kundliChoiceAnswered:true,clockOffsetMs:-120000}));

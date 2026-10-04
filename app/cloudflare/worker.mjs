@@ -5,7 +5,7 @@ import { callsRoutes } from './calls.mjs';
 import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowGetConfig, workflowRecoverMessages } from './workflow.mjs';
 import { appSettingsRoutes, appSettingsPublic, appSettingsDefaults } from './app-settings.mjs';
 import { generateReply } from '../src/ai.mjs';
-import { KUNDLI_FOLLOWUP_LINES, KUNDLI_FOLLOWUP_QUESTION } from './kundli-followup.mjs';
+import { KUNDLI_FOLLOWUP_LINES, KUNDLI_FOLLOWUP_QUESTION, KUNDLI_DONATION_MESSAGE } from './kundli-followup.mjs';
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const encoder=new TextEncoder();
 const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(text))),b=>b.toString(16).padStart(2,'0')).join('');
@@ -31,7 +31,7 @@ async function finishChatReply(ctx,chat,message,text,kind,lease=null){
       AND EXISTS(SELECT 1 FROM messages WHERE id=? AND conversation_id=? AND status IN ('pending','failed'))${leaseGuard}`,chat.id,kind,text,replyId,Date.now(),chat.id,chat.version,chat.mode,message.id,chat.id,...leaseArgs),
     // changes() belongs to the immediately preceding INSERT in this atomic batch.
     // Concurrent completions or an obsolete reply cannot increment the chat twice.
-    stmt("UPDATE conversations SET version=version+1,free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait','kundli-review-line','kundli-followup-choice')),updated=? WHERE id=? AND changes()=1",chat.id,Date.now(),chat.id),
+    stmt("UPDATE conversations SET version=version+1,free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait','kundli-review-line','kundli-followup-choice','kundli-donation-invite')),updated=? WHERE id=? AND changes()=1",chat.id,Date.now(),chat.id),
     stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)",chat.id,message.id,chat.id,replyId),
     stmt('DELETE FROM drafts WHERE conversation_id=? AND message_id<=? AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)',chat.id,message.id,chat.id,replyId),
   ]);
@@ -103,7 +103,7 @@ export async function handleApi(request,env,executionContext){
     // Bounded clients retain all rows for durable offline/delta delivery; the
     // owner still sees every stored row and ordinary timestamps are unaffected.
     if(!bounded&&!admin)messaging.messages=messaging.messages.filter(message=>message.deliveryAt===null||message.deliveryAt<=serverTime);
-    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,serverTime,customerSendHold:messagingCustomerSendHold(chat,serverTime),kundliChoiceAnswered:!!chat.kundli_choice_answered,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
+    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,serverTime,customerSendHold:messagingCustomerSendHold(chat,serverTime),kundliChoiceAnswered:!!(chat.kundli_choice_answered||chat.kundli_donation_id),kundliDonationInterested:!!chat.kundli_donation_interested,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
   }
   async function acknowledge(chat,acknowledgedId){
     if(!chat)throw fail(409,'The chat changed. Please refresh.');
@@ -112,7 +112,7 @@ export async function handleApi(request,env,executionContext){
     const freeTurns=appSettings.service.freeReplies;
     // An ACK is a partial snapshot, never a history/delta cursor. A client must
     // retain its previous cursor so concurrent incoming messages and edits sync.
-    const serverTime=Date.now();return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,serverTime,customerSendHold:messagingCustomerSendHold(chat,serverTime),kundliChoiceAnswered:!!chat.kundli_choice_answered,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
+    const serverTime=Date.now();return{ack:'saved-v1',id:chat.id,version:chat.version,updated:chat.updated,serverTime,customerSendHold:messagingCustomerSendHold(chat,serverTime),kundliChoiceAnswered:!!(chat.kundli_choice_answered||chat.kundli_donation_id),kundliDonationInterested:!!chat.kundli_donation_interested,inboxRevision:chat.inbox_revision||0,guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging};
   }
   async function customer(){
     const c=cookies.ar_session&&await one('SELECT *, (SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) AS rewards,'+messagingCustomerHoldColumns+' FROM conversations WHERE token_hash=?',await hash(cookies.ar_session));
@@ -130,6 +130,26 @@ export async function handleApi(request,env,executionContext){
   const finish=(chat,message,text,kind)=>finishChatReply(workflowCtx,chat,message,text,kind);
   const generate=id=>generateChatReply(workflowCtx,id);
   const workflowCtx={env,stmt,one,all,fail,owner,body,result,get,route,method,queryBudget};
+  async function prepareCustomerDonation(chat,{text,clientId,now}){
+    // Only a newly accepted non-empty text after this chat's stored final line
+    // can create this pair. Reads, old replies, retries and uploads cannot.
+    if(!text||!Number.isSafeInteger(chat.send_hold_end)||now<chat.send_hold_end||chat.kundli_donation_id)return null;
+    const unavailable=()=>Object.assign(fail(503,'The voice message is temporarily unavailable. Please try again.'),{retryable:true});
+    const mediaId=env.DONATION_AUDIO_MEDIA_ID;
+    const audio=typeof mediaId==='string'&&/^[a-f0-9-]{36}$/.test(mediaId)?await one("SELECT id,object_key,mime,size FROM media_items WHERE id=? AND type='audio' AND archived=0",mediaId):null;
+    if(!audio?.object_key||audio.mime!=='audio/mpeg'||!env.MEDIA||(await env.MEDIA.head(audio.object_key))?.size!==audio.size||!audio.size)throw unavailable();
+    const audioBody=JSON.stringify({text:'',title:'',items:[{id:audio.id,title:'आवाज़ संदेश · Voice message',type:'audio',presentation:'voice-note',url:'/api/media/'+audio.id,mime:audio.mime,size:audio.size}],donation:{label:'मैं दान करना चाहता/चाहती हूँ · I want to donate',action:'interest-v1'}});
+    const availableSql="SELECT 1 FROM media_items WHERE id=? AND type='audio' AND archived=0 AND object_key=? AND mime=?",availableArgs=[audio.id,audio.object_key,audio.mime];
+    return{
+      guardSql:" AND (EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id='onboarding:donation-invite-v1' AND role='assistant' AND kind='kundli-donation-invite') OR EXISTS("+availableSql+'))',guardArgs:[chat.id,...availableArgs],
+      available:()=>one(availableSql,...availableArgs),
+      statements:[
+        stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'assistant','kundli-donation-invite',?,'sent','onboarding:donation-invite-v1',reply.created+5000 FROM messages reply WHERE reply.conversation_id=? AND reply.client_id=? AND reply.role='user' AND reply.created=? AND EXISTS(SELECT 1 FROM messages last WHERE last.conversation_id=reply.conversation_id AND last.client_id='onboarding:review-line-v1:29' AND last.role='assistant' AND last.kind='kundli-review-line' AND last.created<=reply.created)",chat.id,KUNDLI_DONATION_MESSAGE,chat.id,clientId,now),
+        stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'assistant','media',?,'sent','onboarding:donation-audio-v1',created+5000 FROM messages WHERE conversation_id=? AND client_id='onboarding:donation-invite-v1' AND role='assistant' AND kind='kundli-donation-invite'",chat.id,audioBody,chat.id),
+        stmt("INSERT OR IGNORE INTO media_grants(conversation_id,media_id) SELECT ?,? FROM messages WHERE conversation_id=? AND client_id='onboarding:donation-audio-v1' AND role='assistant' AND kind='media' AND json_extract(body,'$.items[0].id')=?",chat.id,audio.id,chat.id,audio.id),
+      ],
+    };
+  }
   async function onCustomerMessage(chat,message){if(automationEnabled)await flowOnCustomer(workflowCtx,chat,message);}
   async function scheduleChatWork(id,knownChat=null){
     if(!automationEnabled)return;
@@ -147,7 +167,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-kundli-choice-0.9.7'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-donation-invite-0.9.8'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
@@ -155,7 +175,7 @@ export async function handleApi(request,env,executionContext){
     const edited=await appSettingsRoutes(workflowCtx);if(edited)return edited;
     const flowCtx=automationEnabled?workflowCtx:{...workflowCtx,body:async()=>{const data=await body();if(route==='/api/admin/workflow/settings'&&data.enabled===true||/^\/api\/admin\/conversations\/[a-f0-9-]{36}\/workflow$/.test(route)&&['start','resume','restart'].includes(data.action))throw fail(409,'Automatic replies and previous sequences are paused.');return data;}};
     const workflow=await workflowRoutes(flowCtx);if(workflow)return workflow;
-    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,acknowledge,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,isGuided:id=>automationEnabled&&workflowIsEnrolled(one,id),appSettings,automationEnabled});if(messaging)return messaging;
+    const messaging=await messagingRoutes({request,env,route,method,stmt,one,all,result,body,get,view,acknowledge,pending,generate,scheduleChatWork,customer,owner,fail,rate,onCustomerMessage,prepareCustomerDonation,isGuided:id=>automationEnabled&&workflowIsEnrolled(one,id),appSettings,automationEnabled});if(messaging)return messaging;
     const calls=await callsRoutes({request,env,route,method,stmt,one,all,result,body,get,customer,owner,fail,rate,appSettings});if(calls)return calls;
     if(route==='/api/start'&&method==='POST'){
       await rate(`signup:${request.headers.get('CF-Connecting-IP')||'unknown'}`,12,3600000);const data=await body();
@@ -250,7 +270,7 @@ export async function handleApi(request,env,executionContext){
       }
     }
     throw fail(404,'Not found.');
-  }catch(error){return result({error:error.status?error.message:'Service temporarily unavailable. Please try again.',...(error.code==='CUSTOMER_SEND_HOLD'?{code:error.code,retryAt:error.retryAt}:{})},error.status||503);}finally{releaseBackground();}
+  }catch(error){return result({error:error.status?error.message:'Service temporarily unavailable. Please try again.',...(error.code==='CUSTOMER_SEND_HOLD'?{code:error.code,retryAt:error.retryAt}:{}),...(error.retryable===true?{retryable:true}:{})},error.status||503);}finally{releaseBackground();}
 }
 
 export default {

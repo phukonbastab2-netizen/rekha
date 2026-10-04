@@ -11,6 +11,7 @@ function mediaItem(value){
   if(!value||typeof value!=='object')return null;
   const item=fields(value,['id','title','type','mime','size']);
   for(const key of ['id','title','type','mime'])if(typeof item[key]!=='string')delete item[key];
+  if(value.presentation==='voice-note'&&item.type==='audio')item.presentation='voice-note';
   if(!Number.isFinite(item.size)||item.size<0)delete item.size;
   const privateUrl=privateMediaUrl(value.url);if(privateUrl)item.url=privateUrl;
   else if(item.type==='link')try{const url=new URL(value.url);if(url.protocol==='https:'&&!url.username&&!url.password)item.url=url.href;}catch{}
@@ -20,7 +21,7 @@ function bodyOf(message){
   if(message.deleted)return '';
   const body=typeof message.body==='string'?message.body:'';
   if(message.kind!=='media')return body;
-  try{const data=JSON.parse(body);return JSON.stringify({text:typeof data.text==='string'?data.text:'',title:typeof data.title==='string'?data.title:'',items:Array.isArray(data.items)?data.items.slice(0,20).map(mediaItem).filter(Boolean):[]});}catch{return '';}
+  try{const data=JSON.parse(body),donation=data.donation?.action==='interest-v1'?{label:'मैं दान करना चाहता/चाहती हूँ · I want to donate',action:'interest-v1'}:null;return JSON.stringify({text:typeof data.text==='string'?data.text:'',title:typeof data.title==='string'?data.title:'',items:Array.isArray(data.items)?data.items.slice(0,20).map(mediaItem).filter(Boolean):[],...(donation?{donation}:{})});}catch{return '';}
 }
 function rowOf(value){
   const id=messageId(value?.id);if(!id||!['user','assistant','system'].includes(value.role))return null;
@@ -45,6 +46,7 @@ function metadataOf(view){
   for(const key of ['name','dob','language','entitlement'])if(key in data&&typeof data[key]!=='string')delete data[key];
   for(const key of ['guidedConversation','locked','blocked'])if(key in data)data[key]=data[key]===true;
   if(typeof view.kundliChoiceAnswered==='boolean')data.kundliChoiceAnswered=view.kundliChoiceAnswered;
+  if(typeof view.kundliDonationInterested==='boolean')data.kundliDonationInterested=view.kundliDonationInterested;
   const hold=view.customerSendHold;if(Number.isSafeInteger(hold?.startsAt)&&hold.startsAt>0&&Number.isSafeInteger(hold?.endsAt)&&hold.endsAt>hold.startsAt&&hold.endsAt<=8640000000000000)data.customerSendHold={startsAt:hold.startsAt,endsAt:hold.endsAt};
   if(Number.isSafeInteger(view.clockOffsetMs)&&Math.abs(view.clockOffsetMs)<=3660*86400000)data.clockOffsetMs=view.clockOffsetMs;
   if(view.preferences&&typeof view.preferences==='object'){
@@ -60,6 +62,7 @@ function mergeMetadata(previous,next,kind){
   const newer=kind!=='older'&&(number(next.version)>number(previous.version)||number(next.version)===number(previous.version)&&number(next.updated)>=number(previous.updated));
   const data={...previous,...(newer?next:{})};
   if(previous.kundliChoiceAnswered===true||next.kundliChoiceAnswered===true)data.kundliChoiceAnswered=true;
+  if(previous.kundliDonationInterested===true||next.kundliDonationInterested===true)data.kundliDonationInterested=true;
   if(next.customerSendHold)data.customerSendHold=next.customerSendHold;
   if(Number.isSafeInteger(next.clockOffsetMs)&&Math.abs(next.clockOffsetMs)<=3660*86400000)data.clockOffsetMs=next.clockOffsetMs;
   if(kind!=='older'){const settings=number(next.inboxRevision)>=number(previous.inboxRevision)?next:previous;for(const key of ['inboxRevision','blocked'])if(key in settings)data[key]=settings[key];}

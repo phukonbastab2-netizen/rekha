@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.7-preview",
+  "version": "0.9.8-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -73,6 +73,7 @@
     "public/chat.css",
     "public/contact.html",
     "public/countdown.js",
+    "public/customer-followup.js",
     "public/data-deletion.html",
     "public/device-chat-store.js",
     "public/disclaimer.html",
@@ -110,6 +111,7 @@
     "public/video-onboarding.js",
     "public/voice-effects-worklet.js",
     "public/voice-effects.js",
+    "public/voice-note.js",
     "public/workflow-admin.js",
     "public/workflow.css",
     "scripts/benchmark-capacity.mjs",
@@ -152,6 +154,7 @@
     "tests/test-workflow.mjs",
     "tests/video-onboarding.test.mjs",
     "tests/voice-effects.test.mjs",
+    "tests/voice-note.test.mjs",
     "wrangler.example.jsonc"
   ]
 }
