@@ -311,6 +311,7 @@ export default {
     if(asset==='/astrorani'||asset==='/astrorani/')asset='/download.html';
     if(asset==='/astrorani/install-guide.js')asset='/install-guide.js';
     if(asset==='/astrorani/rekha-portrait.png')asset='/rekha-portrait.png';
+    if(asset==='/astrorani/apple-touch-icon.png')asset='/apple-touch-icon.png';
     if(asset==='/astrorani/icon-192.png')asset='/icon-192.png';
     if(asset==='/astrorani/AstroRani.apk')asset='/AstroRani.apk';
     if(asset==='/astrorani/RekhaAstrology.apk')asset='/AstroRani.apk';
