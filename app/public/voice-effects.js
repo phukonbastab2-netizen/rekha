@@ -31,6 +31,10 @@ export function createVoiceEffectsSession({preset='natural'}={}){
   }
   async function attach(stream){
     await ready;if(closed)throw Error('The call has ended.');
+    // Capture can interrupt the audio context on mobile after the initial tap.
+    if(context.state!=='running')await context.resume();
+    if(closed)throw Error('The call has ended.');
+    if(context.state!=='running')throw Error('Voice effects could not resume.');
     const audio=stream.getAudioTracks();if(!audio.length)throw Error('The microphone did not provide audio.');
     source=context.createMediaStreamSource(new MediaStream(audio));
     highpass=context.createBiquadFilter();highpass.type='highpass';highpass.frequency.value=70;highpass.Q.value=.7;

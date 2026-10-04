@@ -4,7 +4,8 @@ import { openLibrary } from './library.js';
 import { installCalls } from './calls.js';
 import { openWorkflowSettings,openChatWorkflow } from './workflow-admin.js';
 import { openAppSettings } from './app-settings-ui.js';
-import { openFeatureAccess,getFeatureMedia } from './permissions.js';
+import { openFeatureAccess,getFeatureMedia,createRequestAbort } from './permissions.js';
+import { createVoiceRecorder,voiceRecordingFile } from './messaging-ui.js';
 import {createAdaptivePoll} from './adaptive-poll.js';
 import {createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor} from './chat-history.js';
 import {createInboxPages} from './inbox-pages.js';
@@ -14,7 +15,7 @@ const app = document.querySelector('#admin-app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let selected=null, chats=[], current=null, dirty=false, fingerprint='', lastDraft='', loading=false, actionBusy=false;
 let attachment=null, sendAttempt=null, quoted=null, filter='all', config={}, threadSearch='', onlyStarred=false, typingAt=0;
-let recorder=null, recordingStream=null, recordingTimer=null, recordingChunks=[], recordingStarted=0, recordingCancelled=false;
+let recorder=null, recordingStream=null, recordingTimer=null, recordingSession=null, recordingRequest=null;
 let calls;
 const history=createChatHistory(),inboxPages=createInboxPages();
 let inboxController=null,inboxLoading=false,searchTimer=null,olderLoading=false,connectionPaused=false;
@@ -26,8 +27,11 @@ const readThrough=new Map();
 const messageMarkup=new Map(),inboxMarkup=new Map();let inboxFingerprint='';
 const timeFormatter=new Intl.DateTimeFormat('en-IN',{hour:'2-digit',minute:'2-digit'}),dayFormatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',year:'numeric'}),inboxDateFormatter=new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short'});
 async function api(route, method='GET', body,{signal}={}) {
-  const response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});
-  let data;try{data=await response.json();}catch{throw Object.assign(new Error('The connection returned an unreadable response. Please try again.'),{status:response.ok?undefined:response.status});}if(!response.ok)throw Object.assign(new Error(data.error||'Please try again.'),{status:response.status});if(method==='POST'&&route==='/api/admin/app-settings/publish'){config={...config,appSettings:data.published,settingsRevision:data.revision};window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));}return data;
+  const request=createRequestAbort({signal,timeoutMs:40000});
+  try{
+    const response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:request.signal});
+    let data;try{data=await response.json();}catch{throw Object.assign(new Error('The connection returned an unreadable response. Please try again.'),{status:response.ok?undefined:response.status});}if(!response.ok)throw Object.assign(new Error(data.error||'Please try again.'),{status:response.status});if(method==='POST'&&route==='/api/admin/app-settings/publish'){config={...config,appSettings:data.published,settingsRevision:data.revision};window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));}return data;
+  }finally{request.dispose();}
 }
 function notice(text) { const n=document.querySelector('#notice');n.textContent=text;n.hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>n.hidden=true,5000); }
 function mobileView(view){app.dataset.view=view;if(view==='chat')threadPoll.start({immediate:true});else threadPoll.stop();}
@@ -35,7 +39,15 @@ function sender(m){return m.role==='user'?current?.name||'Customer':config.appSe
 function readable(m){if(m.deleted)return 'This message was deleted';if(m.kind==='media'){try{const d=JSON.parse(m.body);return [d.text,d.title,...(d.items||[]).map(i=>i.title)].filter(Boolean).join(' · ')||'Attachment';}catch{return 'Attachment';}}return m.body||'';}
 function time(value){return timeFormatter.format(new Date(value));}
 function latestPreview(c){return c.preview||c.lastMessage||c.last_message||`${c.language} · ${c.mode==='ai'?'Automatic':c.mode==='assist'?'Drafts':'Personal'}`;}
-function closeRecorder(cancel=true){recordingCancelled=cancel;if(recorder&&recorder.state!=='inactive')recorder.stop();recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;}
+function closeRecorder(cancel=true){
+  recordingRequest?.abort();
+  const session=recordingSession;
+  if(session)session.cancelled=cancel;
+  if(recorder&&recorder.state!=='inactive'){try{recorder.stop();}catch{if(session)session.cancelled=true;}}
+  recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;
+  const row=app.querySelector('.recording-row');if(row)row.hidden=true;
+  const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;
+}
 function login() {
   sounds.reset();soundedSends.clear();
   calls?.destroy();calls=null;
@@ -74,10 +86,10 @@ async function loadInbox({more=false,signal,kind='delta'}={}){
   if(document.hidden||navigator.onLine===false||app.dataset.view==='login')return;
   if(inboxLoading)return;
   const request=inboxPages.request({more}),controller=new AbortController();inboxController=controller;inboxLoading=true;drawInboxPaging();
-  const before=JSON.stringify(chats);
-  try{const data=await api(request.route,'GET',undefined,{signal:signal?AbortSignal.any([signal,controller.signal]):controller.signal});if(controller.signal.aborted||!inboxPages.accept(data,request))return;chats=inboxPages.state().items;for(const row of chats)if(row.latestUserId&&row.latestUserId<=(readThrough.get(row.id)||0))row.unread=0;sounds.observeInbox(chats,{kind:more?'older':kind});connectionPaused=false;drawList();return{changed:before!==JSON.stringify(chats)};}
+  const before=JSON.stringify(chats),combined=createRequestAbort({signals:[signal,controller.signal]});
+  try{const data=await api(request.route,'GET',undefined,{signal:combined.signal});if(controller.signal.aborted||!inboxPages.accept(data,request))return;chats=inboxPages.state().items;for(const row of chats)if(row.latestUserId&&row.latestUserId<=(readThrough.get(row.id)||0))row.unread=0;sounds.observeInbox(chats,{kind:more?'older':kind});connectionPaused=false;drawList();return{changed:before!==JSON.stringify(chats)};}
   catch(error){if(controller.signal.aborted||signal?.aborted)return;if(error.status===401)login();else if(!connectionPaused){connectionPaused=true;notice('Connection paused. Trying again…');}throw error;}
-  finally{if(inboxController===controller){inboxLoading=false;inboxController=null;drawInboxPaging();}}
+  finally{combined.dispose();if(inboxController===controller){inboxLoading=false;inboxController=null;drawInboxPaging();}}
 }
 async function searchInbox(){
   clearTimeout(searchTimer);inboxPoll.stop();inboxController?.abort();inboxController=null;inboxLoading=false;inboxPages.reset(app.querySelector('#search')?.value||'',filter);chats=[];inboxFingerprint='';drawList();
@@ -196,14 +208,35 @@ async function uploadAttachment(file){
   const id=selected;if(!id||actionBusy)return;const limit=file.type.startsWith('audio/')||file.type==='application/pdf'?20:25;
   if(file.size>limit*1024*1024)return notice(`Choose a file up to ${limit} MB.`);if(!file.size)return notice('This file is empty.');
   actionBusy=true;fingerprint='';drawConversation();notice('Uploading attachment…');
-  try{const response=await fetch(`/api/admin/uploads?title=${encodeURIComponent(file.name||'Voice message')}&category=general`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':file.type||'application/octet-stream'},body:file,signal:AbortSignal.timeout(180000)});const result=await response.json();if(!response.ok)throw Error(result.error);if(selected===id){attachment={itemIds:[result.id],label:result.title||file.name};sendAttempt=null;dirty=true;}notice('Attachment ready. Press Send to share it.');}catch(error){notice(error.message);}finally{actionBusy=false;fingerprint='';drawConversation();}
+  const request=createRequestAbort({timeoutMs:180000});
+  try{const response=await fetch(`/api/admin/uploads?title=${encodeURIComponent(file.name||'Voice message')}&category=general`,{method:'POST',credentials:'same-origin',headers:{'Content-Type':file.type||'application/octet-stream'},body:file,signal:request.signal});const result=await response.json();if(!response.ok)throw Error(result.error);if(selected===id){attachment={itemIds:[result.id],label:result.title||file.name};sendAttempt=null;dirty=true;}notice('Attachment ready. Press Send to share it.');}catch(error){notice(error.message);}finally{request.dispose();actionBusy=false;fingerprint='';drawConversation();}
 }
 async function startRecording(){
   if(actionBusy||startRecording.pending||recorder?.state==='recording')return;if(!window.MediaRecorder||!navigator.mediaDevices?.getUserMedia)return notice('Voice recording is unavailable in this browser. You can attach an audio file.');
-  const chatId=selected;
+  const chatId=selected,controller=new AbortController();recordingRequest=controller;
   startRecording.pending=true;
   app.querySelector('#voice-record').disabled=true;
-  try{recordingStream=await getFeatureMedia('microphone',{audio:true});if(selected!==chatId){closeRecorder();return;}const mime=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t=>MediaRecorder.isTypeSupported(t));recorder=new MediaRecorder(recordingStream,mime?{mimeType:mime}:undefined);recordingChunks=[];recordingCancelled=false;recordingStarted=Date.now();recorder.ondataavailable=e=>{if(e.data.size)recordingChunks.push(e.data);};recorder.onstop=async()=>{recordingStream?.getTracks().forEach(t=>t.stop());recordingStream=null;clearInterval(recordingTimer);recordingTimer=null;const row=app.querySelector('.recording-row');if(row)row.hidden=true;if(recordingCancelled||selected!==chatId)return;const type=recorder.mimeType.split(';')[0],extension=type.includes('ogg')?'ogg':type.includes('mp4')?'m4a':'webm';const file=new File(recordingChunks,`Voice message.${extension}`,{type});await uploadAttachment(file);};recorder.start(1000);app.querySelector('.recording-row').hidden=false;app.querySelector('#recording-time').textContent='0:00';recordingTimer=setInterval(()=>{const seconds=Math.floor((Date.now()-recordingStarted)/1000);app.querySelector('#recording-time').textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;if(seconds>=180)closeRecorder(false);},1000);}catch(error){closeRecorder();notice(error.message||'Could not start voice recording.');}finally{startRecording.pending=false;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||recorder?.state==='recording';}
+  try{
+    const stream=await getFeatureMedia('microphone',{audio:true},{signal:controller.signal});
+    if(controller.signal.aborted||selected!==chatId||app.dataset.view!=='chat'||document.hidden){stream.getTracks().forEach(track=>track.stop());return;}
+    recordingStream=stream;
+    const currentRecorder=createVoiceRecorder(stream),session={recorder:currentRecorder,stream,chunks:[],cancelled:false,started:Date.now(),timer:null,finished:false};
+    recorder=currentRecorder;recordingSession=session;
+    const cleanup=()=>{
+      stream.getTracks().forEach(track=>track.stop());clearInterval(session.timer);
+      if(recordingSession===session){recordingSession=null;recorder=null;recordingStream=null;recordingTimer=null;const row=app.querySelector('.recording-row');if(row)row.hidden=true;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;}
+    };
+    currentRecorder.ondataavailable=event=>{if(event.data?.size)session.chunks.push(event.data);};
+    currentRecorder.onstop=async()=>{
+      if(session.finished)return;session.finished=true;cleanup();
+      if(session.cancelled||selected!==chatId||app.dataset.view!=='chat')return;
+      try{const file=voiceRecordingFile(session.chunks,currentRecorder.mimeType);await uploadAttachment(file);}catch(error){notice(error.message||'Could not save this voice recording.');}
+    };
+    currentRecorder.onerror=event=>{if(session.finished)return;session.finished=true;session.cancelled=true;cleanup();if(currentRecorder.state!=='inactive'){try{currentRecorder.stop();}catch{}}if(selected===chatId)notice(event.error?.message||'Voice recording stopped. Please try again.');};
+    currentRecorder.start(1000);app.querySelector('.recording-row').hidden=false;app.querySelector('#recording-time').textContent='0:00';
+    recordingTimer=session.timer=setInterval(()=>{if(recordingSession!==session)return;const seconds=Math.floor((Date.now()-session.started)/1000),label=app.querySelector('#recording-time');if(label)label.textContent=`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;if(seconds>=180)closeRecorder(false);},1000);
+  }catch(error){closeRecorder();if(error.name!=='AbortError')notice(error.message||'Could not start voice recording.');}
+  finally{if(recordingRequest===controller)recordingRequest=null;startRecording.pending=false;const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||recorder?.state==='recording';}
 }
 function emojiPicker(){const d=dialog('Add emoji',`<div class="emoji-grid">${['😊','🙏','❤️','👍','✨','🌸','☀️','🌙','🎉','💫','🌟','🤗','✅','🙂','💐','🕉️'].map(x=>`<button data-emoji="${x}" aria-label="${x}">${x}</button>`).join('')}</div>`);d.querySelectorAll('[data-emoji]').forEach(b=>b.onclick=()=>{const reply=app.querySelector('#reply'),start=reply.selectionStart,end=reply.selectionEnd;reply.value=reply.value.slice(0,start)+b.dataset.emoji+reply.value.slice(end);dirty=true;sendAttempt=null;d.close();reply.focus();growReply();});}
 function jumpMessage(id){const el=app.querySelector(`[data-message="${id}"]`);if(!el)return notice('Clear the message search to see this reply.');el.scrollIntoView({block:'center',behavior:'smooth'});el.classList.add('highlight');setTimeout(()=>el.classList.remove('highlight'),1800);}

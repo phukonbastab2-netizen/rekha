@@ -1,27 +1,39 @@
-import {getFeatureMedia} from './permissions.js';
+import {getFeatureMedia,createRequestAbort} from './permissions.js';
 import {createVoiceEffectsSession,voicePresets} from './voice-effects.js';
 import {createAdaptivePoll} from './adaptive-poll.js';
 import {chatIcon} from './chat-icons.js';
 const svg=video=>chatIcon(video?'video':'phone');
 const callWaitingNotice='On another call';
+const callsUnavailable='Calls are unavailable in this browser. Text chat and shared media still work.';
+export async function playCallMedia(media,onBlocked=()=>{}){
+  if(!media)return false;
+  try{await media.play();return true;}catch{onBlocked();return false;}
+}
 export function installCalls({role,getConversationId,notify,getAppSettings=()=>null}){
-  const prefix=role==='admin'?'/api/admin/calls':'/api/calls';let active=null,pc=null,local=null,outbound=null,effects=null,captureController=null,muted=false,selectedPreset='natural',remote=new MediaStream(),cursor=0,queue=[],panel=null,polling=false,handling=false,timeout=null,config=null,generation=0,destroyed=false,outgoing=[],flushing=false,pendingAnswer=null;
-  const callPoll=createAdaptivePoll({task:poll,canRun:()=>!destroyed&&(role==='admin'||Boolean(getConversationId()))&&(Boolean(active)||allowed('voice')||allowed('video')),hot:()=>Boolean(active),fastMs:6000,hotMs:1200,idleMs:15000});
+  const prefix=role==='admin'?'/api/admin/calls':'/api/calls';let active=null,pc=null,local=null,outbound=null,effects=null,captureController=null,muted=false,selectedPreset='natural',remote=null,cursor=0,queue=[],panel=null,polling=false,handling=false,timeout=null,config=null,generation=0,destroyed=false,outgoing=[],flushing=false,pendingAnswer=null;
+  const supported=()=>typeof MediaStream==='function'&&typeof RTCPeerConnection==='function'&&typeof navigator.mediaDevices?.getUserMedia==='function';
+  const callPoll=createAdaptivePoll({task:poll,canRun:()=>!destroyed&&supported()&&(role==='admin'||Boolean(getConversationId()))&&(Boolean(active)||allowed('voice')||allowed('video')),hot:()=>Boolean(active),fastMs:6000,hotMs:1200,idleMs:15000});
   if(role==='admin'){try{const saved=localStorage.getItem('rekha-admin-call-voice');if(voicePresets.some(p=>p.id===saved))selectedPreset=saved;}catch{}}
-  const api=async(route,method='GET',data,{signal}={})=>{const expectedChat=role==='customer'?(active?.conversationId||getConversationId()):null;const r=await fetch(prefix+route,{method,credentials:'same-origin',cache:'no-store',headers:{...(method!=='GET'?{'Content-Type':'application/json'}:{}),...(method!=='GET'&&expectedChat?{'X-Rekha-Chat':expectedChat}:{})},...(data!==undefined?{body:JSON.stringify(data)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(20000)]):AbortSignal.timeout(20000)});let value;try{value=await r.json();}catch{throw Object.assign(Error('The call connection returned an unreadable response.'),{status:r.status});}if(!r.ok)throw Object.assign(Error(value.error||'Call unavailable.'),{status:r.status});return value;};
+  const api=async(route,method='GET',data,{signal}={})=>{const expectedChat=role==='customer'?(active?.conversationId||getConversationId()):null,request=createRequestAbort({signal,timeoutMs:20000});try{const r=await fetch(prefix+route,{method,credentials:'same-origin',cache:'no-store',headers:{...(method!=='GET'?{'Content-Type':'application/json'}:{}),...(method!=='GET'&&expectedChat?{'X-Rekha-Chat':expectedChat}:{})},...(data!==undefined?{body:JSON.stringify(data)}:{}),signal:request.signal});let value;try{value=await r.json();}catch{throw Object.assign(Error('The call connection returned an unreadable response.'),{status:r.status});}if(!r.ok)throw Object.assign(Error(value.error||'Call unavailable.'),{status:r.status});return value;}finally{request.dispose();}};
   const label=()=>role==='admin'?'Customer':getAppSettings()?.brand?.astrologerName||getAppSettings()?.brand?.name||'Rekha Astrology';
   const valid=token=>!destroyed&&generation===token;
   const allowed=type=>getAppSettings()?.chat?.[type==='voice'?'voiceCallsEnabled':'videoCallsEnabled']!==false;
   function mount(container){if(destroyed||!container)return;const choices=role==='customer'?[['video','Video call'],['voice','Voice call']]:[['voice','Voice call'],['video','Video call']];for(const [type,title]of choices){let button=container.querySelector(`.call-launch[data-call-type="${type}"]`);if(!button){button=document.createElement('button');button.type='button';button.className='call-launch';button.dataset.callType=type;button.title=title;button.setAttribute('aria-label',title);button.innerHTML=svg(type==='video');button.onclick=()=>start(type);const menu=role==='customer'?container.querySelector('#chat-privacy'):null;if(menu)menu.before(button);else container.append(button);}button.hidden=!allowed(type);}}
   function show(incoming=false){
     panel?.remove();panel=document.createElement('section');panel.className='call-panel';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');panel.setAttribute('aria-label',active.type+' call');
-    panel.innerHTML=`<h2>${active.type==='video'?'Video':'Voice'} call</h2><p class="call-status" role="status">${incoming?'Incoming call':callWaitingNotice}</p><div class="call-videos"><video class="call-remote" autoplay playsinline></video><video class="call-local" autoplay playsinline muted></video></div>${role==='admin'?'<label class="call-voice-choice">Your voice <select class="call-voice-preset" aria-label="Call voice effect"></select></label><p class="call-voice-description">Generic voice effects run on this device. They do not copy another person’s voice.</p>':''}<p class="call-note">${callWaitingNotice}</p><div class="call-buttons">${incoming?'<button class="call-answer">Answer</button>':'<button class="call-mute" disabled>Mute</button>'}<button class="call-end">${incoming?'Decline':'End call'}</button></div>`;
+    panel.innerHTML=`<h2>${active.type==='video'?'Video':'Voice'} call</h2><p class="call-status" role="status">${incoming?'Incoming call':callWaitingNotice}</p><div class="call-videos"><video class="call-remote" autoplay playsinline></video><video class="call-local" autoplay playsinline muted></video></div><button type="button" class="call-audio-enable" hidden>Tap to hear call</button>${role==='admin'?'<label class="call-voice-choice">Your voice <select class="call-voice-preset" aria-label="Call voice effect"></select></label><p class="call-voice-description">Generic voice effects run on this device. They do not copy another person’s voice.</p>':''}<p class="call-note">${callWaitingNotice}</p><div class="call-buttons">${incoming?'<button class="call-answer">Answer</button>':'<button class="call-mute" disabled>Mute</button>'}<button class="call-end">${incoming?'Decline':'End call'}</button></div>`;
     document.body.append(panel);panel.querySelector('.call-end').onclick=()=>end(incoming?'declined':'completed');
+    panel.querySelector('.call-audio-enable').onclick=()=>playRemote(generation);
     panel.querySelector('h2').textContent=`${active.type==='video'?'Video':'Voice'} call · ${role==='admin'?(active.customerName||label()):label()}`;
     const selector=panel.querySelector('.call-voice-preset');if(selector){for(const preset of voicePresets){const option=document.createElement('option');option.value=preset.id;option.textContent=preset.name;selector.append(option);}selector.value=selectedPreset;selector.onchange=()=>{selectedPreset=selector.value;effects?.setPreset(selectedPreset);try{localStorage.setItem('rekha-admin-call-voice',selectedPreset);}catch{};};}
     if(incoming)panel.querySelector('.call-answer').onclick=answer;else bindMute();
   }
   function status(text){if(panel)panel.querySelector('.call-status').textContent=text;}
+  async function playRemote(token){
+    if(!valid(token)||!panel)return;const media=panel.querySelector('.call-remote'),button=panel.querySelector('.call-audio-enable');
+    const played=await playCallMedia(media,()=>{if(valid(token)&&button.isConnected)button.hidden=false;});
+    if(played&&valid(token)&&button.isConnected)button.hidden=true;
+  }
   function bindMute(){const button=panel?.querySelector('.call-mute');if(!button)return;button.disabled=!local;button.textContent=muted?'Unmute':'Mute';button.onclick=()=>{if(!local)return;muted=!muted;for(const track of local.getAudioTracks())track.enabled=!muted;for(const track of outbound?.getAudioTracks()||[])track.enabled=!muted;effects?.setMuted(muted);button.textContent=muted?'Unmute':'Mute';};}
   function prepareEffects(){
     if(role!=='admin'||effects)return;
@@ -36,13 +48,14 @@ export function installCalls({role,getConversationId,notify,getAppSettings=()=>n
     local=stream;outbound=stream;
     if(effects){const session=effects;try{const processed=await session.attach(stream);if(!valid(token)||effects!==session||!active||!panel){session.destroy();for(const track of stream.getTracks())track.stop();for(const track of processed.getTracks())track.stop();return false;}outbound=processed;session.setMuted(muted);}catch(error){if(!valid(token))return false;session.destroy();effects=null;effectsUnavailable();}}
     panel.querySelector('.call-local').srcObject=local;
+    playCallMedia(panel.querySelector('.call-local'));
     return true;
   }
   async function setup(token){
     config ||= await api('/config');if(!valid(token)||!active||!local||!panel)return false;
     const peer=new RTCPeerConnection({iceServers:config.iceServers});pc=peer;remote=new MediaStream();panel.querySelector('.call-remote').srcObject=remote;
     for(const track of outbound.getTracks())pc.addTrack(track,outbound);
-    peer.ontrack=event=>{if(!valid(token)||pc!==peer){event.track.stop();return;}if(!remote.getTracks().includes(event.track))remote.addTrack(event.track);panel?.querySelector('.call-remote')?.play().catch(()=>{});};
+    peer.ontrack=event=>{if(!valid(token)||pc!==peer){event.track.stop();return;}if(!remote.getTracks().includes(event.track))remote.addTrack(event.track);playRemote(token);};
     peer.onicecandidate=event=>{if(event.candidate&&valid(token)&&pc===peer&&outgoing.length<200){outgoing.push({kind:'ice',payload:event.candidate.toJSON()});flushSignals(token);}};
     peer.onconnectionstatechange=()=>{if(!valid(token)||pc!==peer)return;const state=peer.connectionState;if(state==='connected'){status('Connected');clearTimeout(timeout);}else if(state==='failed')end('connection-failed','Could not connect. Some mobile networks require a configured call relay.');else if(state==='disconnected')status('Reconnecting…');};
     timeout=setTimeout(()=>{if(valid(token)&&peer.connectionState!=='connected')end('connection-failed','The other device could not connect. A call relay may be needed on this network.');},45000);
@@ -52,6 +65,7 @@ export function installCalls({role,getConversationId,notify,getAppSettings=()=>n
   async function flushSignals(token){if(flushing||!valid(token)||!active)return;flushing=true;const callId=active.id;try{while(outgoing.length&&valid(token)&&active?.id===callId){const next=outgoing[0];await signal(next.kind,next.payload,callId);if(!valid(token))return;outgoing.shift();}}catch{if(valid(token))status('Connection paused. Retrying…');}finally{flushing=false;}}
   async function start(type){
     if(!allowed(type))return notify('This call option is currently paused.');
+    if(!supported())return notify(callsUnavailable);
     if(destroyed||active||handling)return;const conversationId=getConversationId();if(!conversationId)return notify('Open a conversation first.');handling=true;const token=++generation;
     try{active={id:null,type,conversationId,caller:role==='admin'?'admin':'customer'};show();prepareEffects();if(!await media(token))return;status(callWaitingNotice);const call=await api('','POST',{type,conversationId});if(!valid(token)){await api('/'+call.id+'/end','POST',{reason:'cancelled'}).catch(()=>{});return;}active=call;if(!await setup(token))return;const peer=pc,offer=await peer.createOffer();if(!valid(token))return;await peer.setLocalDescription(offer);if(!valid(token))return;await signal('offer',{type:offer.type,sdp:offer.sdp},call.id);if(valid(token))beginPoll();}
     catch(error){if(valid(token))await end('connection-failed',error.name==='NotAllowedError'?'Microphone or camera access was declined. Open app settings to allow access.':error.name==='AbortError'?undefined:error.message);}finally{if(generation===token||!active)handling=false;}
@@ -61,11 +75,11 @@ export function installCalls({role,getConversationId,notify,getAppSettings=()=>n
     try{prepareEffects();status('Opening microphone…');if(!await media(token))return;const accepted=await api('/'+callId+'/accept','POST',{});if(!valid(token))return;active=accepted;if(!await setup(token))return;panel.querySelector('.call-buttons').innerHTML='<button class="call-mute">Mute</button><button class="call-end">End call</button>';panel.querySelector('.call-end').onclick=()=>end('completed');bindMute();status('Connecting…');cursor=0;beginPoll();}
     catch(error){if(valid(token))await end('connection-failed',error.name==='NotAllowedError'?'Microphone or camera access was declined. Open app settings to allow access.':error.name==='AbortError'?undefined:error.message);}finally{if(generation===token||!active)handling=false;}
   }
-  function clean(){generation++;captureController?.abort();captureController=null;handling=false;clearTimeout(timeout);if(pc){pc.ontrack=null;pc.onicecandidate=null;pc.onconnectionstatechange=null;pc.close();}pc=null;effects?.destroy();effects=null;for(const track of outbound?.getTracks()||[])track.stop();outbound=null;for(const track of local?.getTracks()||[])track.stop();local=null;muted=false;for(const track of remote.getTracks())track.stop();remote=new MediaStream();panel?.remove();panel=null;active=null;cursor=0;queue=[];outgoing=[];pendingAnswer=null;}
+  function clean(){generation++;captureController?.abort();captureController=null;handling=false;clearTimeout(timeout);if(pc){pc.ontrack=null;pc.onicecandidate=null;pc.onconnectionstatechange=null;pc.close();}pc=null;effects?.destroy();effects=null;for(const track of outbound?.getTracks()||[])track.stop();outbound=null;for(const track of local?.getTracks()||[])track.stop();local=null;muted=false;for(const track of remote?.getTracks()||[])track.stop();remote=null;panel?.remove();panel=null;active=null;cursor=0;queue=[];outgoing=[];pendingAnswer=null;}
   async function end(reason='completed',message){const call=active;clean();if(call?.id)await api('/'+call.id+'/end','POST',{reason}).catch(()=>{});if(message)notify(message);}
   function beginPoll(){callPoll.poke({immediate:true});}
   async function poll({signal:pollSignal}={}){
-    if(destroyed||polling||document.hidden||navigator.onLine===false||active&&!active.id)return;polling=true;const token=generation,callId=active?.id;
+    if(destroyed||!supported()||polling||document.hidden||navigator.onLine===false||active&&!active.id)return;polling=true;const token=generation,callId=active?.id;
     try{
       if(!active){const list=await api('','GET',undefined,{signal:pollSignal});if(!valid(token)||active)return;const incoming=list.calls.find(c=>c.caller!==(role==='admin'?'admin':'customer')&&c.status==='ringing');if(incoming){generation++;active=incoming;show(true);beginPoll();notify('Incoming '+incoming.type+' call.');}return{changed:!!incoming};}
       const data=await api('/'+callId+'/signals?after='+cursor,'GET',undefined,{signal:pollSignal});if(!valid(token)||active?.id!==callId)return;active=data.call;

@@ -12,6 +12,7 @@ import { createDeviceChatStore } from './device-chat-store.js';
 import { createStartupDelivery,orderDeliveredMessages,followupChoiceState,isFollowupChoiceResponse } from './startup-delivery.js';
 import { setCountdownClock } from './countdown.js';
 import { DONATION_INTEREST_TEXT,donationInterestState,isDonationInterestResponse } from './customer-followup.js';
+import { createRequestAbort } from './permissions.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
@@ -87,7 +88,9 @@ function applyPublishedConfig(next){
   if(config.appSettings){document.documentElement.style.setProperty('--wine',primary);document.documentElement.style.setProperty('--gold',accent);}
   document.title=brandName();document.querySelector('meta[name="theme-color"]')?.setAttribute('content',primary);
   document.querySelector('meta[name="description"]')?.setAttribute('content',text('tagline'));
-  for(const selector of ['link[rel="icon"]','link[rel="apple-touch-icon"]'])document.querySelector(selector)?.setAttribute('href',logo());
+  document.querySelector('link[rel="icon"]')?.setAttribute('href',logo());
+  document.querySelector('link[rel="apple-touch-icon"]')?.setAttribute('href','/apple-touch-icon.png');
+  document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute('content',brandName());
   const mark=document.querySelector('.wordmark');if(mark){mark.replaceChildren();const image=document.createElement('img');image.src=logo();image.alt='';image.width=image.height=34;const label=document.createElement('span');label.className='brand-wordmark-label';label.textContent=brandName();mark.append(image,label);mark.setAttribute('aria-label',brandName()+' home');}
   document.querySelector('.story')?.setAttribute('aria-label',astrologerName());app.setAttribute('aria-label',brandName()+' app');
   if(config.appSettings){const title=document.querySelector('.story-copy h1'),subtitle=document.querySelector('.story-copy p');if(title)title.textContent=brandName();if(subtitle)subtitle.textContent=text('tagline');}
@@ -102,11 +105,14 @@ const chatAvailability = () => startupSending()?'भेज रही हैं�
 const conversationNotice = () => lang === 'hi' ? 'सुरक्षित बातचीत' : 'Safe and secure conversation';
 async function api(route, method = 'GET', body, {signal,compactAck=false}={}) {
   if(stage==='chat'&&method!=='GET'&&!sessionVerified)throw Object.assign(new Error('Reconnect to this chat before changing it. Your saved messages are kept.'),{status:503});
+  const requestAbort=createRequestAbort({signal,timeoutMs:40000});
+  try{
   let response;
-  try{response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(method!=='GET'&&stage==='chat'&&chat?.id?{'X-Rekha-Chat':chat.id}:{}),...(compactAck&&method==='POST'&&route==='/api/messages'?{'X-Rekha-Ack':'compact-v1'}:{}),...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:signal?AbortSignal.any([signal,AbortSignal.timeout(40000)]):AbortSignal.timeout(40000)});}catch(error){if(signal?.aborted)throw error;throw new Error(navigator.onLine===false?'You are offline. Your unsent message is kept.':'Could not confirm delivery. Please retry your message.');}
+  try{response=await fetch(route,{method,credentials:'same-origin',cache:'no-store',headers:{...historyHeaders,...(method!=='GET'&&stage==='chat'&&chat?.id?{'X-Rekha-Chat':chat.id}:{}),...(compactAck&&method==='POST'&&route==='/api/messages'?{'X-Rekha-Ack':'compact-v1'}:{}),...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),signal:requestAbort.signal});}catch(error){if(signal?.aborted)throw error;throw new Error(navigator.onLine===false?'You are offline. Your unsent message is kept.':'Could not confirm delivery. Please retry your message.');}
   let data;try{data=await response.json();}catch{throw Object.assign(new Error('The connection returned an unreadable response. Please try again.'),{status:response.ok?undefined:response.status});}
   if(!response.ok){const queuedWrite=method==='POST'&&route==='/api/messages'||method==='PATCH'&&/^\/api\/messages\/\d+$/.test(route);if(response.status===401&&stage==='chat'&&!queuedWrite)endSession();throw Object.assign(new Error(data.error||text('generalError')),{status:response.status,code:data.code,retryAt:data.retryAt});}
   return data;
+  }finally{requestAbort.dispose();}
 }
 function endSession(){if(sessionEnded){updateConnection();return;}sessionVerified=false;chatPoll.stop();sessionEnded=true;composerDraft=messaging?.preserveDraft?.()||composerDraft;void persistPending();outbox.pause({abort:true});messaging?.destroy();messaging=null;calls?.destroy();calls=null;toast(text('expired'));const input=app.querySelector('#message-input'),send=app.querySelector('.send');if(input)input.disabled=true;if(send)send.disabled=true;updateConnection();}
 function acceptServerChat(next,{kind='mutation'}={}){
@@ -136,11 +142,12 @@ function updateConnection(){
 }
 function bindChatLayout(){
   releaseChatLayout();const section=app.querySelector('.chat'),scroller=app.querySelector('#chat-scroll'),composer=app.querySelector('#composer');let frame=null;
-  const resize=()=>{if(frame!==null)return;frame=requestAnimationFrame(()=>{frame=null;if(stage!=='chat'||!section.isConnected)return;const pinned=nearLatest(scroller),anchor=pinned?null:captureThreadAnchor(scroller),viewport=window.visualViewport;const height=Math.round(viewport&&viewport.scale===1?viewport.height:window.innerHeight);document.documentElement.style.setProperty('--chat-viewport-height',`${height}px`);section.style.setProperty('--chat-composer-height',`${Math.ceil(composer.getBoundingClientRect().height)}px`);if(pinned)scroller.scrollTop=scroller.scrollHeight;else restoreThreadAnchor(scroller,anchor);updateJump();});};
+  const resize=()=>{if(frame!==null)return;frame=requestAnimationFrame(()=>{frame=null;if(stage!=='chat'||!section.isConnected)return;const pinned=nearLatest(scroller),anchor=pinned?null:captureThreadAnchor(scroller),viewport=window.visualViewport;const normalScale=viewport&&Math.abs(viewport.scale-1)<.01,height=Math.round(normalScale?viewport.height:window.innerHeight),top=normalScale?Math.max(0,Math.round(viewport.offsetTop)):0;document.documentElement.style.setProperty('--chat-viewport-height',`${height}px`);document.documentElement.style.setProperty('--chat-viewport-top',`${top}px`);section.style.setProperty('--chat-composer-height',`${Math.ceil(composer.getBoundingClientRect().height)}px`);if(pinned)scroller.scrollTop=scroller.scrollHeight;else restoreThreadAnchor(scroller,anchor);updateJump();});};
   const observer=typeof ResizeObserver==='function'?new ResizeObserver(resize):null;observer?.observe(composer);
   window.addEventListener('resize',resize,{passive:true});window.visualViewport?.addEventListener('resize',resize,{passive:true});
+  window.visualViewport?.addEventListener('scroll',resize,{passive:true});
   scroller.addEventListener('scroll',updateJump,{passive:true});resize();
-  releaseChatLayout=()=>{observer?.disconnect();window.removeEventListener('resize',resize);window.visualViewport?.removeEventListener('resize',resize);scroller.removeEventListener('scroll',updateJump);if(frame!==null)cancelAnimationFrame(frame);document.documentElement.style.removeProperty('--chat-viewport-height');releaseChatLayout=()=>{};};
+  releaseChatLayout=()=>{observer?.disconnect();window.removeEventListener('resize',resize);window.visualViewport?.removeEventListener('resize',resize);window.visualViewport?.removeEventListener('scroll',resize);scroller.removeEventListener('scroll',updateJump);if(frame!==null)cancelAnimationFrame(frame);document.documentElement.style.removeProperty('--chat-viewport-height');document.documentElement.style.removeProperty('--chat-viewport-top');releaseChatLayout=()=>{};};
 }
 async function loadEarlier(){
   if(olderLoading||!localOlder&&!history.state().hasOlder)return;
@@ -172,7 +179,9 @@ async function closeCurrentApp(){
   try{const draft=messaging?.preserveDraft?.()||composerDraft,hasPending=outbox.list().length>0||Boolean(draft&&(draft.body||draft.attachments?.length||draft.replyTo||draft.editId));for(const record of outbox.list())if(record.state==='sending')record.uncertain=true;outbox.pause({abort:true});const saved=await persistPending();await deviceStore.flush();
     if(hasPending&&!saved){closingApp=false;toast(lang==='hi'?'संदेश सहेज नहीं पाए। आपकी चैट खुली है; डिवाइस में जगह खाली करके फिर कोशिश करें।':'Could not save your unsent messages. Your chat is still open; free device storage and try again.');return;}
     if(typeof window.RekhaDevice?.closeApp==='function'){chatPoll.stop();calls?.destroy();messaging?.destroy();window.RekhaDevice.closeApp();return;}
-    window.close();toast(lang==='hi'?'बाहर जाने के लिए यह टैब बंद करें। आपकी चैट सहेजी गई है।':'Close this tab to exit. Your chat is saved on this device.');
+    const standalone=window.navigator.standalone===true||window.matchMedia?.('(display-mode: standalone)').matches;
+    if(standalone)toast(lang==='hi'?'बाहर जाने के लिए अपने फोन का Home बटन दबाएँ या ऊपर स्वाइप करें। आपकी चैट सहेजी गई है।':'Press Home or swipe up to leave the app. Your chat is saved on this device.');
+    else{window.close();toast(lang==='hi'?'बाहर जाने के लिए यह टैब बंद करें। आपकी चैट सहेजी गई है।':'Close this tab to exit. Your chat is saved on this device.');}
   }finally{if(!closingApp||!window.RekhaDevice?.closeApp){closingApp=false;if(stage==='chat'&&!sessionEnded)outbox.resume({retryUncertain:true});}}
 }
 function toast(message) { const el = document.querySelector('#toast'); el.textContent = message; el.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.hidden = true; }, 5500); }

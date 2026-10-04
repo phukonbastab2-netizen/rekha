@@ -4,6 +4,17 @@ const pending=new Map();
 function stylesheet(){if(document.querySelector('link[data-feature-access]'))return;const link=document.createElement('link');link.rel='stylesheet';link.href='/permissions.css';link.dataset.featureAccess='true';document.head.append(link);}
 const cancelled=()=>new DOMException('The feature request was cancelled.','AbortError');
 function checkCancelled(signal){if(signal?.aborted)throw cancelled();}
+// Older mobile browsers have AbortController but lack AbortSignal.any/timeout.
+// Dispose after the response body finishes so timers/listeners never accumulate.
+export function createRequestAbort({signal,signals=[],timeoutMs}={}){
+  const controller=new AbortController(),sources=[...new Set([signal,...signals].filter(Boolean))];let timer=null,disposed=false;
+  const dispose=()=>{if(disposed)return;disposed=true;clearTimeout(timer);for(const source of sources)source.removeEventListener('abort',abort);};
+  const abort=event=>{const source=event?.target||sources.find(value=>value.aborted);controller.abort(source?.reason||cancelled());dispose();};
+  for(const source of sources)source.addEventListener('abort',abort,{once:true});
+  if(sources.some(source=>source.aborted))abort();
+  else if(Number.isFinite(timeoutMs)&&timeoutMs>=0)timer=setTimeout(()=>{controller.abort(new DOMException('The request timed out.','TimeoutError'));dispose();},timeoutMs);
+  return {signal:controller.signal,dispose};
+}
 function nativeEnvironment(){
   const bridge=window.RekhaDevice;
   // Old APKs may have no feature bridge. Never send their users to browser settings.
@@ -110,7 +121,7 @@ export async function getFeatureMedia(feature,constraints,{signal}={}){
 }
 export function openFeatureAccess(){
   stylesheet();const dialog=document.createElement('dialog');dialog.className='feature-access-dialog';dialog.setAttribute('aria-label','Feature access');
-  dialog.innerHTML='<h2>Feature access</h2><p>Set up the features you want to use. Android asks separately for each permission.</p><div class="feature-access-list"></div><p class="feature-access-note">Only photos, videos and documents you choose and send reach the chat. SMS and your full gallery are not collected.</p><p class="feature-access-status" role="status"></p><div class="feature-access-actions"><button type="button" data-close>Done</button></div>';
+  dialog.innerHTML='<h2>Feature access</h2><p>Set up the features you want to use. Your device or browser asks separately for microphone and camera access.</p><div class="feature-access-list"></div><p class="feature-access-note">Only photos, videos and documents you choose and send reach the chat. SMS and your full gallery are not collected.</p><p class="feature-access-status" role="status"></p><div class="feature-access-actions"><button type="button" data-close>Done</button></div>';
   const list=dialog.querySelector('.feature-access-list'),statusLine=dialog.querySelector('[role=status]'),controller=new AbortController();let busy=false;
   for(const [feature,label,description]of [['microphone','Microphone','Voice notes and calls'],['camera','Camera','Camera photos and video calls'],['notifications','Message alerts','Optional notifications for new messages']]){
     const row=document.createElement('div'),text=document.createElement('span'),strong=document.createElement('strong'),small=document.createElement('small'),button=document.createElement('button');row.className='feature-access-row';strong.textContent=label;small.textContent=description;text.append(strong,small);button.type='button';button.textContent='Set up';
@@ -120,7 +131,7 @@ export function openFeatureAccess(){
         else if(typeof window.RekhaDevice?.showAlertSettings==='function'){window.RekhaDevice.showAlertSettings();statusLine.textContent='Choose Enable in the message alert settings.';}
         else if(nativeEnvironment().app){showPermissionHelp(feature,'unavailable');throw permissionError(feature,'unavailable');}
         else if('Notification'in window){const value=await Notification.requestPermission();statusLine.textContent=value==='granted'?'Browser notification permission allowed. This preview does not provide background web push.':'Notifications were not allowed.';}
-        else statusLine.textContent='Message alerts are available in the Android app.';
+        else statusLine.textContent='Keep this chat open to see new messages. Background message alerts are unavailable here.';
       }else{const stream=await getFeatureMedia(feature,feature==='microphone'?{audio:true}:{video:true},{signal:controller.signal});stream.getTracks().forEach(track=>track.stop());if(dialog.open&&!controller.signal.aborted){button.textContent='Allowed';statusLine.textContent=label+' is ready.';}}
     }catch(error){if(dialog.open&&!controller.signal.aborted&&error.name!=='AbortError')statusLine.textContent=error.message;}finally{busy=false;if(button.isConnected)button.disabled=false;}};
     row.append(text,button);list.append(row);

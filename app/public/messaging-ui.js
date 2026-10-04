@@ -1,11 +1,32 @@
 import { messageBody, mediaItems, attachmentUrl } from './media.js';
-import { getFeatureMedia, openFeatureAccess } from './permissions.js';
+import { getFeatureMedia, openFeatureAccess, createRequestAbort } from './permissions.js';
 import { chatIcon } from './chat-icons.js';
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const reactions=['👍','❤️','😂','😮','😢','🙏'];
 const emojis=['😀','😊','🙏','❤️','👍','✨','🌸','😂','🥰','🤔','😢','🙌','🌞','🌙','💐','💚','🤝','🎉','😮','👌','🙂','💫','🪔','🔮'];
 const ACCEPT='image/jpeg,image/png,image/webp,video/mp4,video/webm,audio/webm,audio/ogg,audio/mpeg,audio/mp4,audio/wav,application/pdf';
 const MAX_SIZE=20*1024*1024;
+export function createVoiceRecorder(stream,Recorder=globalThis.MediaRecorder){
+  if(typeof Recorder!=='function')throw new Error('Voice recording is unavailable here.');
+  const candidates=['audio/mp4','audio/webm;codecs=opus','audio/ogg;codecs=opus'];
+  for(const mimeType of candidates){
+    let supported=true;try{if(typeof Recorder.isTypeSupported==='function')supported=Recorder.isTypeSupported(mimeType);else supported=mimeType==='audio/mp4';}catch{supported=false;}
+    if(supported)try{return new Recorder(stream,{mimeType});}catch{}
+  }
+  // Some Safari versions expose only the default recorder constructor.
+  return new Recorder(stream);
+}
+export function voiceRecordingFile(chunks,recorderMime=''){
+  const normalize=value=>String(value||'').split(';')[0].trim().toLowerCase();
+  let type=normalize(recorderMime)||normalize(chunks.find(chunk=>chunk.size&&chunk.type)?.type);
+  // The recorder receives an audio-only stream; Safari may label its MP4 container as video/mp4.
+  if(type==='video/mp4')type='audio/mp4';
+  const extensions={'audio/mp4':'m4a','audio/webm':'webm','audio/ogg':'ogg','audio/mpeg':'mp3','audio/wav':'wav'};
+  if(!extensions[type])throw new Error('This recording format is unavailable. Please attach an audio file instead.');
+  const file=new File(chunks,`Voice note ${new Date().toISOString().replace(/[:.]/g,'-')}.${extensions[type]}`,{type});
+  if(!file.size)throw new Error('No audio was recorded. Please try again.');
+  return file;
+}
 export function messageSummary(message){
   if(!message)return 'Message unavailable';
   if(message.deleted)return 'This message was deleted';
@@ -116,14 +137,15 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
       const acquired=await getFeatureMedia('microphone',{audio:true},{signal:controller.signal});
       if(controller.signal.aborted||voiceCaptureController!==controller||destroyed||getChat()?.locked||getChat()?.blocked||editing||paused()||features().voiceNotesEnabled===false||features().attachmentsEnabled===false){acquired.getTracks().forEach(track=>track.stop());return;}
       stream=acquired;
-      const mime=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(value=>MediaRecorder.isTypeSupported(value));
-      recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);recordChunks=[];discardRecording=false;recordStarted=Date.now();
-      recorder.ondataavailable=event=>{if(event.data.size)recordChunks.push(event.data);};
-      recorder.onerror=()=>{discardRecording=true;toast('Recording failed. Please try again.');stopRecording(true);};
-      recorder.onstop=()=>{
-        const type=(recorder?.mimeType||mime||'audio/webm').split(';')[0],chunks=recordChunks;
-        const shouldDiscard=discardRecording;recorder=null;recordChunks=[];clearInterval(recordTimer);stream?.getTracks().forEach(track=>track.stop());stream=null;
-        if(!shouldDiscard&&!destroyed){const extension=type==='audio/ogg'?'ogg':type==='audio/mp4'?'m4a':'webm';addFiles([new File(chunks,`Voice note ${new Date().toISOString().replace(/[:.]/g,'-')}.${extension}`,{type})],{completedRecording:true});}else renderDraft();
+      const currentRecorder=createVoiceRecorder(acquired),chunks=[];let finished=false;
+      recorder=currentRecorder;recordChunks=chunks;discardRecording=false;recordStarted=Date.now();
+      currentRecorder.ondataavailable=event=>{if(!finished&&event.data.size)chunks.push(event.data);};
+      currentRecorder.onerror=()=>{if(recorder!==currentRecorder||finished)return;discardRecording=true;toast('Recording failed. Please try again.');stopRecording(true);};
+      currentRecorder.onstop=()=>{
+        if(finished)return;finished=true;const current=recorder===currentRecorder,shouldDiscard=discardRecording||!current;
+        acquired.getTracks().forEach(track=>track.stop());
+        if(current){recorder=null;recordChunks=[];clearInterval(recordTimer);if(stream===acquired)stream=null;}
+        if(!shouldDiscard&&!destroyed){try{addFiles([voiceRecordingFile(chunks,currentRecorder.mimeType)],{completedRecording:true});}catch(error){renderDraft();toast(error.message);}}else if(!destroyed)renderDraft();
       };
       recorder.start(1000);renderDraft();
       recordTimer=setInterval(()=>{const elapsed=Math.floor((Date.now()-recordStarted)/1000),time=app.querySelector('#record-time');if(time)time.textContent=`${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')}`;if(elapsed>=180||recordChunks.reduce((total,chunk)=>total+chunk.size,0)>=MAX_SIZE-1048576)stopRecording(false);},500);
@@ -240,9 +262,10 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     draft.uploadPromise=(async()=>{
       for(const attachment of draft.attachments)if(!attachment.uploaded){
         validateDraft(draft);if(draft.finished)throw new Error('This draft was cancelled.');
-        const timeout=AbortSignal.timeout(120000),uploadSignal=signal?AbortSignal.any([signal,timeout]):timeout;
-        const response=await fetch('/api/uploads?name='+encodeURIComponent(attachment.file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':attachment.file.type,'X-Rekha-Chat':getChat().id},body:attachment.file,signal:uploadSignal});
-        let data;try{data=await response.json();}catch{throw new Error('The attachment upload could not be completed.');}if(!response.ok)throw Object.assign(new Error(data.error||'Attachment upload failed.'),{status:response.status,code:data.code,retryAt:data.retryAt});if(!data?.id)throw new Error('The attachment upload did not return a file reference.');attachment.uploaded=data;
+        const request=createRequestAbort({signal,timeoutMs:120000});
+        try{const response=await fetch('/api/uploads?name='+encodeURIComponent(attachment.file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':attachment.file.type,'X-Rekha-Chat':getChat().id},body:attachment.file,signal:request.signal});
+          let data;try{data=await response.json();}catch{throw new Error('The attachment upload could not be completed.');}if(!response.ok)throw Object.assign(new Error(data.error||'Attachment upload failed.'),{status:response.status,code:data.code,retryAt:data.retryAt});if(!data?.id)throw new Error('The attachment upload did not return a file reference.');attachment.uploaded=data;
+        }finally{request.dispose();}
       }
       validateDraft(draft);if(draft.finished)throw new Error('This draft was cancelled.');
       return {body:draft.body,clientId:draft.clientId,...(draft.replyTo?{replyTo:draft.replyTo}:{}),...(draft.attachments.length?{mediaIds:draft.attachments.map(item=>item.uploaded.id)}:{})};
@@ -266,6 +289,8 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   function preserveDraft(){return {body:input()?.value||'',replyTo,editId:editing,editBackup,attachments:[...attachments],previewRevoked:true};}
   function restoreDraft(draft){if(!draft||destroyed)return;for(const item of attachments)URL.revokeObjectURL(item.preview);attachments=[...(draft.attachments||[])];revivePreviews(draft);replyTo=draft.replyTo||null;editing=draft.editId||null;editBackup=draft.editBackup||null;input().value=draft.body||'';input().dispatchEvent(new Event('input',{bubbles:true}));renderDraft();}
   function refresh(){if(destroyed)return;if((recorder||capturePending)&&(getChat()?.locked||getChat()?.blocked||features().customerMessagingEnabled===false||features().voiceNotesEnabled===false||features().attachmentsEnabled===false))stopRecording(true);else if((recorder||capturePending)&&held())stopRecording(false);if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)for(const [modal,release]of [...cameraReleases]){release();modal.close();}if(held()&&!wasHeld)typing(false);wasHeld=held();updateSend();const picker=app.querySelector('#attachment-picker');if(picker){picker.accept=acceptedFiles();picker.disabled=held();}markRead();}
-  function destroy(){if(destroyed)return;typing(false);destroyed=true;cancelPress();discardRecording=true;stopRecording(true);clearTimeout(typingTimer);clearInterval(recordTimer);for(const item of attachments)URL.revokeObjectURL(item.preview);for(const draft of snapshots)releasePreviews(draft);for(const modal of [...localDialogs]){cameraReleases.get(modal)?.();modal.close();}stream?.getTracks().forEach(track=>track.stop());}
+  const mediaVisibility=()=>{if(!document.hidden)return;if(recorder||capturePending)stopRecording(false);for(const [modal,release]of [...cameraReleases]){release();modal.close();}};
+  document.addEventListener('visibilitychange',mediaVisibility);
+  function destroy(){if(destroyed)return;typing(false);destroyed=true;document.removeEventListener('visibilitychange',mediaVisibility);cancelPress();discardRecording=true;stopRecording(true);clearTimeout(typingTimer);clearInterval(recordTimer);for(const item of attachments)URL.revokeObjectURL(item.preview);for(const draft of snapshots)releasePreviews(draft);for(const modal of [...localDialogs]){cameraReleases.get(modal)?.();modal.close();}stream?.getTracks().forEach(track=>track.stop());}
   mount();return {takeDraft,prepareDraft,finishDraft,preserveDraft,restoreDraft,preparePayload,sent,refresh,destroy,openMenu,startRecord:recordVoice,canRecord,canSend,hasLiveCapture:()=>Boolean(recorder||capturePending),isEditing:()=>Boolean(editing),hasContent,draftSignature:()=>JSON.stringify({replyTo,editing,files:attachments.map(item=>[item.file.name,item.file.size,item.file.lastModified])})};
 }

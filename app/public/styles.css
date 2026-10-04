@@ -43,3 +43,11 @@
 @keyframes kundli-fill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @media(max-width:380px){.kundli-onboarding{padding:20px 20px 24px}.kundli-onboarding h1{font-size:22px}.onboarding-heading{gap:8px}.onboarding-heading strong{font-size:14px}}
 @media(prefers-reduced-motion:reduce){.kundli-wheel,.kundli-progress span{animation:none}.kundli-progress span{transform:none}}
+
+/* Safari and installed Home Screen views share the same content and native controls. */
+:root{--safe-area-top:env(safe-area-inset-top,0px);--safe-area-right:env(safe-area-inset-right,0px);--safe-area-bottom:env(safe-area-inset-bottom,0px);--safe-area-left:env(safe-area-inset-left,0px)}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+#toast{bottom:max(26px,var(--safe-area-bottom));max-width:calc(100vw - max(16px,var(--safe-area-left)) - max(16px,var(--safe-area-right)))}
+@media(pointer:coarse){.field input,.onboarding-language select,dialog input:not([type=checkbox]):not([type=radio]):not([type=range]),dialog select{font-size:16px}input[type=date]{min-width:0;max-width:100%}}
+@media(max-width:680px){.screen,.kundli-onboarding{padding-top:max(24px,var(--safe-area-top));padding-right:max(24px,var(--safe-area-right));padding-bottom:max(30px,var(--safe-area-bottom));padding-left:max(24px,var(--safe-area-left))}.splash,.loading,.kundli-preparation{padding-top:max(36px,var(--safe-area-top));padding-right:max(28px,var(--safe-area-right));padding-bottom:max(36px,var(--safe-area-bottom));padding-left:max(28px,var(--safe-area-left))}}
+@media(display-mode:standalone){body:not(.chat-mode) .experience{min-height:100svh;min-height:100dvh}}

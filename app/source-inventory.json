@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.8-preview",
+  "version": "0.9.9-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -64,6 +64,7 @@
     "public/app-settings-ui.js",
     "public/app-settings.css",
     "public/app.js",
+    "public/apple-touch-icon.png",
     "public/art.svg",
     "public/calls.css",
     "public/calls.js",
@@ -99,6 +100,8 @@
     "public/permissions.js",
     "public/policies.css",
     "public/privacy-policy.html",
+    "public/pwa-icon-192.png",
+    "public/pwa-icon-512.png",
     "public/refund-cancellation.html",
     "public/rekha-portrait.png",
     "public/send-queue.js",
@@ -133,6 +136,7 @@
     "tests/media-emphasis.test.mjs",
     "tests/permissions.test.mjs",
     "tests/rewards.test.mjs",
+    "tests/safari-media.test.mjs",
     "tests/scaling-ui.test.mjs",
     "tests/send-queue.test.mjs",
     "tests/startup-delivery.test.mjs",

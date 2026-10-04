@@ -1,4 +1,5 @@
 import {languages} from './locales.js';
+import {createRequestAbort} from './permissions.js';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const clone=value=>structuredClone(value);
@@ -245,13 +246,13 @@ export async function openAppSettings({api,notice=()=>{}}){
     if(!file){status.textContent='Choose an MP4 file first.';return;}
     if((file.type&&file.type!=='video/mp4')||!file.name.toLowerCase().endsWith('.mp4')||file.size<1||file.size>25*1048576){status.textContent='Use an MP4 video no larger than 25 MB.';return;}
     confirming=true;const yes=await confirmation('Replace '+videos[slug]+' video?',`${file.name} (${(file.size/1048576).toFixed(1)} MB) will replace this video immediately for customers. This file change does not wait for Publish. Other unsaved edits remain here.`,'Replace video now');confirming=false;if(!yes)return;
-    busy=true;syncBusy();status.textContent='Uploading video…';
+    busy=true;syncBusy();status.textContent='Uploading video…';const requestAbort=createRequestAbort({timeoutMs:120000});
     try{
-      const response=await fetch(`/api/admin/intro/${slug}`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'video/mp4'},body:file,signal:AbortSignal.timeout(120000)});
+      const response=await fetch(`/api/admin/intro/${slug}`,{method:'PUT',credentials:'same-origin',headers:{'Content-Type':'video/mp4'},body:file,signal:requestAbort.signal});
       const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error||'The video could not be uploaded.'),{status:response.status});
       status.textContent='Video replaced. Your other edits are still in this draft.';input.value='';dialog.querySelector(`[data-video="${slug}"] video`).src=`/intro/${slug}.mp4?updated=${Date.now()}`;notice(videos[slug]+' video replaced.');
     }catch(failure){status.textContent=(failure.message||'Upload failed.')+' Your selected file and draft are preserved.';}
-    finally{busy=false;updateStatus();}
+    finally{requestAbort.dispose();busy=false;updateStatus();}
   }
   await load();
 }

@@ -18,12 +18,12 @@ class Element extends EventTarget{
   querySelector(selector){return this.all().find(child=>selector==='link[data-feature-access]'?child.tagName==='link'&&child.dataset.featureAccess:selector==='button'?child.tagName==='button':false)||null;}
   all(){return this.children.flatMap(child=>[child,...child.all()]);}
 }
-function fixture({userAgent='Chrome',permissionState='prompt',query=true,capture}={}){
+function fixture({userAgent='Chrome',permissionState='prompt',query=true,capture,timers={setTimeout,clearTimeout}}={}){
   const document={};document.head=new Element('head',document);document.body=new Element('body',document);document.createElement=tag=>new Element(tag,document);document.querySelector=selector=>document.head.querySelector(selector)||document.body.querySelector(selector);
   const window=new EventTarget(),events=[],streams=[];
   const navigator={userAgent,mediaDevices:{getUserMedia:async constraints=>{events.push('capture');if(capture)return capture(constraints);const track={stopped:false,stop(){this.stopped=true;}};const stream={getTracks:()=>[track]};streams.push(stream);return stream;}}};
   if(query)navigator.permissions={query:async({name})=>{events.push('query:'+name);return{state:typeof permissionState==='function'?await permissionState(name):permissionState};}};
-  const api=new Function('window','navigator','document','DOMException','AbortController','setTimeout','clearTimeout',source+'\nreturn {getFeatureMedia,showPermissionHelp,openFeatureAccess};')(window,navigator,document,DOMException,AbortController,setTimeout,clearTimeout);
+  const api=new Function('window','navigator','document','DOMException','AbortController','setTimeout','clearTimeout',source+'\nreturn {getFeatureMedia,showPermissionHelp,openFeatureAccess,createRequestAbort};')(window,navigator,document,DOMException,AbortController,timers.setTimeout,timers.clearTimeout);
   const reply=(requestId,feature,status)=>{const event=new Event('rekha:native-permission');event.detail={requestId,feature,status};window.dispatchEvent(event);};
   let nativeStatus='granted',settings=0;
   const installNative=()=>window.RekhaDevice={requestPermissionsForFeature(requestId,feature){events.push('native:'+feature);queueMicrotask(()=>reply(requestId,feature,nativeStatus));},openPermissionSettings(){settings++;}};
@@ -88,4 +88,37 @@ test('cancellation during browser-state lookup suppresses late help',async()=>{
 });
 test('a stream completing after cancellation is immediately stopped',async()=>{
   let resolve;const track={stopped:false,stop(){this.stopped=true;}},f=fixture({capture:()=>new Promise(done=>resolve=done)}),controller=new AbortController();const request=f.api.getFeatureMedia('microphone',{audio:true},{signal:controller.signal});await settle();controller.abort();await assert.rejects(request,{name:'AbortError'});resolve({getTracks:()=>[track]});await settle();assert.equal(track.stopped,true);assert.equal(f.dialog(),undefined);
+});
+
+test('iPhone capture still requests only the chosen microphone without a browser Permissions API',async()=>{
+  const f=fixture({userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 Mobile Safari/604.1',query:false});
+  let received;f.navigator.mediaDevices.getUserMedia=async constraints=>{received=constraints;f.events.push('capture');return {getTracks:()=>[]};};
+  await f.api.getFeatureMedia('microphone',{audio:true});assert.deepEqual(received,{audio:true});assert.deepEqual(f.events,['capture']);assert.equal(f.dialog(),undefined);
+});
+
+test('iPhone dismissal is retryable and never claims an unreported permanent denial',async()=>{
+  const f=fixture({userAgent:'iPhone Safari',query:false,capture:async()=>{throw denial();}});
+  await assert.rejects(f.api.getFeatureMedia('microphone',{audio:true}),error=>error.status==='denied'&&!error.permanent&&error.source==='browser');
+  assert.ok(f.button('Allow'));assert.ok(!/Android|settings/i.test(f.dialog().textContent));f.close();
+});
+
+function requestClock(){let key=0;const timers=new Map();return {setTimeout(fn,ms){const id=++key;timers.set(id,{fn,ms});return id;},clearTimeout:id=>timers.delete(id),pending:()=>timers.size,fire(){const [id,timer]=timers.entries().next().value;timers.delete(id);timer.fn();}};}
+class WatchedAbort extends AbortController{
+  constructor(){super();this.listeners=new Set();const add=this.signal.addEventListener.bind(this.signal),remove=this.signal.removeEventListener.bind(this.signal);this.signal.addEventListener=(name,fn,options)=>{if(name==='abort')this.listeners.add(fn);add(name,fn,options);};this.signal.removeEventListener=(name,fn)=>{if(name==='abort')this.listeners.delete(fn);remove(name,fn);};}
+}
+test('request abort works without AbortSignal static helpers and cleans up a completed request',()=>{
+  const timers=requestClock(),f=fixture({timers}),a=new WatchedAbort(),b=new WatchedAbort();
+  const request=f.api.createRequestAbort({signal:a.signal,signals:[a.signal,b.signal],timeoutMs:40000});
+  assert.equal(a.listeners.size,1);assert.equal(b.listeners.size,1);assert.equal(timers.pending(),1);assert.equal(request.signal.aborted,false);
+  request.dispose();request.dispose();assert.equal(a.listeners.size,0);assert.equal(b.listeners.size,0);assert.equal(timers.pending(),0);a.abort();assert.equal(request.signal.aborted,false);
+});
+test('request abort propagates cancellation and an already-aborted parent without a lingering deadline',()=>{
+  const timers=requestClock(),f=fixture({timers}),a=new WatchedAbort(),b=new WatchedAbort(),reason=new DOMException('Chat closed','AbortError');
+  const request=f.api.createRequestAbort({signals:[a.signal,b.signal],timeoutMs:20000});b.abort(reason);
+  assert.equal(request.signal.aborted,true);assert.equal(request.signal.reason,reason);assert.equal(timers.pending(),0);assert.equal(a.listeners.size,0);assert.equal(b.listeners.size,0);
+  const already=f.api.createRequestAbort({signal:b.signal,timeoutMs:40000});assert.equal(already.signal.reason,reason);assert.equal(timers.pending(),0);assert.equal(b.listeners.size,0);
+});
+test('request timeout aborts the fetch/body signal and releases all source listeners',()=>{
+  const timers=requestClock(),f=fixture({timers}),a=new WatchedAbort(),request=f.api.createRequestAbort({signal:a.signal,timeoutMs:120000});
+  timers.fire();assert.equal(request.signal.aborted,true);assert.equal(request.signal.reason.name,'TimeoutError');assert.equal(a.listeners.size,0);assert.equal(timers.pending(),0);
 });
