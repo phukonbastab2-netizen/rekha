@@ -16,6 +16,13 @@ test('startup deadlines and safe clock offset persist while hidden rows and draf
   const cached=await f.create().read({id});assert.equal(cached.chat.messages.length,6);assert.deepEqual(cached.chat.messages.slice(0,4).map(row=>row.deliveryAt),startup.map(row=>row.deliveryAt));
   assert.equal(cached.chat.messages[3].created,created+20000);assert.equal(cached.chat.clockOffsetMs,-125000);assert.equal(cached.chat.serverTime,undefined);assert.equal(cached.chat.typing.owner,false);assert.equal(cached.chat.messages[4].deliveryAt,undefined);assert.equal(cached.chat.messages[5].deliveryAt,undefined);assert.equal(cached.pending.draft.body,'Keep my unsent draft');
 });
+
+test('all thirty-four scheduled assistant rows fit in one bounded cache page with unchanged IDs and deadlines',async t=>{
+  const f=fixture(t),store=f.create({pageSize:80}),created=Date.parse('2026-10-04T01:00:00Z');
+  const scheduled=Array.from({length:34},(_,index)=>{const due=index<4?created+(index+1)*5000:created+320000+(index-4)*5000;return message(index+1,{role:'assistant',kind:index<4?'owner-message':'kundli-review-line',created:due,deliveryAt:due});});
+  await store.merge(view(scheduled,{clockOffsetMs:-120000}),{kind:'initial',history:history({revision:34,oldestId:1,hasOlder:false})});store.close();const cached=await f.create().read({id});
+  assert.equal(cached.chat.messages.length,34);assert.equal(cached.hasOlderLocal,false);assert.deepEqual(cached.chat.messages.map(row=>[row.id,row.created,row.deliveryAt]),scheduled.map(row=>[row.id,row.created,row.deliveryAt]));assert.equal(cached.history.revision,34);assert.equal(cached.chat.clockOffsetMs,-120000);
+});
 function fixture(t){const indexedDB=new IDBFactory(),options={indexedDB,IDBKeyRange,dbName:'local-fixture'},stores=[];const create=extra=>{const store=createDeviceChatStore({...options,...extra});stores.push(store);return store;};t.after(()=>stores.forEach(store=>store.close()));return{create,indexedDB};}
 const request=q=>new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
 async function rawDatabase(indexedDB){return request(indexedDB.open('local-fixture',1));}

@@ -59,8 +59,9 @@ export async function messagingReadUpload(request,limit,fail){
   const bytes=new Uint8Array(size);let offset=0;for(const part of chunks){bytes.set(part,offset);offset+=part.length;}return bytes;
 }
 const messagingStartupIdsSql="'onboarding:kundli-v1','onboarding:kundli-review-v1','onboarding:testimonials-v1','onboarding:kundli-wait-v1'";
-export const messagingColumns="id,role,kind,body,status,created,CASE WHEN role='assistant' AND client_id IN ("+messagingStartupIdsSql+") THEN created ELSE NULL END AS deliveryAt,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId";
-export const messagingCustomerReadLimitSql=`SELECT MIN(COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=?),0),COALESCE((SELECT MIN(id)-1 FROM messages WHERE conversation_id=? AND client_id IN (${messagingStartupIdsSql}) AND role='assistant' AND created>?),9223372036854775807)) AS id`;
+const messagingReviewIdRangeSql="client_id>='onboarding:review-line-v1:00' AND client_id<='onboarding:review-line-v1:29' AND client_id GLOB 'onboarding:review-line-v1:[0-2][0-9]'";
+export const messagingColumns="id,role,kind,body,status,created,CASE WHEN role='assistant' AND (client_id IN ("+messagingStartupIdsSql+") OR (kind='kundli-review-line' AND "+messagingReviewIdRangeSql+")) THEN created ELSE NULL END AS deliveryAt,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId";
+export const messagingCustomerReadLimitSql=`SELECT MIN(COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=?),0),COALESCE((SELECT MIN(id)-1 FROM messages WHERE conversation_id=? AND client_id IN (${messagingStartupIdsSql}) AND role='assistant' AND created>?),9223372036854775807),COALESCE((SELECT MIN(id)-1 FROM messages INDEXED BY sqlite_autoindex_messages_1 WHERE conversation_id=? AND ${messagingReviewIdRangeSql} AND kind='kundli-review-line' AND role='assistant' AND created>?),9223372036854775807)) AS id`;
 export async function messagingHistory({request,chat,all,fail,options={}}){
   const params=new URL(request.url).searchParams,cutoff=chat.change_revision||0;
   const before=request.method==='GET'?params.get('beforeId'):null,after=request.method==='GET'?params.get('afterRevision'):null;
@@ -199,10 +200,10 @@ export async function messagingRoutes(ctx){
     }
     if(action==='read'){
       if(!Number.isSafeInteger(data.lastId)||data.lastId<0)throw fail(400,'Invalid read position.');
-      // Later customer messages can have higher IDs than undisplayed startup
-      // rows. Do not let a read-through cursor mark those rows read early.
-      // The four explicit private IDs use the existing conversation/client index.
-      const latest=isOwner?await one('SELECT COALESCE(MAX(id),0) AS id FROM messages WHERE conversation_id=?',chat.id):await one(messagingCustomerReadLimitSql,chat.id,chat.id,Date.now()),read=Math.min(data.lastId,latest.id);
+      // Later manual/customer rows may have higher IDs than hidden sequence
+      // rows. The conservative prefix cursor waits; composition is independent.
+      // Four exact IDs and the bounded follow-up range reuse the existing index.
+      const readTime=Date.now(),latest=isOwner?await one('SELECT COALESCE(MAX(id),0) AS id FROM messages WHERE conversation_id=?',chat.id):await one(messagingCustomerReadLimitSql,chat.id,chat.id,readTime,chat.id,readTime),read=Math.min(data.lastId,latest.id);
       await stmt(`UPDATE chat_messaging SET ${isOwner?'owner_read':'customer_read'}=MAX(${isOwner?'owner_read':'customer_read'},?) WHERE conversation_id=?`,read,chat.id).run();return result({ok:true});
     }
     if(action==='typing'){
@@ -267,7 +268,7 @@ async function messagingOwnerSend(ctx){
     stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND "+guard,chat.id,answerId??-1,...guardArgs),
     stmt('DELETE FROM drafts WHERE conversation_id=? AND '+guard,chat.id,...guardArgs),
     ...(library.length?[stmt('INSERT OR IGNORE INTO media_grants(conversation_id,media_id) SELECT ?,value FROM json_each(?) WHERE '+guard,chat.id,JSON.stringify(library.map(item=>item.id)),...guardArgs)]:[]),
-    stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait')) WHERE id=? AND "+guard,chat.id,chat.id,...guardArgs),
+    stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait','kundli-review-line')) WHERE id=? AND "+guard,chat.id,chat.id,...guardArgs),
     stmt('UPDATE chat_messaging SET owner_typing=0 WHERE conversation_id=? AND '+guard,chat.id,...guardArgs),
     stmt("UPDATE conversations SET mode=CASE WHEN mode='ai' THEN 'manual' ELSE mode END,version=version+1,updated=? WHERE id=? AND "+guard,now,chat.id,...guardArgs),
   ]);

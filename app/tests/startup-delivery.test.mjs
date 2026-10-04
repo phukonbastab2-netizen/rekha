@@ -5,6 +5,7 @@ import {kundliWaitDeadline,kundliWaitState} from '../public/countdown.js';
 
 const start=Date.parse('2026-10-04T01:00:00Z');
 const rows=()=>[1,2,3,4].map(id=>({id,role:'assistant',kind:id===4?'kundli-wait':'owner-message',created:start+id*5000,deliveryAt:start+id*5000,body:'Startup '+id}));
+const followups=()=>Array.from({length:30},(_,index)=>({id:index+5,role:'assistant',kind:'kundli-review-line',created:start+320000+index*5000,deliveryAt:start+320000+index*5000,body:'Local follow-up '+index}));
 function fixture({skew=120000,elapsed=0,cached=null}={}){
   let wall=start+skew+elapsed,tick=elapsed,chat=cached||{id:'local-startup-chat',serverTime:start,messages:rows()},nextId=0;
   const timers=new Map(),reveals=[],doc=new EventTarget(),win=new EventTarget();doc.hidden=false;doc.visibilityState='visible';
@@ -72,4 +73,30 @@ test('a later ordinary high-ID reply cannot hide delayed low-ID startup rows or 
   assert.deepEqual(f.delivery.view().messages.map(row=>row.id),[9]);assert.equal(f.delivery.view().startupReadLimit,0);
   f.advance(5000);assert.deepEqual(f.delivery.view().messages.map(row=>row.id),[1,9]);assert.equal(f.delivery.view().startupReadLimit,1);
   f.advance(15000);assert.equal(f.delivery.view().startupReadLimit,null);assert.equal(f.delivery.view().messages.length,5);
+});
+
+test('post-timer sequence remains quiet through the long wait, shows a five-second lead, then reveals thirty lines',t=>{
+  const f=fixture();t.after(()=>f.delivery.destroy());const messages=[...rows(),...followups()],original=JSON.stringify(messages);
+  f.setChat({id:'local-startup-chat',messages});f.delivery.accept({id:'local-startup-chat',serverTime:start});f.delivery.start();f.advance(20000);
+  assert.equal(f.delivery.state().pending,true);assert.equal(f.delivery.state().sending,false);assert.equal(f.delivery.state().readLimit,4);assert.equal(f.delivery.state().nextWakeAt,start+315000);assert.equal([...f.timers.values()][0].due,315000);
+  const count=f.reveals.length;f.advance(294999);assert.equal(f.reveals.length,count);assert.equal(f.delivery.state().sending,false);assert.equal(f.delivery.view().messages.length,4);
+  f.advance(1);assert.equal(f.delivery.state().sending,true);assert.equal(f.delivery.view().messages.length,4);assert.equal(kundliWaitState(kundliWaitDeadline(messages[3]),f.delivery.now()).text,'00:05');
+  f.advance(5000);assert.deepEqual(f.delivery.view().messages.map(row=>row.id),[1,2,3,4,5]);assert.equal(kundliWaitState(kundliWaitDeadline(messages[3]),f.delivery.now()).text,'00:00');
+  for(let index=1;index<30;index++){f.advance(5000);assert.equal(f.delivery.view().messages.length,5+index);assert(f.timers.size<=1);}
+  assert.equal(f.delivery.view().messages.length,34);assert.equal(f.delivery.state().sending,false);assert.equal(f.delivery.state().readLimit,null);assert.equal(f.timers.size,0);assert.equal(JSON.stringify(messages),original);
+});
+
+test('offline reopen before and during post-timer delivery preserves deadlines and does not restart the kundli timer',t=>{
+  const messages=[...rows(),...followups()],cached={id:'local-startup-chat',clockOffsetMs:-120000,serverTime:start,messages};
+  const waiting=fixture({elapsed:100000,cached});t.after(()=>waiting.delivery.destroy());waiting.delivery.accept(cached,{cached:true});waiting.delivery.start();
+  assert.equal(waiting.delivery.view().messages.length,4);assert.equal(waiting.delivery.state().sending,false);assert.equal(waiting.delivery.state().nextWakeAt,start+315000);assert.equal(kundliWaitState(kundliWaitDeadline(messages[3]),waiting.delivery.now()).text,'03:40');
+  const later=fixture({elapsed:327000,cached});t.after(()=>later.delivery.destroy());later.delivery.accept(cached,{cached:true});later.delivery.start();
+  assert.equal(later.delivery.view().messages.length,6);assert.equal(later.delivery.state().sending,true);assert.deepEqual(later.reveals,[]);assert.equal(kundliWaitState(kundliWaitDeadline(messages[3]),later.delivery.now()).text,'00:00');
+  later.advance(3000);assert.equal(later.delivery.view().messages.length,7);assert.equal(later.reveals.length,1);assert.equal(messages[3].created,start+20000);
+});
+
+test('future deleted rows keep read ordering safe without a false sending indicator',()=>{
+  const deleted={id:5,role:'assistant',deleted:true,deliveryAt:start+5000},next={id:6,role:'assistant',deliveryAt:start+20000};
+  const state=startupDeliveryState([deleted,next],start);assert.equal(state.sending,false);assert.equal(state.readLimit,4);assert.equal(state.nextWakeAt,start+5000);
+  const after=startupDeliveryState([deleted,next],start+5000);assert.equal(after.sending,false);assert.equal(after.nextWakeAt,start+15000);
 });

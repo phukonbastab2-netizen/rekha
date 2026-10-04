@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 
-const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/worker.mjs'];
+const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/worker.mjs'];
 let script=files.map(file=>fs.readFileSync(file,'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n');
 const providerCall="const reply=await generateReply({aiMode:'demo'},chat,history);";
 assert.ok(script.includes(providerCall),'Fixture instruments the actual production reply call.');

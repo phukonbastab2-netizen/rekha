@@ -86,7 +86,7 @@ function applyPublishedConfig(next){
   if(stage==='chat'){app.querySelector('.chat-name').textContent=astrologerName();app.querySelector('.chat-caption').textContent=chatAvailability();app.querySelector('.composer .footnote').textContent=text('reflection');fingerprint='';drawChat();updateComposePrimary();}
   window.dispatchEvent(new CustomEvent('rekha:app-settings',{detail:{appSettings:config.appSettings,settingsRevision:config.settingsRevision}}));
 }
-const startupSending=()=>startupDelivery.state().pending;
+const startupSending=()=>startupDelivery.state().sending;
 const ownerTyping=()=>Boolean(chat?.typing?.owner)&&sessionVerified&&!networkOffline&&!offline;
 const chatAvailability = () => startupSending()?'भेज रही हैं… · Bhej rahi hain…':ownerTyping()?(lang==='hi'?'लिख रही हैं…':'Typing…'):lang === 'hi' ? 'ऑनलाइन' : 'Online';
 const conversationNotice = () => lang === 'hi' ? 'सुरक्षित बातचीत' : 'Safe and secure conversation';

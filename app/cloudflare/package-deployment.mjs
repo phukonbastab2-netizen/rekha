@@ -17,7 +17,8 @@ const calls=readFileSync(path.join(root,'cloudflare','calls.mjs'),'utf8').replac
 const workflow=readFileSync(path.join(root,'cloudflare','workflow.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export const','const');
 const appSettings=readFileSync(path.join(root,'cloudflare','app-settings.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
 const rewards=readFileSync(path.join(root,'cloudflare','rewards.mjs'),'utf8').replaceAll('export async function','async function').replaceAll('export function','function').replaceAll('export const','const');
+const kundliFollowup=readFileSync(path.join(root,'cloudflare','kundli-followup.mjs'),'utf8').replaceAll('export const','const');
 const worker=readFileSync(path.join(root,'cloudflare','worker.mjs'),'utf8').replace(/^import .*;\r?\n/gm,'').replaceAll('export const','const').replace('env.ASSETS.fetch(new Request(target,request))','staticAssetFetch(new Request(target,request))');
-const bundle=staticCode+ai+'\n'+messaging+'\n'+calls+'\n'+workflow+'\n'+appSettings+'\n'+owner+'\n'+rewards+'\n'+worker;
+const bundle=staticCode+ai+'\n'+messaging+'\n'+calls+'\n'+workflow+'\n'+appSettings+'\n'+owner+'\n'+rewards+'\n'+kundliFollowup+'\n'+worker;
 writeFileSync(path.join(root,'cloudflare','worker-bundle.mjs'),bundle);
 console.log(JSON.stringify({bundleBytes:Buffer.byteLength(bundle),assets:files.length}));

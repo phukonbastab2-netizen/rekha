@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.5-preview",
+  "version": "0.9.6-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -29,6 +29,7 @@
     "android/tests/in/rekhaastrology/astrorani/PermissionPolicyTest.java",
     "cloudflare/app-settings.mjs",
     "cloudflare/calls.mjs",
+    "cloudflare/kundli-followup.mjs",
     "cloudflare/messaging.mjs",
     "cloudflare/migration-app-settings.sql",
     "cloudflare/migration-attachment-quota.sql",
@@ -126,6 +127,7 @@
     "tests/countdown.test.mjs",
     "tests/device-chat-store.test.mjs",
     "tests/editor-integration.mjs",
+    "tests/media-emphasis.test.mjs",
     "tests/permissions.test.mjs",
     "tests/rewards.test.mjs",
     "tests/scaling-ui.test.mjs",

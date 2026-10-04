@@ -5,6 +5,7 @@ import { callsRoutes } from './calls.mjs';
 import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowGetConfig, workflowRecoverMessages } from './workflow.mjs';
 import { appSettingsRoutes, appSettingsPublic, appSettingsDefaults } from './app-settings.mjs';
 import { generateReply } from '../src/ai.mjs';
+import { KUNDLI_FOLLOWUP_LINES } from './kundli-followup.mjs';
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const encoder=new TextEncoder();
 const hash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',encoder.encode(text))),b=>b.toString(16).padStart(2,'0')).join('');
@@ -30,7 +31,7 @@ async function finishChatReply(ctx,chat,message,text,kind,lease=null){
       AND EXISTS(SELECT 1 FROM messages WHERE id=? AND conversation_id=? AND status IN ('pending','failed'))${leaseGuard}`,chat.id,kind,text,replyId,Date.now(),chat.id,chat.version,chat.mode,message.id,chat.id,...leaseArgs),
     // changes() belongs to the immediately preceding INSERT in this atomic batch.
     // Concurrent completions or an obsolete reply cannot increment the chat twice.
-    stmt("UPDATE conversations SET version=version+1,free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait')),updated=? WHERE id=? AND changes()=1",chat.id,Date.now(),chat.id),
+    stmt("UPDATE conversations SET version=version+1,free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait','kundli-review-line')),updated=? WHERE id=? AND changes()=1",chat.id,Date.now(),chat.id),
     stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)",chat.id,message.id,chat.id,replyId),
     stmt('DELETE FROM drafts WHERE conversation_id=? AND message_id<=? AND EXISTS(SELECT 1 FROM messages WHERE conversation_id=? AND client_id=?)',chat.id,message.id,chat.id,replyId),
   ]);
@@ -90,7 +91,12 @@ export async function handleApi(request,env,executionContext){
   async function view(chat,admin=false,options={}){
     const bounded=request.headers.get('X-Rekha-History')==='bounded-v1',history=bounded?await messagingHistory({request,chat,all,fail,options}):{rows:messages(chat.id)};
     const [guidedConversation,messaging,draft]=await Promise.all([automationEnabled&&workflowIsEnrolled(one,chat.id),messagingView({chat,messages:history.rows,admin,one,all,bounded,acknowledgedId:options.acknowledgedId}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;
-    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,serverTime:Date.now(),inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
+    const serverTime=Date.now();
+    // Legacy customers and the native alert reader have no local scheduler.
+    // Bounded clients retain all rows for durable offline/delta delivery; the
+    // owner still sees every stored row and ordinary timestamps are unaffected.
+    if(!bounded&&!admin)messaging.messages=messaging.messages.filter(message=>message.deliveryAt===null||message.deliveryAt<=serverTime);
+    return{id:chat.id,name:chat.name,dob:chat.dob,language:chat.language,preferences:JSON.parse(chat.preferences),version:chat.version,updated:chat.updated,serverTime,inboxRevision:chat.inbox_revision||0,...(admin?{mode:chat.mode}:{}),guidedConversation,rewardedReplies:chat.rewards||0,freeUsed:chat.free_used,freeRemaining:Math.max(0,freeTurns+(chat.rewards||0)-chat.free_used),entitlement:chat.entitlement,locked:automationEnabled&&!guidedConversation&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0),...messaging,...(bounded?history.metadata:{}),...(admin?{draft}:{})};
   }
   async function acknowledge(chat,acknowledgedId){
     if(!chat)throw fail(409,'The chat changed. Please refresh.');
@@ -134,7 +140,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-paced-startup-0.9.5'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-kundli-followup-0.9.6'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
@@ -167,15 +173,20 @@ export async function handleApi(request,env,executionContext){
         const payload=JSON.stringify({text:'Your kundli',title:'',items:[{id:kundli.id,title:'Shared kundli image',type:'image',url:'/api/media/'+kundli.id,mime:kundli.mime,size:kundli.size}]});
         const videoPayload=JSON.stringify({text:'',title:'',items:[{id:testimonials.id,title:'क्लाइंट्स के रिव्यू · Clients ke reviews',type:'video',url:'/api/media/'+testimonials.id,mime:testimonials.mime,size:testimonials.size}]});
         // The complete startup sequence and both private grants commit together.
-        // Created timestamps are durable display deadlines for these four rows
-        // only: five-second preparation followed by five-second delivery gaps.
+        // Created timestamps are durable display deadlines for this owner-authored
+        // sequence: preparation, five-second startup gaps, then the five-minute
+        // wait followed by the unchanged stored lines at five-second gaps.
         // All rows are returned to keep delta cursors complete; clients reveal
-        // each at deliveryAt using serverTime. No timer schedules a later reply.
+        // each at deliveryAt using serverTime. No timer runs an AI or old workflow.
         // Any concurrent library archive rolls back rather than leaving a partial chat.
         startBatch.push(insert(id,'assistant','media',payload,'sent','onboarding:kundli-v1',now+5000),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,kundli.id),
           insert(id,'assistant','owner-message',kundliReviewMessage,'sent','onboarding:kundli-review-v1',now+10000),
           insert(id,'assistant','media',videoPayload,'sent','onboarding:testimonials-v1',now+15000),stmt('INSERT INTO media_grants(conversation_id,media_id) VALUES(?,?)',id,testimonials.id),
           insert(id,'assistant','kundli-wait','कुंडली देखने का समय · Kundli dekhne ka samay','sent','onboarding:kundli-wait-v1',now+20000));
+        const followupRows=KUNDLI_FOLLOWUP_LINES.map((body,index)=>({body,clientId:'onboarding:review-line-v1:'+String(index).padStart(2,'0'),created:now+20000+300000+index*5000}));
+        // One JSON-driven statement keeps the entire startup atomic without
+        // spending one D1 query or seven bound parameters for each stored line.
+        startBatch.push(stmt("INSERT INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'assistant','kundli-review-line',json_extract(value,'$.body'),'sent',json_extract(value,'$.clientId'),json_extract(value,'$.created') FROM json_each(?) ORDER BY CAST(key AS INTEGER)",id,JSON.stringify(followupRows)));
       }
       if(automationEnabled&&!kundli)startBatch.push(insert(id,'assistant','welcome',welcome[data.language]));
       await db.batch(startBatch);

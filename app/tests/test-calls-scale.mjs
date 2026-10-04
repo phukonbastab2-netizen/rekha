@@ -5,7 +5,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 
-const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/worker.mjs'];
+const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/worker.mjs'];
 const source=files.map(file=>readFileSync(file,'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1').replace('export default {','const testWorker={')).join('\n');
 const instrument=`export default {async fetch(request,env,context){let queries=0,rowsRead=0;
   const add=result=>{rowsRead+=Number(result.meta?.rows_read)||0;return result;};

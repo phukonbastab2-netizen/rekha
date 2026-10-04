@@ -1,6 +1,11 @@
 import {kundliWaitBody,bindCountdowns} from './countdown.js';
 const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const bindings=new WeakMap();let viewerNumber=0;
+export function safeBoldText(value){
+  const text=String(value??'');let result='',cursor=0;
+  for(const match of text.matchAll(/\*\*([\s\S]+?)\*\*/g)){result+=escape(text.slice(cursor,match.index))+'<strong>'+escape(match[1])+'</strong>';cursor=match.index+match[0].length;}
+  return result+escape(text.slice(cursor));
+}
 export function mediaItems(message){try{const data=JSON.parse(message.body);return message.kind==='media'&&Array.isArray(data.items)?data.items:[];}catch{return [];}}
 export function attachmentUrl(value){return /^\/api\/(?:media|attachments)\/[a-f0-9-]{36}$/.test(value||'')?value:null;}
 export function safeMediaLink(value){try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?url.href:null;}catch{return null;}}
@@ -27,6 +32,7 @@ function mediaCard(item,index,total){
 export function messageBody(message){
   if(message.deleted)return '<span class="deleted-message">This message was deleted</span>';
   if(message.kind==='kundli-wait')return kundliWaitBody(message);
+  if(message.kind==='kundli-review-line')return safeBoldText(message.body);
   if(message.kind!=='media')return escape(message.body);
   try{const data=JSON.parse(message.body);if(!Array.isArray(data.items))throw Error();
     const title=data.title?`<h3>${escape(data.title)}</h3>`:'',collection=data.items.length>1?`<div class="media-collection-head"><span>${data.items.length} attachments · in order</span><button type="button" data-open-collection>View collection</button></div>`:'';

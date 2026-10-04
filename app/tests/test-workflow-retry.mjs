@@ -6,7 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Miniflare, convertV4MiniflareOptions } from 'miniflare';
 
 const root = './';
-const files = ['cloudflare/rewards.mjs', 'cloudflare/messaging.mjs', 'cloudflare/calls.mjs', 'cloudflare/workflow.mjs', 'cloudflare/app-settings.mjs', 'cloudflare/owner.mjs', 'src/ai.mjs', 'cloudflare/worker.mjs'];
+const files = ['cloudflare/rewards.mjs', 'cloudflare/messaging.mjs', 'cloudflare/calls.mjs', 'cloudflare/workflow.mjs', 'cloudflare/app-settings.mjs', 'cloudflare/owner.mjs', 'src/ai.mjs', 'cloudflare/kundli-followup.mjs', 'cloudflare/worker.mjs'];
 let source = files.map(file => fs.readFileSync(root + file, 'utf8').replace(/^import .*;\r?\n/gm, '').replace(/export (async function|function|const)/g, '$1')).join('\n');
 const hook = 'async function onCustomerMessage(chat,message){if(automationEnabled)await flowOnCustomer(workflowCtx,chat,message);}';
 assert.equal(source.split(hook).length - 1, 1, 'The current worker must have one guarded customer workflow hook.');
