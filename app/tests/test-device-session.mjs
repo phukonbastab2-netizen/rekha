@@ -6,7 +6,7 @@ import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
 import {workflowDefaults} from '../cloudflare/workflow.mjs';
 
-const bundled=process.argv.includes('--bundle'),files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/worker.mjs'];
+const bundled=process.argv.includes('--bundle'),files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/activity.mjs','cloudflare/worker.mjs'];
 const script=bundled?fs.readFileSync('cloudflare/worker-bundle.mjs','utf8'):files.map(file=>fs.readFileSync(file,'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n');
 const origin='https://device-session.test',password='local-session-fixture-only',digest=value=>createHash('sha256').update(value).digest('hex');
 const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'device-session-'+randomUUID()},r2Buckets:{MEDIA:'device-session-media-'+randomUUID()},bindings:{ADMIN_PASSWORD_HASH:digest(password)},outboundService:()=>{throw Error('External requests are blocked for this local test.');}}));
@@ -23,7 +23,7 @@ try{
   for(const sql of splitSqlStatements(fs.readFileSync('cloudflare/schema.sql','utf8')))await db.prepare(sql).run();
   async function api(route,method='GET',body,cookie='',extra={}){const response=await mf.dispatchFetch(origin+route,{method,headers:{Origin:origin,'Content-Type':'application/json','CF-Connecting-IP':'192.0.2.'+(ip++),'X-Rekha-History':'bounded-v1',Cookie:cookie,...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});return{status:response.status,data:await response.json(),setCookie:response.headers.get('Set-Cookie')};}
   const expect=(response,status)=>{assert.equal(response.status,status,JSON.stringify(response.data));return response;};
-  const health=expect(await api('/api/health'),200);assert.equal(health.data.build,'rekha-ios-webapp-0.9.9');
+  const health=expect(await api('/api/health'),200);assert.equal(health.data.build,'rekha-activity-0.9.10');
   const config=expect(await api('/api/config'),200).data;assert.equal(config.automationEnabled,false);assert.equal(config.rewardsEnabled,false);assert.equal(config.paymentMode,'demo');
   const anonymous=expect(await api('/api/chat'),401);assert.equal(anonymous.setCookie,null,'Unauthenticated reads must not mint a replacement session.');
   const unknown=expect(await api('/api/chat','GET',undefined,'ar_session='+'1'.repeat(64)),401);assert.equal(unknown.setCookie,null);

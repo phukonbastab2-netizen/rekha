@@ -13,6 +13,7 @@ import { createStartupDelivery,orderDeliveredMessages,followupChoiceState,isFoll
 import { setCountdownClock } from './countdown.js';
 import { DONATION_INTEREST_TEXT,donationInterestState,isDonationInterestResponse } from './customer-followup.js';
 import { createRequestAbort } from './permissions.js';
+import { initActivity,setActivityScreen,manageActivityConsent,getActivityConsent,setActivityConsent } from './activity.js';
 const app = document.querySelector('#app'), dialog = document.querySelector('#privacy-dialog');
 const esc = value => String(value).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 let lang = 'en', config, chat, stage = 'splash', profile = {}, busy = false, checkoutBusy = false, fingerprint = '', offline = false, messaging = null, composerDraft=null;
@@ -209,7 +210,7 @@ function renderChat() {
   chatMutation++;
   messageMarkup.clear();
   messaging?.destroy(); messaging = null;
-  stage = 'chat';sessionEnded=false; updateLanguage(chat.language); fingerprint = '';
+  stage = 'chat';setActivityScreen('chat');sessionEnded=false; updateLanguage(chat.language); fingerprint = '';
   startupDelivery.start();observeVisibleSounds('initial');
   document.body.classList.add('chat-mode');
   const securityNote = conversationNotice();
@@ -358,8 +359,12 @@ async function checkout() {
   } catch (error) { toast(error.message || text('generalError')); reset(); }
 }
 function privacy(editable) {
+  setActivityScreen('privacy');
   dialog.innerHTML = `<h2 id="privacy-title">${t('privacy')}</h2><p>${t('privacyUse')}</p><p><a href="https://rekhaastrology.in/astrorani/privacy-policy.html" target="_blank" rel="noopener noreferrer">${t('fullPrivacy')}</a> · <a href="https://rekhaastrology.in/astrorani/data-deletion.html" target="_blank" rel="noopener noreferrer">${t('deletionHelp')}</a></p><p>${esc(text('retention').replace('{days}',config.retentionDays??config.appSettings?.service?.retentionDays??30))}</p>${editable ? `<h3>${t('optionalEdit')}</h3>${choices(chat.preferences)}<button class="primary" id="save-privacy">${t('save')}</button><button class="text-button danger" id="delete-chat">${t('delete')}</button>` : ''}<div class="dialog-actions"><button class="secondary" id="close-dialog">${t('close')}</button></div>`;
   dialog.querySelector('#close-dialog').onclick = () => dialog.close();
+  const activityChoice=document.createElement('button');activityChoice.type='button';activityChoice.className='text-button';activityChoice.id='activity-settings';
+  activityChoice.textContent=(lang==='hi'?'गतिविधि साझा करना':'Activity sharing')+' · '+(getActivityConsent()===true?(lang==='hi'?'चालू':'On'):(lang==='hi'?'बंद':'Off'));
+  activityChoice.onclick=()=>{dialog.close();manageActivityConsent();};dialog.querySelector('.dialog-actions').before(activityChoice);
   if (editable) {
     dialog.querySelector('#save-privacy').onclick = async event => { const button = event.currentTarget; button.disabled = true; try { const prefs = await readChoices(dialog);acceptServerChat(await api('/api/preferences','PATCH',prefs));dialog.close();toast(text('privacySaved'));}catch(error){toast(error.message);}finally{button.disabled=false;} };
     dialog.querySelector('#delete-chat').onclick = confirmDelete;
@@ -377,13 +382,13 @@ function confirmDelete() {
 }
 function videoSignup(progress={}){
   releaseOnboarding();releaseChatLayout();calls?.destroy();calls=null;messaging?.destroy();messaging=null;chatPoll.stop();startupDelivery.stop();outbox.pause();
-  document.body.classList.remove('chat-mode');stage='onboarding';
+  document.body.classList.remove('chat-mode');stage='onboarding';setActivityScreen('intro');
   onboarding=mountVideoSignup(app,{brandName:brandName(),language:lang,profile,progress,onLanguage:updateLanguage,onSubmit:createKundliChat});
   releaseOnboarding=()=>{onboarding?.dispose();onboarding=null;releaseOnboarding=()=>{};};
 }
 async function createKundliChat(details,progress){
   if(busy||stage!=='onboarding')return;busy=true;profile={...details};updateLanguage(details.language);
-  releaseOnboarding();stage='preparing';renderKundliPreparation(app,lang);const started=performance.now();
+  releaseOnboarding();stage='preparing';setActivityScreen('kundli_loading');renderKundliPreparation(app,lang);const started=performance.now();
   try{
     let next;
     try{next=await api('/api/start','POST',{...details,onboarding:'video-kundli-v1',preferences:{remember:true,location:null}});}
@@ -426,4 +431,6 @@ window.addEventListener('rekha:native-back',event=>{event.preventDefault();void 
 window.addEventListener('offline',()=>{networkOffline=true;offline=true;updateConnection();requestChatDraw();});
 window.addEventListener('online',()=>{networkOffline=false;if(stage==='chat'){updateConnection();outbox.resume({retryUncertain:true});chatPoll.poke({immediate:true});}});
 window.addEventListener('beforeunload',event=>{void persistPending();if(!closingApp&&(stage==='preparing'||stage==='onboarding'&&onboarding?.draft().name||outbox.isPending()||messaging?.hasContent()||messaging?.hasLiveCapture?.()||composerDraft&&(composerDraft.body||composerDraft.attachments?.length))){event.preventDefault();event.returnValue='';}});
+dialog.addEventListener('close',()=>setActivityScreen(stage==='chat'?'chat':stage==='preparing'?'kundli_loading':stage==='onboarding'?'intro':'splash'));
+initActivity({surface:'customer'});
 boot();

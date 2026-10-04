@@ -8,7 +8,7 @@ import path from 'node:path';
 // Use the actual Worker handlers with an ephemeral database. The dataset stays
 // small enough for the ordinary CI runner; the separate benchmark covers volume.
 const root=path.resolve('.');
-const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/worker.mjs'];
+const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/activity.mjs','cloudflare/worker.mjs'];
 const script=files.map(name=>readFileSync(path.join(root,name),'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n');
 const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script,compatibilityDate:'2026-09-24',d1Databases:{DB:'bounded-history-test'},r2Buckets:{MEDIA:'bounded-history-media'},bindings:{CUSTOMER_AUTOMATION_ENABLED:'true',ADMIN_PASSWORD_HASH:createHash('sha256').update('local-test-password').digest('hex')}}));
 const db=await mf.getD1Database('DB');

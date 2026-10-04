@@ -4,6 +4,7 @@ import { messagingRoutes, messagingView, messagingAcknowledgment, messagingDelet
 import { callsRoutes } from './calls.mjs';
 import { workflowRoutes, flowOnStart, flowOnCustomer, workflowProcessDue, workflowIsEnrolled, workflowGetConfig, workflowRecoverMessages } from './workflow.mjs';
 import { appSettingsRoutes, appSettingsPublic, appSettingsDefaults } from './app-settings.mjs';
+import { activityRoutes, activityPrune, activityRecordDownload } from './activity.mjs';
 import { generateReply } from '../src/ai.mjs';
 import { KUNDLI_FOLLOWUP_LINES, KUNDLI_FOLLOWUP_QUESTION, KUNDLI_DONATION_MESSAGE } from './kundli-followup.mjs';
 const fail=(status,message)=>Object.assign(new Error(message),{status});
@@ -165,13 +166,14 @@ export async function handleApi(request,env,executionContext){
   }
   try{
     // Receipt/typing updates and sign-in do not need a second settings read.
-    const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
+    const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv','/api/activity','/api/admin/activity'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-ios-webapp-0.9.9'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-activity-0.9.10'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');
     if(['POST','PUT','PATCH','DELETE'].includes(method)){if(request.headers.get('Origin')!==url.origin)throw fail(403,'Request origin not allowed.');await rate(`write:${request.headers.get('CF-Connecting-IP')||'unknown'}`,240);}
+    if(route==='/api/activity')return await activityRoutes({request,env,route,method,stmt,one,all,result,fail,rate});
     const edited=await appSettingsRoutes(workflowCtx);if(edited)return edited;
     const flowCtx=automationEnabled?workflowCtx:{...workflowCtx,body:async()=>{const data=await body();if(route==='/api/admin/workflow/settings'&&data.enabled===true||/^\/api\/admin\/conversations\/[a-f0-9-]{36}\/workflow$/.test(route)&&['start','resume','restart'].includes(data.action))throw fail(409,'Automatic replies and previous sequences are paused.');return data;}};
     const workflow=await workflowRoutes(flowCtx);if(workflow)return workflow;
@@ -240,6 +242,7 @@ export async function handleApi(request,env,executionContext){
     if(route==='/api/admin/login'&&method==='POST'){await rate(`login:${request.headers.get('CF-Connecting-IP')||'unknown'}`,6,300000);const data=await body();if(typeof data.password!=='string'||await hash(data.password)!==env.ADMIN_PASSWORD_HASH)throw fail(401,'Incorrect owner password.');const session=token();await stmt('INSERT INTO admin_sessions(token_hash,expires) VALUES(?,?)',await hash(session),Date.now()+8*3600000).run();return result({ok:true},200,{'Set-Cookie':cookie('ar_admin',session)});}
     if(route.startsWith('/api/admin/')){
       await owner();
+      if(route==='/api/admin/activity')return await activityRoutes({request,env,route,method,stmt,one,all,result,fail,rate});
       const intro=route.match(/^\/api\/admin\/intro\/(welcome|introduction|testimonials|onboarding)$/);
       if(intro&&method==='PUT'){
         if(request.headers.get('Content-Type')!=='video/mp4')throw fail(415,'MP4 required.');
@@ -270,7 +273,7 @@ export async function handleApi(request,env,executionContext){
       }
     }
     throw fail(404,'Not found.');
-  }catch(error){return result({error:error.status?error.message:'Service temporarily unavailable. Please try again.',...(error.code==='CUSTOMER_SEND_HOLD'?{code:error.code,retryAt:error.retryAt}:{}),...(error.retryable===true?{retryable:true}:{})},error.status||503);}finally{releaseBackground();}
+  }catch(error){return result({error:error.status?error.message:'Service temporarily unavailable. Please try again.',...(error.code==='CUSTOMER_SEND_HOLD'?{code:error.code,retryAt:error.retryAt}:{}),...(error.retryable===true?{retryable:true}:{})},error.status||503,route==='/api/activity'&&Number.isSafeInteger(error.retryAfter)&&error.retryAfter>0?{'Retry-After':String(Math.min(86400,error.retryAfter))}:{});}finally{releaseBackground();}
 }
 
 export default {
@@ -278,7 +281,9 @@ export default {
     const url=new URL(request.url);
     const downloadHost=url.hostname==='rekhaastrology.in';
     const policy=url.pathname.match(/^\/(?:astrorani\/)?(privacy-policy|terms-and-conditions|refund-cancellation|disclaimer|shipping-policy|data-deletion|support|contact|about)(?:\.html|\/)?$/);
-    if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani')&&!policy&&!['/policies.css','/app-ads.txt'].includes(url.pathname))return fetch(request);
+    if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani')&&!policy&&!['/policies.css','/app-ads.txt','/api/activity'].includes(url.pathname))return fetch(request);
+    // Keep website telemetry within the existing /astrorani route as well.
+    if(url.pathname==='/astrorani/api/activity')return handleApi(new Request(new URL('/api/activity',url),request),env,executionContext);
     if(url.pathname.startsWith('/api/'))return handleApi(request,env,executionContext);
     if(url.pathname==='/brand/logo'){
       if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405,headers});
@@ -310,6 +315,9 @@ export default {
     if(asset==='/admin'||asset==='/admin/')asset='/admin.html';
     if(asset==='/astrorani'||asset==='/astrorani/')asset='/download.html';
     if(asset==='/astrorani/install-guide.js')asset='/install-guide.js';
+    if(asset==='/astrorani/activity.js')asset='/activity.js';
+    if(asset==='/astrorani/activity-init.js')asset='/activity-init.js';
+    if(asset==='/astrorani/activity.css')asset='/activity.css';
     if(asset==='/astrorani/rekha-portrait.png')asset='/rekha-portrait.png';
     if(asset==='/astrorani/apple-touch-icon.png')asset='/apple-touch-icon.png';
     if(asset==='/astrorani/icon-192.png')asset='/icon-192.png';
@@ -324,9 +332,19 @@ export default {
     if(asset==='/astrorani/SHA256.txt')asset='/SHA256.txt';
     if(['GET','HEAD'].includes(request.method)&&['/AstroRani.apk','/SHA256.txt'].includes(asset)){
       const release=await env.MEDIA.get('releases/AstroRani.apk');
+      if(release&&asset==='/AstroRani.apk'&&request.method==='GET'&&!request.headers.has('Range')){
+        const stmt=(sql,...args)=>env.DB.prepare(sql).bind(...args);
+        const recording=activityRecordDownload({request,stmt}).catch(()=>{});
+        if(executionContext?.waitUntil)executionContext.waitUntil(recording);else await recording;
+      }
       if(release)return new Response(request.method==='HEAD'?null:asset==='/SHA256.txt'?`${release.customMetadata.sha256}  RekhaAstrology.apk\n`:release.body,{headers:{...headers,'Content-Type':asset.endsWith('.apk')?'application/vnd.android.package-archive':'text/plain; charset=utf-8',...(asset.endsWith('.apk')?{'Content-Disposition':'attachment; filename="RekhaAstrology.apk"','Content-Length':String(release.size)}:{})}});
     }
     const target=new URL(asset,url.origin);const response=await env.ASSETS.fetch(new Request(target,request));
+    if(asset==='/AstroRani.apk'&&response.status===200&&request.method==='GET'&&!request.headers.has('Range')){
+      const stmt=(sql,...args)=>env.DB.prepare(sql).bind(...args);
+      const recording=activityRecordDownload({request,stmt,status:response.status}).catch(()=>{});
+      if(executionContext?.waitUntil)executionContext.waitUntil(recording);else await recording;
+    }
     const out=new Response(response.body,response);for(const [key,value]of Object.entries(headers))out.headers.set(key,value);
     if(asset.endsWith('.apk')){out.headers.set('Content-Type','application/vnd.android.package-archive');out.headers.set('Content-Disposition','attachment; filename="RekhaAstrology.apk"');out.headers.set('Cache-Control','public, max-age=300');}
     return out;
@@ -334,6 +352,7 @@ export default {
   async scheduled(controller,env){
     const queryBudget={used:0,limit:47,can(reserve){return this.used+reserve<=this.limit;}},stmt=(sql,...args)=>{queryBudget.used++;return env.DB.prepare(sql).bind(...args);},one=(sql,...args)=>stmt(sql,...args).first(),all=async(sql,...args)=>(await stmt(sql,...args).all()).results;
     const ctx={env,stmt,one,all,fail,queryBudget,get:id=>one('SELECT * FROM conversations WHERE id=?',id)};ctx.appSettings=(await appSettingsPublic(ctx)).settings;const deadline=Date.now()+20000;
+    if(queryBudget.can(4))await activityPrune(ctx,{daily:controller.cron==='17 2 * * *'}).catch(()=>{});
     if(controller.cron==='17 2 * * *')await stmt("INSERT INTO workflow_settings(key,value) VALUES('retention-before',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",String(Date.now()-ctx.appSettings.service.retentionDays*86400000)).run();
     const sweeping=await one("SELECT 1 FROM workflow_settings WHERE key='retention-before'");if(sweeping)queryBudget.limit=36;
     if(customerAutomationEnabled(env)){

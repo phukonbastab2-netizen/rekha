@@ -9,7 +9,7 @@ import {messagingCustomerReadLimitSql,messagingCustomerHoldColumns,messagingCust
 import {KUNDLI_FOLLOWUP_LINES,KUNDLI_FOLLOWUP_QUESTION,KUNDLI_DONATION_MESSAGE} from '../cloudflare/kundli-followup.mjs';
 
 const bundled=process.argv.includes('--bundle');
-const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/worker.mjs'];
+const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/activity.mjs','cloudflare/worker.mjs'];
 const original=(bundled?fs.readFileSync('cloudflare/worker-bundle.mjs','utf8'):files.map(file=>fs.readFileSync(file,'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n')).replace(/\r\n/g,'\n');
 assert.ok(original.includes("data.onboarding==='video-kundli-v1'"),'Fixture must use the actual onboarding handler.');
 assert.equal(original.split('await db.batch(startBatch);').length,2,'Instrument only the atomic startup batch for an archive race.');

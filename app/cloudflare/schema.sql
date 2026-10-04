@@ -4,6 +4,13 @@ CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,convers
 CREATE TABLE IF NOT EXISTS drafts(conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,message_id INTEGER NOT NULL,body TEXT NOT NULL,kind TEXT NOT NULL,version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS admin_sessions(token_hash TEXT PRIMARY KEY,expires INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS rate_limits(key TEXT PRIMARY KEY,count INTEGER NOT NULL,expires INTEGER NOT NULL);
+-- Consented static UI metadata; no messages, fields, IP addresses or device information.
+CREATE TABLE IF NOT EXISTS activity_events(id TEXT PRIMARY KEY,visitor_id TEXT NOT NULL,session_id TEXT NOT NULL,conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,surface TEXT NOT NULL CHECK(surface IN ('website','customer')),page TEXT NOT NULL,screen TEXT NOT NULL,action TEXT NOT NULL,type TEXT NOT NULL CHECK(type IN ('click','screen','media')),at INTEGER NOT NULL,received INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS activity_received ON activity_events(received,id);
+CREATE INDEX IF NOT EXISTS activity_visitor_received ON activity_events(visitor_id,received,id);
+CREATE INDEX IF NOT EXISTS activity_conversation_received ON activity_events(conversation_id,received,id);
+CREATE INDEX IF NOT EXISTS activity_surface_received ON activity_events(surface,received,id);
+CREATE TABLE IF NOT EXISTS activity_daily(day INTEGER PRIMARY KEY,download_requests INTEGER NOT NULL DEFAULT 0 CHECK(download_requests>=0));
 CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id,id);
 
 CREATE TABLE IF NOT EXISTS media_items(id TEXT PRIMARY KEY,title TEXT NOT NULL,type TEXT NOT NULL,category TEXT NOT NULL DEFAULT 'general',object_key TEXT,url TEXT,mime TEXT,size INTEGER NOT NULL DEFAULT 0,archived INTEGER NOT NULL DEFAULT 0,created INTEGER NOT NULL);

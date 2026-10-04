@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID,createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {splitSqlStatements} from '../cloudflare/sql-statements.mjs';
-const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/worker.mjs'];
+const files=['cloudflare/rewards.mjs','cloudflare/messaging.mjs','cloudflare/calls.mjs','cloudflare/workflow.mjs','cloudflare/app-settings.mjs','cloudflare/owner.mjs','src/ai.mjs','cloudflare/kundli-followup.mjs','cloudflare/activity.mjs','cloudflare/worker.mjs'];
 let script=files.map(file=>readFileSync(file,'utf8').replace(/^import .*;\r?\n/gm,'').replace(/export (async function|function|const)/g,'$1')).join('\n').replace('export default {','const fixtureWorker={');
 script+=`
 const fixtureMetrics=[],fixtureRaces=new Map();
