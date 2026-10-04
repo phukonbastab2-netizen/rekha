@@ -12,6 +12,8 @@ export function mergeServerChat(previous,next){
     else if(message.readByOther===true&&fresh.readByOther!==true)incoming.set(message.id,{...fresh,readByOther:true});
   }
   const metadata={...(stale?previous:next)};
+  if(previous?.kundliChoiceAnswered===true||next.kundliChoiceAnswered===true)metadata.kundliChoiceAnswered=true;
+  if(next.customerSendHold)metadata.customerSendHold=next.customerSendHold;
   if(previous&&Number.isSafeInteger(Number(next.inboxRevision))&&Number.isSafeInteger(Number(previous.inboxRevision))){const settings=Number(next.inboxRevision)<Number(previous.inboxRevision)?previous:next;for(const key of ['inboxRevision','pinned','archived','blocked','labels','notes'])if(key in settings)metadata[key]=settings[key];}
   return{...metadata,messages:[...incoming.values()].sort((a,b)=>a.id-b.id)};
 }
@@ -41,7 +43,8 @@ export function createSendQueue({send,onChange=()=>{},onAck=()=>{},onConfirmed=(
       if(records.has(record.clientId)){record.state='failed';record.uncertain=true;record.error='Delivery is not confirmed. Retry uses the same message.';changed();}
     }catch(error){
       if(!records.has(record.clientId))return;
-      if(paused){record.state='queued';record.error='';}
+      if(error.code==='CUSTOMER_SEND_HOLD'&&Number.isSafeInteger(error.retryAt)){paused=true;record.state='queued';record.error='';record.uncertain=false;onError(error,record);}
+      else if(paused){record.state='queued';record.error='';}
       else{record.state='failed';record.uncertain=!error.status||error.status>=500;record.error=error.message||'Could not confirm delivery. Retry safely.';onError(error,record);}
       changed();
     }finally{record.controller=null;if(active===record)active=null;schedule();}

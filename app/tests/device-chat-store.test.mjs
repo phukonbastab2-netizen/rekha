@@ -8,6 +8,14 @@ const message=(n,extra={})=>({id:n,role:n%2?'user':'assistant',kind:'customer',b
 const view=(messages,extra={})=>({id,name:'Local fixture',dob:'1990-01-01',language:'en',version:1,updated:1,inboxRevision:1,blocked:false,locked:false,messages,historyComplete:false,...extra});
 const history=(extra={})=>({id,revision:250,oldestId:171,hasOlder:true,...extra});
 
+test('hold boundaries and confirmed Yes survive sparse offline reopen without freezing sampled active state',async t=>{
+  const f=fixture(t),store=f.create(),startsAt=Date.parse('2026-10-04T01:00:00Z'),endsAt=startsAt+145000;
+  await store.merge(view([message(35,{role:'assistant',kind:'kundli-followup-choice',created:endsAt,deliveryAt:endsAt})],{customerSendHold:{startsAt,endsAt,active:true},kundliChoiceAnswered:true,clockOffsetMs:-120000}));
+  await store.savePending(id,{draft:{body:'Keep this question',replyTo:7,attachments:[]},records:[{conversationId:id,clientId:'kundli-followup-yes-v1-35',created:endsAt,snapshot:{body:'Yes',clientId:'kundli-followup-yes-v1-35'},state:'queued'}]});
+  await store.merge(view([],{customerSendHold:{startsAt,endsAt,active:false},kundliChoiceAnswered:false,version:2}));store.close();const cached=await f.create().read({id});
+  assert.deepEqual(cached.chat.customerSendHold,{startsAt,endsAt});assert.equal(cached.chat.kundliChoiceAnswered,true);assert.equal(cached.chat.clockOffsetMs,-120000);assert.equal(cached.pending.draft.body,'Keep this question');assert.equal(cached.pending.draft.replyTo,7);assert.equal(cached.pending.records[0].clientId,'kundli-followup-yes-v1-35');assert.equal(cached.pending.records[0].snapshot.body,'Yes');
+});
+
 test('startup deadlines and safe clock offset persist while hidden rows and drafts remain available offline',async t=>{
   const f=fixture(t),store=f.create(),created=Date.parse('2026-10-04T01:00:00Z');
   const startup=[1,2,3,4].map(n=>message(n,{role:'assistant',created:created+n*5000,deliveryAt:created+n*5000,kind:n===4?'kundli-wait':'owner-message'}));

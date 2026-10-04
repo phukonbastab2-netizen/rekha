@@ -59,9 +59,16 @@ export async function messagingReadUpload(request,limit,fail){
   const bytes=new Uint8Array(size);let offset=0;for(const part of chunks){bytes.set(part,offset);offset+=part.length;}return bytes;
 }
 const messagingStartupIdsSql="'onboarding:kundli-v1','onboarding:kundli-review-v1','onboarding:testimonials-v1','onboarding:kundli-wait-v1'";
+const messagingReadProtectedIdsSql=messagingStartupIdsSql+",'onboarding:review-choice-v1'";
 const messagingReviewIdRangeSql="client_id>='onboarding:review-line-v1:00' AND client_id<='onboarding:review-line-v1:29' AND client_id GLOB 'onboarding:review-line-v1:[0-2][0-9]'";
-export const messagingColumns="id,role,kind,body,status,created,CASE WHEN role='assistant' AND (client_id IN ("+messagingStartupIdsSql+") OR (kind='kundli-review-line' AND "+messagingReviewIdRangeSql+")) THEN created ELSE NULL END AS deliveryAt,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId";
-export const messagingCustomerReadLimitSql=`SELECT MIN(COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=?),0),COALESCE((SELECT MIN(id)-1 FROM messages WHERE conversation_id=? AND client_id IN (${messagingStartupIdsSql}) AND role='assistant' AND created>?),9223372036854775807),COALESCE((SELECT MIN(id)-1 FROM messages INDEXED BY sqlite_autoindex_messages_1 WHERE conversation_id=? AND ${messagingReviewIdRangeSql} AND kind='kundli-review-line' AND role='assistant' AND created>?),9223372036854775807)) AS id`;
+export const messagingColumns="id,role,kind,body,status,created,CASE WHEN role='assistant' AND (client_id IN ("+messagingStartupIdsSql+") OR (kind='kundli-review-line' AND "+messagingReviewIdRangeSql+") OR (kind='kundli-followup-choice' AND client_id='onboarding:review-choice-v1')) THEN created ELSE NULL END AS deliveryAt,change_revision AS changeRevision,CASE WHEN role='user' THEN client_id ELSE NULL END AS clientId";
+export const messagingCustomerHoldColumns="(SELECT created FROM messages WHERE conversation_id=conversations.id AND client_id='onboarding:review-line-v1:00' AND role='assistant' AND kind='kundli-review-line') AS send_hold_start,(SELECT created FROM messages WHERE conversation_id=conversations.id AND client_id='onboarding:review-line-v1:29' AND role='assistant' AND kind='kundli-review-line') AS send_hold_end,(SELECT id FROM messages WHERE conversation_id=conversations.id AND client_id='onboarding:review-choice-v1' AND role='assistant' AND kind='kundli-followup-choice') AS kundli_choice_id,EXISTS(SELECT 1 FROM messages choice JOIN messages response ON response.conversation_id=choice.conversation_id AND response.client_id='kundli-followup-yes-v1-'||choice.id WHERE choice.conversation_id=conversations.id AND choice.client_id='onboarding:review-choice-v1' AND choice.role='assistant' AND choice.kind='kundli-followup-choice' AND response.role='user') AS kundli_choice_answered";
+export const messagingCustomerHoldActiveSql="EXISTS(SELECT 1 FROM messages first JOIN messages last ON last.conversation_id=first.conversation_id AND last.client_id='onboarding:review-line-v1:29' AND last.role='assistant' AND last.kind='kundli-review-line' WHERE first.conversation_id=? AND first.client_id='onboarding:review-line-v1:00' AND first.role='assistant' AND first.kind='kundli-review-line' AND first.created<=? AND last.created>?)";
+export function messagingCustomerSendHold(chat,now=Date.now()){
+  const startsAt=Number.isSafeInteger(chat.send_hold_start)?chat.send_hold_start:null,endsAt=Number.isSafeInteger(chat.send_hold_end)?chat.send_hold_end:null,valid=startsAt!==null&&endsAt!==null&&endsAt>startsAt;
+  return{startsAt:valid?startsAt:null,endsAt:valid?endsAt:null,active:valid&&startsAt<=now&&now<endsAt};
+}
+export const messagingCustomerReadLimitSql=`SELECT MIN(COALESCE((SELECT MAX(id) FROM messages WHERE conversation_id=?),0),COALESCE((SELECT MIN(id)-1 FROM messages WHERE conversation_id=? AND client_id IN (${messagingReadProtectedIdsSql}) AND role='assistant' AND (client_id!='onboarding:review-choice-v1' OR kind='kundli-followup-choice') AND created>?),9223372036854775807),COALESCE((SELECT MIN(id)-1 FROM messages INDEXED BY sqlite_autoindex_messages_1 WHERE conversation_id=? AND ${messagingReviewIdRangeSql} AND kind='kundli-review-line' AND role='assistant' AND created>?),9223372036854775807)) AS id`;
 export async function messagingHistory({request,chat,all,fail,options={}}){
   const params=new URL(request.url).searchParams,cutoff=chat.change_revision||0;
   const before=request.method==='GET'?params.get('beforeId'):null,after=request.method==='GET'?params.get('afterRevision'):null;
@@ -134,6 +141,7 @@ export async function messagingRoutes(ctx){
   const appChat=ctx.appSettings?.chat||{},freeTurns=ctx.appSettings?.service?.freeReplies??3,unlockPrice=ctx.appSettings?.service?.unlockPriceRupees??49;
   const quotaEnabled=ctx.automationEnabled!==false;
   const customerMayWrite=()=>{if(appChat.customerMessagingEnabled===false)throw fail(403,'Customer messages are currently paused.');};
+  const customerMaySend=(chat,now=Date.now())=>{const hold=messagingCustomerSendHold(chat,now);if(hold.active)throw Object.assign(fail(409,'Please wait until these messages finish, then send again.'),{code:'CUSTOMER_SEND_HOLD',retryAt:hold.endsAt});};
   const ensure=chatId=>stmt('INSERT OR IGNORE INTO chat_messaging(conversation_id) VALUES(?)',chatId).run();
   const settings=async chatId=>await one('SELECT * FROM chat_messaging WHERE conversation_id=?',chatId)||{};
   const attachmentItem=m=>({id:m.id,title:m.title,type:m.type,url:`/api/attachments/${m.id}`,mime:m.mime,size:m.size});
@@ -141,15 +149,16 @@ export async function messagingRoutes(ctx){
   async function quote(id,chatId){if(id==null)return null;if(!Number.isSafeInteger(id)||id<1||!await one('SELECT m.id FROM messages m LEFT JOIN message_messaging d ON d.message_id=m.id WHERE m.id=? AND m.conversation_id=? AND d.deleted IS NULL',id,chatId))throw fail(400,'The quoted message is unavailable.');return id;}
   if(route.startsWith('/api/attachments/'))return messagingAttachmentResponse(ctx);
   if(route==='/api/uploads'&&method==='POST'){
-    const chat=await customer();customerMayWrite();if(appChat.attachmentsEnabled===false)throw fail(403,'Customer attachments are currently unavailable.');if((await settings(chat.id)).blocked)throw fail(403,'Messages to this chat are paused.');await rate('upload:'+chat.id,8,60000);
+    const chat=await customer();customerMayWrite();customerMaySend(chat);if(appChat.attachmentsEnabled===false)throw fail(403,'Customer attachments are currently unavailable.');if((await settings(chat.id)).blocked)throw fail(403,'Messages to this chat are paused.');await rate('upload:'+chat.id,8,60000);
     if(quotaEnabled&&chat.entitlement==='free'&&chat.free_used>=freeTurns+(chat.rewards||0)&&!await isGuided?.(chat.id))throw fail(402,`Unlock continued chat for ₹${unlockPrice}.`);
     if(!env.MEDIA)throw fail(503,'Media storage is unavailable.');
     const mime=request.headers.get('Content-Type')?.split(';')[0].trim();if(!messagingMimes.has(mime))throw fail(415,'Choose an image, video, audio file or PDF.');
     if(mime.startsWith('audio/')&&appChat.voiceNotesEnabled===false)throw fail(403,'Customer voice notes are currently unavailable.');
     const bytes=await messagingReadUpload(request,20*1024*1024,fail);if(!messagingFileValid(bytes,mime))throw fail(400,'File contents do not match its format.');
+    const now=Date.now();customerMaySend(chat,now);
     const id=crypto.randomUUID(),objectKey='chat-attachments/'+id,title=messagingSafeName(new URL(request.url).searchParams.get('name')),type=mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'document';
-    const reserved=await stmt('INSERT INTO chat_attachments(id,conversation_id,title,type,object_key,mime,size,created) SELECT ?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM chat_attachments WHERE conversation_id=?)<80 AND (SELECT COALESCE(SUM(size),0) FROM chat_attachments WHERE conversation_id=?)+?<=209715200 AND (SELECT bytes FROM attachment_storage_stats WHERE id=1)+?<=1073741824',id,chat.id,title,type,objectKey,mime,bytes.length,Date.now(),chat.id,chat.id,bytes.length,bytes.length).run();
-    if(!reserved.meta.changes)throw fail(409,'Attachment storage for this chat is full.');
+    const reserved=await stmt('INSERT INTO chat_attachments(id,conversation_id,title,type,object_key,mime,size,created) SELECT ?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM chat_attachments WHERE conversation_id=?)<80 AND (SELECT COALESCE(SUM(size),0) FROM chat_attachments WHERE conversation_id=?)+?<=209715200 AND (SELECT bytes FROM attachment_storage_stats WHERE id=1)+?<=1073741824 AND NOT '+messagingCustomerHoldActiveSql,id,chat.id,title,type,objectKey,mime,bytes.length,now,chat.id,chat.id,bytes.length,bytes.length,chat.id,now,now).run();
+    if(!reserved.meta.changes){customerMaySend(await get(chat.id),now);throw fail(409,'Attachment storage for this chat is full.');}
     try{await env.MEDIA.put(objectKey,bytes,{httpMetadata:{contentType:mime}});await stmt('UPDATE chat_attachments SET ready=1 WHERE id=?',id).run();}catch(error){await env.MEDIA.delete(objectKey);await stmt('DELETE FROM chat_attachments WHERE id=?',id).run();throw error;}
     return result(attachmentItem(await one('SELECT * FROM chat_attachments WHERE id=?',id)),201);
   }
@@ -158,7 +167,7 @@ export async function messagingRoutes(ctx){
     if(!messagingClient(data.clientId)||typeof data.body!=='string'||data.body.length>2000)throw fail(400,'Write a message of up to 2,000 characters.');
     const existingMessage=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);
     if(existingMessage){try{await onCustomerMessage?.(await get(chat.id),existingMessage);}catch{}await schedule(chat.id);return result(await savedView(chat.id,existingMessage.id));}
-    customerMayWrite();const guided=!!await isGuided?.(chat.id);await rate('chat:'+chat.id,guided?60:48);
+    customerMayWrite();customerMaySend(chat);const guided=!!await isGuided?.(chat.id);await rate('chat:'+chat.id,guided?60:48);
     if(data.mediaIds?.length&&appChat.attachmentsEnabled===false)throw fail(403,'Customer attachments are currently unavailable.');
     const selected=await attachments(data.mediaIds||[],chat.id);
     if(selected.some(item=>item.type==='audio')&&appChat.voiceNotesEnabled===false)throw fail(403,'Customer voice notes are currently unavailable.');
@@ -167,15 +176,16 @@ export async function messagingRoutes(ctx){
     const replyTo=await quote(data.replyTo,chat.id);
     if(!data.body.trim()&&!selected.length)throw fail(400,'Write a message or attach a file.');
     const payload=selected.length?JSON.stringify({text:data.body.trim(),title:'',items:selected}):data.body.trim(),kind=selected.length?'media':'customer',now=Date.now();
+    customerMaySend(chat,now);
     const batch=await env.DB.batch([
-      stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'user',?,?,'pending',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND (?=0 OR entitlement!='free' OR free_used<?+(SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) OR EXISTS(SELECT 1 FROM chat_workflow WHERE conversation_id=conversations.id))) AND NOT EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked=1)",chat.id,kind,payload,data.clientId,now,chat.id,quotaEnabled?1:0,freeTurns,chat.id),
+      stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'user',?,?,'pending',?,? WHERE EXISTS(SELECT 1 FROM conversations WHERE id=? AND (?=0 OR entitlement!='free' OR free_used<?+(SELECT COUNT(*) FROM reward_grants WHERE conversation_id=conversations.id) OR EXISTS(SELECT 1 FROM chat_workflow WHERE conversation_id=conversations.id))) AND NOT EXISTS(SELECT 1 FROM chat_messaging WHERE conversation_id=? AND blocked=1) AND NOT "+messagingCustomerHoldActiveSql,chat.id,kind,payload,data.clientId,now,chat.id,quotaEnabled?1:0,freeTurns,chat.id,chat.id,now,now),
       stmt('UPDATE conversations SET version=version+1,updated=? WHERE id=? AND changes()=1',now,chat.id),
       stmt('INSERT INTO chat_messaging(conversation_id,archived,customer_typing) SELECT ?,0,0 WHERE changes()=1 ON CONFLICT(conversation_id) DO UPDATE SET archived=0,customer_typing=0',chat.id),
       stmt('DELETE FROM drafts WHERE conversation_id=? AND changes()=1',chat.id),
       stmt('INSERT OR IGNORE INTO message_messaging(message_id,reply_to) SELECT id,? FROM messages WHERE conversation_id=? AND client_id=?',replyTo,chat.id,data.clientId),
     ]);
     const saved=await one('SELECT * FROM messages WHERE conversation_id=? AND client_id=?',chat.id,data.clientId);
-    if(!saved)throw fail(409,'The chat changed. Please refresh.');
+    if(!saved){customerMaySend(await get(chat.id),now);throw fail(409,'The chat changed. Please refresh.');}
     // A stored message is acknowledged even if subsequent scheduling is interrupted.
     // The pending row and missing workflow event are recovered by polls and cron.
     try{await onCustomerMessage?.(await get(chat.id),saved);}catch{}
@@ -268,7 +278,7 @@ async function messagingOwnerSend(ctx){
     stmt("UPDATE messages SET status='answered' WHERE conversation_id=? AND role='user' AND id<=? AND status IN ('pending','failed') AND "+guard,chat.id,answerId??-1,...guardArgs),
     stmt('DELETE FROM drafts WHERE conversation_id=? AND '+guard,chat.id,...guardArgs),
     ...(library.length?[stmt('INSERT OR IGNORE INTO media_grants(conversation_id,media_id) SELECT ?,value FROM json_each(?) WHERE '+guard,chat.id,JSON.stringify(library.map(item=>item.id)),...guardArgs)]:[]),
-    stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait','kundli-review-line')) WHERE id=? AND "+guard,chat.id,chat.id,...guardArgs),
+    stmt("UPDATE conversations SET free_used=(SELECT COUNT(*) FROM messages WHERE conversation_id=? AND role='assistant' AND kind NOT IN ('welcome','owner-message','media','kundli-wait','kundli-review-line','kundli-followup-choice')) WHERE id=? AND "+guard,chat.id,chat.id,...guardArgs),
     stmt('UPDATE chat_messaging SET owner_typing=0 WHERE conversation_id=? AND '+guard,chat.id,...guardArgs),
     stmt("UPDATE conversations SET mode=CASE WHEN mode='ai' THEN 'manual' ELSE mode END,version=version+1,updated=? WHERE id=? AND "+guard,now,chat.id,...guardArgs),
   ]);

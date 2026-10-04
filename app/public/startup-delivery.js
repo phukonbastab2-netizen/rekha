@@ -5,6 +5,22 @@ export const DELIVERY_TYPING_LEAD_MS=5000;
 const timestamp=value=>Number.isSafeInteger(value)&&value>0&&value<=8640000000000000;
 export const validClockOffset=value=>Number.isSafeInteger(value)&&Math.abs(value)<=MAX_CLOCK_OFFSET_MS;
 const dueAt=message=>message?.role==='assistant'&&timestamp(message.deliveryAt)?message.deliveryAt:null;
+export function customerSendHoldState(chat,now){
+  const saved=chat?.customerSendHold,review=(chat?.messages||[]).filter(message=>message.role==='assistant'&&message.kind==='kundli-review-line').map(dueAt).filter(value=>value!==null);
+  const supplied=timestamp(saved?.startsAt)&&timestamp(saved?.endsAt)&&saved.endsAt>saved.startsAt;
+  const startsAt=supplied?saved.startsAt:review.length>1?Math.min(...review):null,endsAt=supplied?saved.endsAt:review.length>1?Math.max(...review):null;
+  const active=startsAt!==null&&now>=startsAt&&now<endsAt;
+  return {startsAt,endsAt,active,nextWakeAt:startsAt===null||now>=endsAt?null:now<startsAt?startsAt:endsAt};
+}
+export const followupChoiceClientId=id=>Number.isSafeInteger(Number(id))&&Number(id)>0?`kundli-followup-yes-v1-${Number(id)}`:null;
+export const isFollowupChoiceResponse=id=>typeof id==='string'&&/^kundli-followup-yes-v1-[1-9]\d*$/.test(id);
+export function followupChoiceState(chat,message,records=[]){
+  const clientId=message?.role==='assistant'&&message.kind==='kundli-followup-choice'&&!message.deleted?followupChoiceClientId(message.id):null;
+  const answered=Boolean(clientId&&(chat?.kundliChoiceAnswered===true||chat?.messages?.some(row=>row.role==='user'&&row.clientId===clientId)));
+  const record=clientId?records.find(item=>item.clientId===clientId&&item.conversationId===chat?.id):null;
+  const state=answered?'answered':record?record.state==='failed'?'failed':'pending':'available';
+  return {clientId,state,disabled:!clientId||answered||Boolean(record)||chat?.customerSendHold?.active===true};
+}
 export function orderDeliveredMessages(messages){
   const time=message=>typeof message.created==='number'?message.created:Date.parse(message.created)||0;
   const id=message=>Number.isSafeInteger(Number(message.id))?Number(message.id):Number.MAX_SAFE_INTEGER;
@@ -27,7 +43,10 @@ export function createStartupDelivery({getChat=()=>null,onReveal=()=>{},canRun=(
   let chatId=null,anchorServer=now(),anchorElapsed=monotonic(),lastServerTime=0,timer=null,started=false,destroyed=false,pageHidden=false;
   const serverNow=()=>anchorServer+Math.max(0,monotonic()-anchorElapsed);
   const available=()=>started&&!destroyed&&!pageHidden&&!documentTarget?.hidden&&documentTarget?.visibilityState!=='hidden'&&canRun();
-  const state=(chat=getChat())=>startupDeliveryState(chat?.messages||[],serverNow());
+  const state=(chat=getChat())=>{
+    const current=serverNow(),projection=startupDeliveryState(chat?.messages||[],current),hold=customerSendHoldState(chat,current),boundaries=[projection.nextWakeAt,hold.nextWakeAt].filter(value=>value!==null);
+    return {...projection,customerSendHold:hold,nextWakeAt:boundaries.length?Math.min(...boundaries):null};
+  };
   function cancel(){if(timer!==null)clearTimer(timer);timer=null;}
   function schedule(){
     cancel();if(!available())return;const next=state().nextWakeAt;if(next===null)return;
@@ -52,7 +71,7 @@ export function createStartupDelivery({getChat=()=>null,onReveal=()=>{},canRun=(
   windowTarget?.addEventListener('pagehide',pageHide);windowTarget?.addEventListener('pageshow',pageShow);
   return {
     accept,state,now:serverNow,clockOffsetMs,
-    view(view=getChat()){const projection=state(view);return view?{...view,messages:projection.messages,startupReadLimit:projection.readLimit}:view;},
+    view(view=getChat()){const projection=state(view);return view?{...view,messages:projection.messages,startupReadLimit:projection.readLimit,customerSendHold:projection.customerSendHold}:view;},
     start(){started=true;schedule();},
     refresh:schedule,
     stop(){started=false;cancel();},

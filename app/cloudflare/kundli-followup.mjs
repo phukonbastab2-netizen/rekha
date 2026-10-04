@@ -32,3 +32,4 @@ export const KUNDLI_FOLLOWUP_LINES=Object.freeze([
   '**आपकी मेहनत में कमी नहीं है,**',
   '**गलती ग्रह की स्थिति की है।**',
 ]);
+export const KUNDLI_FOLLOWUP_QUESTION='क्या आप और अधिक जानना चाहते हैं या फिर कुछ काम करवाना चाहते हैं?';

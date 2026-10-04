@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "version": "0.9.6-preview",
+  "version": "0.9.7-preview",
   "files": [
     ".dev.vars.example",
     ".env.example",
@@ -125,6 +125,7 @@
     "tests/app.test.mjs",
     "tests/chat-sounds.test.mjs",
     "tests/countdown.test.mjs",
+    "tests/customer-followup.test.mjs",
     "tests/device-chat-store.test.mjs",
     "tests/editor-integration.mjs",
     "tests/media-emphasis.test.mjs",

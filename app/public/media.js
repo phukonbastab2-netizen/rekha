@@ -29,10 +29,14 @@ function mediaCard(item,index,total){
   if(type==='link')preview=`<a class="media-link" href="${escape(source)}" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">↗</span> Open link<small>${escape(new URL(source).hostname)}</small></a>`;
   return `<figure class="media-card" ${attrs}>${preview}${info}${statusMarkup()}</figure>`;
 }
-export function messageBody(message){
+export function messageBody(message,{followupChoice=null}={}){
   if(message.deleted)return '<span class="deleted-message">This message was deleted</span>';
   if(message.kind==='kundli-wait')return kundliWaitBody(message);
   if(message.kind==='kundli-review-line')return safeBoldText(message.body);
+  if(message.kind==='kundli-followup-choice'&&followupChoice){
+    const state=['available','pending','failed','answered'].includes(followupChoice.state)?followupChoice.state:'available',note=state==='answered'?'Sent':state==='pending'?'Queued':state==='failed'?'Not sent':'';
+    return `<div class="kundli-followup-choice"><p>${escape(message.body)}</p><button type="button" class="kundli-followup-yes" data-followup-yes="${escape(message.id)}" data-choice-state="${state}"${followupChoice.disabled?' disabled':''}>Yes</button><span class="kundli-choice-status" role="status">${note}</span></div>`;
+  }
   if(message.kind!=='media')return escape(message.body);
   try{const data=JSON.parse(message.body);if(!Array.isArray(data.items))throw Error();
     const title=data.title?`<h3>${escape(data.title)}</h3>`:'',collection=data.items.length>1?`<div class="media-collection-head"><span>${data.items.length} attachments · in order</span><button type="button" data-open-collection>View collection</button></div>`:'';

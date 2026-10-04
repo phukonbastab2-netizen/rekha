@@ -21,7 +21,7 @@ export function messageExtras(message,chat,astrologerName='Rekha Astrology'){
   return {reply,reactionHtml,actions:`<button type="button" class="message-actions" data-message-actions="${Number(message.id)}" aria-label="Message options" title="Message options">${chatIcon('more',16)}</button>`,metadata:`${message.starred?'<span class="star-marker" title="Starred message" aria-label="Starred">★</span>':''}${message.edited&&!message.deleted?'<span class="edited-label">edited</span>':''}`,receipt:message.role==='user'?`<span class="sent-check delivered ${message.readByOther?'read':''}" title="${esc(receiptLabel)}" aria-label="${esc(receiptLabel)}">${chatIcon('checks',16)}</span>`:''};
 }
 export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy,isBusy=()=>false,getAppSettings=()=>null,sounds=null}){
-  let replyTo=null,editing=null,editBackup=null,attachments=[],uploading=false,capturePending=false,voiceCaptureController=null,recorder=null,stream=null,recordTimer=null,recordStarted=0,recordChunks=[],discardRecording=false,lastTyping=0,typingTimer=null,readId=0,destroyed=false,legacySnapshot=null;
+  let replyTo=null,editing=null,editBackup=null,attachments=[],uploading=false,capturePending=false,voiceCaptureController=null,recorder=null,stream=null,recordTimer=null,recordStarted=0,recordChunks=[],discardRecording=false,lastTyping=0,typingTimer=null,readId=0,destroyed=false,legacySnapshot=null,wasHeld=false;
   const snapshots=new Set();
   const cameraReleases=new Map();
   const localDialogs=new Set();
@@ -32,7 +32,8 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   const own=message=>message?.role==='user';
   const textMessage=message=>message?.kind!=='media'&&!message?.deleted;
   const features=()=>getAppSettings()?.chat||{};
-  const paused=()=>features().customerMessagingEnabled===false;
+  const held=()=>getChat()?.customerSendHold?.active===true;
+  const paused=()=>features().customerMessagingEnabled===false||held();
   const astrologer=()=>getAppSettings()?.brand?.astrologerName||'Rekha Astrology';
   function showDialog(title,html,style=''){
     const modal=document.createElement('dialog');modal.className='messaging-dialog'+(style?' '+style:'');modal.setAttribute('aria-label',title);modal.innerHTML=`<div class="messaging-dialog-head"><h2>${esc(title)}</h2><button type="button" data-close aria-label="Close">${chatIcon('close',22)}</button></div>${html}`;
@@ -44,8 +45,8 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     const draft=app.querySelector('#compose-draft');if(!draft)return;
     const referenced=find(editing||replyTo);
     draft.innerHTML=`${referenced?`<div class="draft-quote"><div><strong>${editing?'Edit message':own(referenced)?'Reply to yourself':`Reply to ${esc(astrologer())}`}</strong><span>${esc(messageSummary(referenced).slice(0,120))}</span></div><button type="button" id="cancel-context" aria-label="Cancel ${editing?'edit':'reply'}">×</button></div>`:''}${attachments.length?`<div class="attachment-drafts">${attachments.map((attachment,index)=>`<div class="attachment-draft">${attachment.file.type.startsWith('image/')?`<img src="${attachment.preview}" alt="">`:attachment.file.type.startsWith('audio/')?`<audio controls preload="metadata" src="${attachment.preview}"></audio>`:attachment.file.type.startsWith('video/')?`<video controls playsinline preload="metadata" src="${attachment.preview}"></video>`:'<span class="draft-file-icon" aria-hidden="true">▤</span>'}<span>${esc(attachment.file.name)}<small>${(attachment.file.size/1048576).toFixed(1)} MB</small></span><button type="button" data-remove-draft="${index}" aria-label="Remove ${esc(attachment.file.name)}">×</button></div>`).join('')}</div>`:''}${recorder?`<div class="recording-bar"><span class="record-dot"></span><strong>Recording voice note</strong><span id="record-time">0:00</span><button type="button" id="cancel-record">Cancel</button><button type="button" id="stop-record">Stop</button></div>`:capturePending?'<div class="recording-bar"><strong role="status">Opening microphone…</strong><button type="button" id="cancel-capture">Cancel</button></div>':''}`;
-    const cancel=draft.querySelector('#cancel-context');if(cancel)cancel.onclick=()=>{if(uploading)return;replyTo=null;if(editing){editing=null;input().value=editBackup?.body||'';replyTo=editBackup?.replyTo||null;editBackup=null;input().dispatchEvent(new Event('input',{bubbles:true}));}renderDraft();updateSend();};
-    for(const button of draft.querySelectorAll('[data-remove-draft]'))button.onclick=()=>{if(uploading)return;const [removed]=attachments.splice(Number(button.dataset.removeDraft),1);URL.revokeObjectURL(removed.preview);renderDraft();updateSend();};
+    const cancel=draft.querySelector('#cancel-context');if(cancel)cancel.onclick=()=>{if(uploading||held())return;replyTo=null;if(editing){editing=null;input().value=editBackup?.body||'';replyTo=editBackup?.replyTo||null;editBackup=null;input().dispatchEvent(new Event('input',{bubbles:true}));}renderDraft();updateSend();};
+    for(const button of draft.querySelectorAll('[data-remove-draft]'))button.onclick=()=>{if(uploading||held())return;const [removed]=attachments.splice(Number(button.dataset.removeDraft),1);URL.revokeObjectURL(removed.preview);renderDraft();updateSend();};
     const cancelRecord=draft.querySelector('#cancel-record');if(cancelRecord)cancelRecord.onclick=()=>stopRecording(true);
     const stopRecord=draft.querySelector('#stop-record');if(stopRecord)stopRecord.onclick=()=>stopRecording(false);
     const cancelCapture=draft.querySelector('#cancel-capture');if(cancelCapture)cancelCapture.onclick=()=>stopRecording(true);
@@ -61,11 +62,11 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     send.classList.toggle('has-draft',content);send.title=editing?'Save edited message':content?'Send message':'Record voice note';field.disabled=blocked;
     send.disabled=content?!canSend():!recordable;
     for(const button of app.querySelectorAll('.compose-tool')){button.disabled=Boolean(blocked||uploading||recorder||capturePending||(editing&&['attach-file','camera-photo'].includes(button.id)));if(['attach-file','camera-photo'].includes(button.id))button.hidden=features().attachmentsEnabled===false;}
-    for(const button of app.querySelectorAll('[data-remove-draft],#cancel-context'))button.disabled=uploading;
+    for(const button of app.querySelectorAll('[data-remove-draft],#cancel-context'))button.disabled=held()||uploading;
     composer()?.dispatchEvent(new CustomEvent('rekha:compose-state',{detail:{hasContent:content,canRecord:recordable,canSend:canSend(),recording:Boolean(recorder),capturePending,editing:Boolean(editing)}}));
   }
-  function addFiles(files){
-    if(destroyed||getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)return toast('Attachments are currently unavailable. Your existing draft is kept.');
+  function addFiles(files,{completedRecording=false}={}){
+    if(destroyed||getChat()?.locked||getChat()?.blocked||features().customerMessagingEnabled===false||held()&&!completedRecording||features().attachmentsEnabled===false)return toast('Attachments are currently unavailable. Your existing draft is kept.');
     if(features().voiceNotesEnabled===false&&[...files].some(file=>file.type.startsWith('audio/')))return toast('Audio uploads are currently paused.');
     if(editing)return toast('Finish editing your message before attaching a file.');
     for(const file of files){if(attachments.length>=10){toast('You can attach up to 10 files per message.');break;}if(!ACCEPT.split(',').includes(file.type)){toast('Choose a JPEG, PNG, WebP, MP4, WebM, audio file or PDF.');continue;}if(file.size>MAX_SIZE){toast(`${file.name} is larger than the 20 MB limit.`);continue;}if(!file.size){toast('The selected file is empty.');continue;}attachments.push({file,preview:URL.createObjectURL(file),uploaded:null});}
@@ -75,7 +76,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false||uploading||recorder||capturePending)return;
     if(editing)return toast('Finish editing your message before attaching a file.');
     const modal=showDialog('Attach',`<div class="attachment-actions"><button type="button" class="attachment-action" data-attach="gallery"><span class="attachment-action-icon">${chatIcon('image',26)}</span><strong>Gallery</strong><small>Photos &amp; videos</small></button><button type="button" class="attachment-action" data-attach="document"><span class="attachment-action-icon">${chatIcon('file',26)}</span><strong>Document</strong><small>Files &amp; audio</small></button><button type="button" class="attachment-action" data-attach="camera"><span class="attachment-action-icon">${chatIcon('camera',26)}</span><strong>Camera</strong><small>Take a photo</small></button></div>`,'attachment-sheet');
-    for(const kind of ['gallery','document'])modal.querySelector(`[data-attach="${kind}"]`).onclick=()=>{modal.close();picker.accept=kind==='gallery'?ACCEPT.split(',').filter(type=>type.startsWith('image/')||type.startsWith('video/')).join(','):acceptedFiles();picker.click();};
+    for(const kind of ['gallery','document'])modal.querySelector(`[data-attach="${kind}"]`).onclick=()=>{modal.close();if(paused()||getChat()?.blocked||getChat()?.locked||features().attachmentsEnabled===false)return;picker.accept=kind==='gallery'?ACCEPT.split(',').filter(type=>type.startsWith('image/')||type.startsWith('video/')).join(','):acceptedFiles();picker.click();};
     modal.querySelector('[data-attach="camera"]').onclick=()=>{modal.close();capturePhoto();};
   }
   function acceptedFiles(){return features().voiceNotesEnabled===false?ACCEPT.split(',').filter(type=>!type.startsWith('audio/')).join(','):ACCEPT;}
@@ -102,7 +103,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
       camera=acquired;video.srcObject=camera;video.onloadeddata=ready;await video.play().catch(()=>{});ready();
     }catch(error){release();if(!modal.isConnected||error.name==='AbortError')return;if(error.name==='PermissionAccessError'){modal.close();toast(error.message);return;}note.textContent=error.name==='NotAllowedError'?'Camera permission was declined. You can attach a photo from your files.':error.name==='NotFoundError'?'No camera was found. You can attach a photo from your files.':'The camera could not be opened. Please try again or attach a photo from your files.';button.disabled=true;}
   }
-  function emojiPicker(){const modal=showDialog('Emoji',`<div class="emoji-grid">${emojis.map(emoji=>`<button type="button" data-insert-emoji="${esc(emoji)}" aria-label="${esc(emoji)}">${emoji}</button>`).join('')}</div>`);for(const button of modal.querySelectorAll('[data-insert-emoji]'))button.onclick=()=>{const field=input();if(!field||field.disabled)return;const start=field.selectionStart,end=field.selectionEnd,text=button.dataset.insertEmoji;if(field.value.length-end+start+text.length>2000)return;field.setRangeText(text,start,end,'end');field.dispatchEvent(new Event('input',{bubbles:true}));modal.close();field.focus();};}
+  function emojiPicker(){if(paused()||input()?.disabled)return;const modal=showDialog('Emoji',`<div class="emoji-grid">${emojis.map(emoji=>`<button type="button" data-insert-emoji="${esc(emoji)}" aria-label="${esc(emoji)}">${emoji}</button>`).join('')}</div>`);for(const button of modal.querySelectorAll('[data-insert-emoji]'))button.onclick=()=>{const field=input();if(!field||field.disabled||paused())return;const start=field.selectionStart,end=field.selectionEnd,text=button.dataset.insertEmoji;if(field.value.length-end+start+text.length>2000)return;field.setRangeText(text,start,end,'end');field.dispatchEvent(new Event('input',{bubbles:true}));modal.close();field.focus();};}
   function recordingSupported(){return Boolean(navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);}
   async function recordVoice(){
       if(capturePending||paused()||features().voiceNotesEnabled===false||features().attachmentsEnabled===false)return;
@@ -122,7 +123,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
       recorder.onstop=()=>{
         const type=(recorder?.mimeType||mime||'audio/webm').split(';')[0],chunks=recordChunks;
         const shouldDiscard=discardRecording;recorder=null;recordChunks=[];clearInterval(recordTimer);stream?.getTracks().forEach(track=>track.stop());stream=null;
-        if(!shouldDiscard&&!destroyed){const extension=type==='audio/ogg'?'ogg':type==='audio/mp4'?'m4a':'webm';addFiles([new File(chunks,`Voice note ${new Date().toISOString().replace(/[:.]/g,'-')}.${extension}`,{type})]);}else renderDraft();
+        if(!shouldDiscard&&!destroyed){const extension=type==='audio/ogg'?'ogg':type==='audio/mp4'?'m4a':'webm';addFiles([new File(chunks,`Voice note ${new Date().toISOString().replace(/[:.]/g,'-')}.${extension}`,{type})],{completedRecording:true});}else renderDraft();
       };
       recorder.start(1000);renderDraft();
       recordTimer=setInterval(()=>{const elapsed=Math.floor((Date.now()-recordStarted)/1000),time=app.querySelector('#record-time');if(time)time.textContent=`${Math.floor(elapsed/60)}:${String(elapsed%60).padStart(2,'0')}`;if(elapsed>=180||recordChunks.reduce((total,chunk)=>total+chunk.size,0)>=MAX_SIZE-1048576)stopRecording(false);},500);
@@ -168,7 +169,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
     for(const button of modal.querySelectorAll('[data-menu]:not([data-menu="sounds"])'))button.onclick=()=>{const choice=button.dataset.menu;modal.close();if(choice==='privacy'&&(recorder||capturePending))return toast('Finish or cancel your voice recording before leaving the conversation.');if(choice==='privacy'&&isBusy())return toast('Please wait for the current action to finish.');if(['search','starred','media'].includes(choice))listMessages(choice);if(choice==='export')exportChat();if(choice==='access')openFeatureAccess();if(choice==='alerts'){try{window.RekhaDevice.showAlertSettings();}catch{toast('Alert settings could not be opened.');}}if(choice==='privacy')privacy(true);};
   }
   function typing(active){if(destroyed)return;api('/api/chat/typing','POST',{active}).catch(()=>{});}
-  function inputChanged(){updateSend();clearTimeout(typingTimer);const active=Boolean(input()?.value.trim())&&!editing;if(active&&Date.now()-lastTyping>3500){lastTyping=Date.now();typing(true);}typingTimer=setTimeout(()=>typing(false),2500);}
+  function inputChanged(){updateSend();clearTimeout(typingTimer);const active=Boolean(input()?.value.trim())&&!editing&&!paused();if(active&&Date.now()-lastTyping>3500){lastTyping=Date.now();typing(true);}typingTimer=setTimeout(()=>typing(false),2500);}
   function markRead(){
     if(destroyed||document.hidden)return;const scroller=app.querySelector('#chat-scroll');if(!scroller)return;const visible=scroller.getBoundingClientRect();if(visible.height<=0)return;
     const chat=getChat(),limit=chat?.startupReadLimit;
@@ -212,6 +213,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   }
   function validateDraft(draft){
     const rejected=(message,status)=>Object.assign(new Error(message),{status});
+    if(held())throw Object.assign(rejected('कृपया संदेश पूरे होने तक प्रतीक्षा करें।',409),{code:'CUSTOMER_SEND_HOLD',retryAt:getChat().customerSendHold.endsAt});
     if(paused())throw rejected('Customer messages are currently paused. Your draft is kept.',403);
     if(getChat()?.blocked)throw rejected('This conversation is unavailable. Your draft is kept.',403);
     if(getChat()?.locked&&!draft.editId)throw rejected('Unlock your conversation before sending. Your draft is kept.',402);
@@ -240,7 +242,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
         validateDraft(draft);if(draft.finished)throw new Error('This draft was cancelled.');
         const timeout=AbortSignal.timeout(120000),uploadSignal=signal?AbortSignal.any([signal,timeout]):timeout;
         const response=await fetch('/api/uploads?name='+encodeURIComponent(attachment.file.name),{method:'POST',credentials:'same-origin',headers:{'Content-Type':attachment.file.type,'X-Rekha-Chat':getChat().id},body:attachment.file,signal:uploadSignal});
-        let data;try{data=await response.json();}catch{throw new Error('The attachment upload could not be completed.');}if(!response.ok)throw Object.assign(new Error(data.error||'Attachment upload failed.'),{status:response.status});if(!data?.id)throw new Error('The attachment upload did not return a file reference.');attachment.uploaded=data;
+        let data;try{data=await response.json();}catch{throw new Error('The attachment upload could not be completed.');}if(!response.ok)throw Object.assign(new Error(data.error||'Attachment upload failed.'),{status:response.status,code:data.code,retryAt:data.retryAt});if(!data?.id)throw new Error('The attachment upload did not return a file reference.');attachment.uploaded=data;
       }
       validateDraft(draft);if(draft.finished)throw new Error('This draft was cancelled.');
       return {body:draft.body,clientId:draft.clientId,...(draft.replyTo?{replyTo:draft.replyTo}:{}),...(draft.attachments.length?{mediaIds:draft.attachments.map(item=>item.uploaded.id)}:{})};
@@ -263,7 +265,7 @@ export function createMessagingUI({app,api,getChat,setChat,toast,getLang,privacy
   }
   function preserveDraft(){return {body:input()?.value||'',replyTo,editId:editing,editBackup,attachments:[...attachments],previewRevoked:true};}
   function restoreDraft(draft){if(!draft||destroyed)return;for(const item of attachments)URL.revokeObjectURL(item.preview);attachments=[...(draft.attachments||[])];revivePreviews(draft);replyTo=draft.replyTo||null;editing=draft.editId||null;editBackup=draft.editBackup||null;input().value=draft.body||'';input().dispatchEvent(new Event('input',{bubbles:true}));renderDraft();}
-  function refresh(){if(destroyed)return;if((recorder||capturePending)&&(getChat()?.locked||getChat()?.blocked||paused()||features().voiceNotesEnabled===false||features().attachmentsEnabled===false))stopRecording(true);if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)for(const [modal,release]of [...cameraReleases]){release();modal.close();}updateSend();const picker=app.querySelector('#attachment-picker');if(picker)picker.accept=acceptedFiles();markRead();}
+  function refresh(){if(destroyed)return;if((recorder||capturePending)&&(getChat()?.locked||getChat()?.blocked||features().customerMessagingEnabled===false||features().voiceNotesEnabled===false||features().attachmentsEnabled===false))stopRecording(true);else if((recorder||capturePending)&&held())stopRecording(false);if(getChat()?.locked||getChat()?.blocked||paused()||features().attachmentsEnabled===false)for(const [modal,release]of [...cameraReleases]){release();modal.close();}if(held()&&!wasHeld)typing(false);wasHeld=held();updateSend();const picker=app.querySelector('#attachment-picker');if(picker){picker.accept=acceptedFiles();picker.disabled=held();}markRead();}
   function destroy(){if(destroyed)return;typing(false);destroyed=true;cancelPress();discardRecording=true;stopRecording(true);clearTimeout(typingTimer);clearInterval(recordTimer);for(const item of attachments)URL.revokeObjectURL(item.preview);for(const draft of snapshots)releasePreviews(draft);for(const modal of [...localDialogs]){cameraReleases.get(modal)?.();modal.close();}stream?.getTracks().forEach(track=>track.stop());}
   mount();return {takeDraft,prepareDraft,finishDraft,preserveDraft,restoreDraft,preparePayload,sent,refresh,destroy,openMenu,startRecord:recordVoice,canRecord,canSend,hasLiveCapture:()=>Boolean(recorder||capturePending),isEditing:()=>Boolean(editing),hasContent,draftSignature:()=>JSON.stringify({replyTo,editing,files:attachments.map(item=>[item.file.name,item.file.size,item.file.lastModified])})};
 }

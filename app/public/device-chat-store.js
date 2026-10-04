@@ -44,6 +44,8 @@ function metadataOf(view){
   for(const key of ['version','updated','inboxRevision','rewardedReplies','freeUsed','freeRemaining'])if(key in data)data[key]=number(data[key]);
   for(const key of ['name','dob','language','entitlement'])if(key in data&&typeof data[key]!=='string')delete data[key];
   for(const key of ['guidedConversation','locked','blocked'])if(key in data)data[key]=data[key]===true;
+  if(typeof view.kundliChoiceAnswered==='boolean')data.kundliChoiceAnswered=view.kundliChoiceAnswered;
+  const hold=view.customerSendHold;if(Number.isSafeInteger(hold?.startsAt)&&hold.startsAt>0&&Number.isSafeInteger(hold?.endsAt)&&hold.endsAt>hold.startsAt&&hold.endsAt<=8640000000000000)data.customerSendHold={startsAt:hold.startsAt,endsAt:hold.endsAt};
   if(Number.isSafeInteger(view.clockOffsetMs)&&Math.abs(view.clockOffsetMs)<=3660*86400000)data.clockOffsetMs=view.clockOffsetMs;
   if(view.preferences&&typeof view.preferences==='object'){
     data.preferences={remember:view.preferences.remember===true};
@@ -57,6 +59,8 @@ function mergeMetadata(previous,next,kind){
   if(!previous)return next;
   const newer=kind!=='older'&&(number(next.version)>number(previous.version)||number(next.version)===number(previous.version)&&number(next.updated)>=number(previous.updated));
   const data={...previous,...(newer?next:{})};
+  if(previous.kundliChoiceAnswered===true||next.kundliChoiceAnswered===true)data.kundliChoiceAnswered=true;
+  if(next.customerSendHold)data.customerSendHold=next.customerSendHold;
   if(Number.isSafeInteger(next.clockOffsetMs)&&Math.abs(next.clockOffsetMs)<=3660*86400000)data.clockOffsetMs=next.clockOffsetMs;
   if(kind!=='older'){const settings=number(next.inboxRevision)>=number(previous.inboxRevision)?next:previous;for(const key of ['inboxRevision','blocked'])if(key in settings)data[key]=settings[key];}
   if(next.receiptCursors)data.receiptCursors={ownerRead:Math.max(number(previous.receiptCursors?.ownerRead),next.receiptCursors.ownerRead),customerRead:Math.max(number(previous.receiptCursors?.customerRead),next.receiptCursors.customerRead)};
