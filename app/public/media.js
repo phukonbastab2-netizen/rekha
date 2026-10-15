@@ -9,7 +9,7 @@ export function safeBoldText(value){
   return result+escape(text.slice(cursor));
 }
 export function mediaItems(message){try{const data=JSON.parse(message.body);return message.kind==='media'&&Array.isArray(data.items)?data.items:[];}catch{return [];}}
-export function attachmentUrl(value){return /^\/api\/(?:media|attachments)\/[a-f0-9-]{36}$/.test(value||'')?value:null;}
+export function attachmentUrl(value){return value==='/payment-qr.jpg'||/^\/api\/(?:media|attachments)\/[a-f0-9-]{36}$/.test(value||'')?value:null;}
 export function safeMediaLink(value){try{const url=new URL(value);return url.protocol==='https:'&&!url.username&&!url.password?url.href:null;}catch{return null;}}
 export function mediaSize(value){const size=Number(value);if(!Number.isFinite(size)||size<=0)return '';if(size<1024)return `${size} B`;if(size<1048576)return `${Math.round(size/1024)} KB`;return `${(size/1048576).toFixed(1)} MB`;}
 function duration(seconds){return Number.isFinite(seconds)&&seconds>0?`${Math.floor(seconds/60)}:${String(Math.floor(seconds%60)).padStart(2,'0')}`:'';}

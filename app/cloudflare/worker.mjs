@@ -97,6 +97,9 @@ export async function handleApi(request,env,executionContext){
       await stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'assistant','kundli-followup-choice',?,'sent','onboarding:review-choice-v1',created FROM messages WHERE conversation_id=? AND client_id='onboarding:review-line-v1:29' AND role='assistant' AND kind='kundli-review-line'",chat.id,KUNDLI_FOLLOWUP_QUESTION,chat.id).run();
       chat=await get(chat.id);
     }
+    // Catch up only an interested chat, never replay its older script. The
+    // persisted unique message key also handles a lost send ACK or two polls.
+    if(await ensureCustomerDonationPayment(chat))chat=await get(chat.id);
     const bounded=request.headers.get('X-Rekha-History')==='bounded-v1',history=bounded?await messagingHistory({request,chat,all,fail,options}):{rows:messages(chat.id)};
     const [guidedConversation,messaging,draft]=await Promise.all([automationEnabled&&workflowIsEnrolled(one,chat.id),messagingView({chat,messages:history.rows,admin,one,all,bounded,acknowledgedId:options.acknowledgedId}),admin?one('SELECT * FROM drafts WHERE conversation_id=?',chat.id):null]),freeTurns=appSettings.service.freeReplies;
     const serverTime=Date.now();
@@ -151,7 +154,19 @@ export async function handleApi(request,env,executionContext){
       ],
     };
   }
-  async function onCustomerMessage(chat,message){if(automationEnabled)await flowOnCustomer(workflowCtx,chat,message);}
+  async function ensureCustomerDonationPayment(chat){
+    if(!chat?.kundli_donation_interested||chat.kundli_donation_payment_id)return false;
+    const caption='₹49 दान के लिए यह QR स्कैन करें और राशि ₹49 दर्ज करें। भुगतान करने के बाद स्क्रीनशॉट इसी चैट में भेजें। मालिक द्वारा जाँच के बाद ही भुगतान की पुष्टि होगी।\n\nScan this QR to donate and enter ₹49 as the amount. After paying, send the payment screenshot in this chat. Payment is confirmed only after the owner verifies it.';
+    const payload=JSON.stringify({text:caption,title:'',items:[{title:'₹49 दान · Donation payment QR',type:'image',url:'/payment-qr.jpg',mime:'image/jpeg',size:102070}]});
+    const batch=await env.DB.batch([
+      // The public payment poster ships with the app, independent of R2.
+      // Per-chat unique keys make concurrent polls and retries idempotent.
+      stmt("INSERT OR IGNORE INTO messages(conversation_id,role,kind,body,status,client_id,created) SELECT ?,'assistant','media',?,'sent','onboarding:donation-payment-qr-v1',response.created+5000 FROM messages audio JOIN messages response ON response.conversation_id=audio.conversation_id AND response.client_id='kundli-donation-interest-v1-'||audio.id AND response.role='user' WHERE audio.conversation_id=? AND audio.client_id='onboarding:donation-audio-v1' AND audio.role='assistant' AND audio.kind='media'",chat.id,payload,chat.id),
+      stmt('UPDATE conversations SET version=version+1,updated=MAX(updated,?) WHERE id=? AND changes()=1',Date.now(),chat.id),
+    ]);
+    return !!batch[0].meta.changes;
+  }
+  async function onCustomerMessage(chat,message){await ensureCustomerDonationPayment(chat);if(automationEnabled)await flowOnCustomer(workflowCtx,chat,message);}
   async function scheduleChatWork(id,knownChat=null){
     if(!automationEnabled)return;
     if(knownChat){
@@ -168,7 +183,7 @@ export async function handleApi(request,env,executionContext){
     // Receipt/typing updates and sign-in do not need a second settings read.
     const needsSettings=!['/api/health','/api/admin/login','/api/admin/logout','/api/rewards/ssv','/api/activity','/api/admin/activity'].includes(route)&&!/^\/api\/(?:chat|admin\/conversations\/[a-f0-9-]{36})\/(?:read|typing)$/.test(route);
     if(needsSettings){const published=await appSettingsPublic(workflowCtx);appSettings=published.settings;settingsRevision=published.revision;}workflowCtx.appSettings=appSettings;
-    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-activity-0.9.10'});
+    if(method==='GET'&&route==='/api/health')return result({ok:true,build:'rekha-payment-qr-0.9.11'});
     if(method==='GET'&&route==='/api/config')return result({aiMode:'demo',automationEnabled,paymentMode:'demo',freeTurns:appSettings.service.freeReplies,amount:appSettings.service.unlockPriceRupees*100,retentionDays:appSettings.service.retentionDays,rewardsEnabled:false,appSettings,settingsRevision});
     if(route==='/api/rewards/ssv'&&method==='GET')return await rewardCallback({url,stmt,one});
     if(!env.ADMIN_PASSWORD_HASH)throw fail(503,'Owner setup is incomplete.');

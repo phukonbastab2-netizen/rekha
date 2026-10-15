@@ -22,7 +22,12 @@ export async function ownerRoutes(ctx) {
     const id=uuid(),key=`library/${id}`,now=Date.now();
     const reserved=await stmt("INSERT INTO media_items(id,title,type,category,object_key,mime,size,archived,created) SELECT ?,?,?,?,?,?,?,1,? WHERE (SELECT COUNT(*) FROM media_items)<500 AND (SELECT COALESCE(SUM(size),0) FROM media_items)+?<=536870912",id,name,mime.startsWith('image/')?'image':mime.startsWith('video/')?'video':mime.startsWith('audio/')?'audio':'document',category,key,mime,size,now,size).run();
     if(!reserved.meta.changes)throw fail(409,'The library has reached its 500 MB / 500 item limit.');
-    try{await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});await stmt('UPDATE media_items SET archived=0 WHERE id=?',id).run();}catch(error){await env.MEDIA.delete(key);await stmt('DELETE FROM media_items WHERE id=?',id).run();throw error;}
+    try{await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:mime}});await stmt('UPDATE media_items SET archived=0 WHERE id=?',id).run();}catch(error){
+      // A failed storage cleanup must not prevent releasing the reserved row.
+      await Promise.allSettled([env.MEDIA.delete(key),stmt('DELETE FROM media_items WHERE id=? AND archived=1',id).run()]);
+      const detail=String(error?.message||'Storage unavailable').replace(/[\r\n]/g,' ').slice(0,240);
+      throw fail(503,'Media upload failed: '+detail);
+    }
     return result(publicItem(await item(id)),201);
   }
   if(route==='/api/admin/library/links'&&method==='POST'){
