@@ -33,6 +33,19 @@ test('only configured account and recent inbound text is accepted',()=>{
  body.entry[0].id='different';assert.equal(parseEvents(body,f.env).messages.length,0);
  assert.equal(parseEvents(payload('old','hi',Date.now()-86500000),f.env).messages.length,0);
 });
+test('authenticated traffic prunes old content while preserving opt-outs without cron',async()=>{
+ const f=fixture();
+ f.sqlite.prepare('INSERT INTO lead_contacts(phone,last_inbound,created_at,paused) VALUES(?,?,?,1)').run('918888888888',1,1);
+ f.sqlite.prepare("INSERT INTO lead_jobs(id,phone,body,inbound_at,created_at,state) VALUES('expired','918888888888','private old text',1,1,'accepted')").run();
+ f.sqlite.prepare("INSERT INTO lead_budget(day,requests) VALUES('2020-01-01',1)").run();
+ const bad=await worker.fetch(signed(payload(),'wrong'),f.env,{});
+ assert.equal(bad.status,401);assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lead_jobs WHERE id='expired'").get().n,1);
+ await ingest(f,payload('fresh'));
+ assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lead_jobs WHERE id='expired'").get().n,0);
+ assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lead_jobs WHERE id='fresh'").get().n,1);
+ assert.equal(f.sqlite.prepare("SELECT paused FROM lead_contacts WHERE phone='918888888888'").get().paused,1);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM lead_budget').get().n,0);
+});
 test('duplicate webhooks and competing processors send once',async()=>{
  const f=fixture(),body=payload();assert.equal((await ingest(f,body)).status,200);await ingest(f,body);
  const net=fakeNetwork();await Promise.all([drain(f.env,net.fetch),drain(f.env,net.fetch)]);await drain(f.env,net.fetch);

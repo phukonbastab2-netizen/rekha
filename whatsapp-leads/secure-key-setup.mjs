@@ -17,14 +17,18 @@ function request(method,url,token,body){return new Promise((resolve,reject)=>{
  child.on('error',()=>reject(new Error('Connection failed.')));child.on('close',code=>{if(code!==0)return reject(new Error('Connection failed.'));try{resolve(JSON.parse(result));}catch{reject(new Error('Unexpected service response.'));}});
  child.stdin.end(body);
 });}
-const page=()=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect OpenAI · Rekha Astrology</title><style>body{font:17px system-ui;background:#edf4ef;color:#152f26;margin:0;display:grid;min-height:100vh;place-items:center}main{max-width:420px;padding:30px;background:white;border-radius:20px;margin:20px;box-shadow:0 10px 50px #1232}h1{font-size:26px}input,button{box-sizing:border-box;width:100%;font:inherit;padding:15px;border-radius:10px;margin:12px 0}input{border:1px solid #b4c9bd}button{background:#167947;color:white;border:0;cursor:pointer}p{line-height:1.5}.small{font-size:14px;color:#52675d}#result{white-space:pre-line}</style><main><h1>Connect OpenAI</h1><p>Enter your OpenAI API key for Rekha Astrology.</p><form method="post" action="/${session}/save"><input type="hidden" name="csrf" value="${csrf}"><label for="key">OpenAI API key</label><input id="key" name="key" type="password" required autocomplete="off" spellcheck="false" minlength="20" maxlength="1024"><button>Save securely to Cloudflare</button></form><p class="small">The key goes directly from this computer to your Cloudflare Worker. It is never saved in the app, GitHub or chat. Replies remain off during setup.</p><p class="small">Your OpenAI account must have API access. This step checks the key without generating a paid reply.</p></main></html>`;
+const page=()=>`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connect OpenAI · Rekha Astrology</title><style>body{font:17px system-ui;background:#edf4ef;color:#152f26;margin:0;display:grid;min-height:100vh;place-items:center}main{max-width:420px;padding:30px;background:white;border-radius:20px;margin:20px;box-shadow:0 10px 50px #1232}h1{font-size:26px}input,button{box-sizing:border-box;width:100%;font:inherit;padding:15px;border-radius:10px;margin:12px 0}input{border:1px solid #b4c9bd}button{background:#167947;color:white;border:0;cursor:pointer}p{line-height:1.5}.small{font-size:14px;color:#52675d}#result{white-space:pre-line}</style><main><h1>Connect OpenAI</h1><p>Enter your OpenAI API key for Rekha Astrology.</p><form method="post" action="/${session}/save"><input type="hidden" name="csrf" value="${csrf}"><label for="key">OpenAI API key</label><input id="key" name="key" type="password" required autocomplete="off" spellcheck="false" minlength="20" maxlength="1024"><button>Save securely to Cloudflare</button></form><p class="small">The key goes directly from this computer to your Cloudflare Worker. It is never saved in the app, GitHub or chat. Replies remain off during setup.</p><p class="small">Your OpenAI account must have API access. ${process.env.REKHA_APPROVED_CONNECTION_TEST==='true'?'This includes the owner-approved small connection test using existing API credit.':'This step checks the key without generating a paid reply.'}</p></main></html>`;
 const server=http.createServer(async(req,res)=>{
  const security={'cache-control':'no-store','content-security-policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",'referrer-policy':'no-referrer','x-content-type-options':'nosniff'};
  const respond=(status,body,type='text/html; charset=utf-8')=>{res.writeHead(status,{...security,'content-type':type});res.end(body);};
  if(req.headers.host!==new URL(origin).host)return respond(403,'Forbidden','text/plain');
  const path=new URL(req.url,origin).pathname;
  if(req.method==='GET'&&path===`/${session}`)return respond(200,saved?'<h1>OpenAI key saved securely.</h1><p>You can return to the chat. Replies are still off until setup is complete.</p>':page());
- if(req.method!=='POST'||path!==`/${session}/save`||req.headers.origin!==origin)return respond(404,'Not found','text/plain');
+ // Some desktop browser form transports omit Origin. The unguessable URL,
+ // exact Host and per-form CSRF token still authenticate that local submission.
+ // Opaque desktop transport origins are allowed only with the same nonce and CSRF checks.
+ // All other cross-origin requests are rejected.
+ if(req.method!=='POST'||path!==`/${session}/save`||(req.headers.origin&&req.headers.origin!=='null'&&req.headers.origin!==origin))return respond(404,'Not found','text/plain');
  if(busy||saved)return respond(409,'Setup already submitted. Return to the chat.','text/plain');
  let body='';for await(const chunk of req){body+=chunk;if(body.length>4096)return respond(413,'Too large','text/plain');}
  const fields=new URLSearchParams(body);if(!equal(fields.get('csrf'),csrf))return respond(403,'Forbidden','text/plain');
@@ -36,6 +40,12 @@ const server=http.createServer(async(req,res)=>{
   if(!Array.isArray(models.data))throw new Error('OpenAI did not accept the key. Check the key and project permissions, then use Back to try again.');
   const preferred=['gpt-6-luna'];const model=preferred.find(id=>models.data.some(m=>m.id===id));
   if(!model)throw new Error('The key works, but a supported reply model was not found. Return to the chat to select a model.');
+  // Run only after owner approval for the small, noncustomer connection test.
+  if(process.env.REKHA_APPROVED_CONNECTION_TEST==='true'){
+   const probe=await request('POST','https://api.openai.com/v1/responses',key,JSON.stringify({model,input:'Reply with READY.',store:false,max_output_tokens:32,reasoning:{effort:'none'}}));
+   if(probe.status!=='completed'||!probe.output?.some(item=>item.type==='message'&&item.content?.some(c=>c.type==='output_text'&&c.text?.trim())))throw new Error('The OpenAI reply test did not succeed. Check API credit and Responses permissions, then return to the chat.');
+   console.log(JSON.stringify({openaiReplyTestPassed:true,model,testContainedCustomerData:false}));
+  }
   const auth=fs.readFileSync(process.env.APPDATA+'/xdg.config/.wrangler/config/default.toml','utf8').match(/^oauth_token\s*=\s*"([^"]+)"/m)?.[1];
   if(!auth)throw new Error('Cloudflare sign-in needs to be refreshed. Return to the chat.');
   const base=`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${worker}`;

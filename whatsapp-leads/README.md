@@ -8,19 +8,19 @@ The separate `rekha-whatsapp-leads` Worker answers incoming text in Hindi, Engli
 
 - Callback: `https://rekha-whatsapp-leads.phukonbastab2.workers.dev/webhook`
 - Health/readiness: `/health`
-- Deployed with `SEND_ENABLED=false` and no scheduled trigger. Meta token and app secret are now stored as Worker secrets; the OpenAI key is pending owner entry.
+- Active with `SEND_ENABLED=true`. Meta credentials and the restricted OpenAI key are stored as Worker secrets. The owner approved activation and a small noncustomer OpenAI test, which passed. The key expires on 15 November 2026 and must be replaced before expiry.
 - The verification token is a Worker secret. Its setup copy is kept outside Git in the workspace's private Cloudflare folder.
-- The Meta callback is saved. App-level `messages` subscription and WABA app subscription were verified using Meta's API. No messages have been sent.
-- Graph API `v26.0` was observed in Meta's webhook setup and successfully used for app subscription verification. OpenAI model `gpt-6-luna` uses `reasoning.effort=none` for short support replies, per its official model documentation. Project access and a real reply remain to be verified after key entry.
+- The Meta callback is saved. App-level `messages` subscription and WABA app subscription were verified using Meta's API. No real inbound WhatsApp delivery has been verified yet.
+- Graph API `v26.0` was observed in Meta's webhook setup and successfully used for app subscription verification. OpenAI model `gpt-6-luna` uses `reasoning.effort=none` for short support replies, per its official model documentation. Project access and Responses generation were verified with a small noncustomer test.
 
-## Finish activation
+## Setup and verification
 
 1. Store `META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and `OPENAI_API_KEY` as **Worker secrets**, using Cloudflare Settings -> Variables and Secrets. Never commit keys or paste them in chat. The Meta token must belong to the app/account above and allow `whatsapp_business_messaging`. Follow Meta's system-user/token flow and use only necessary assets/permissions.
-   Meta secrets are already configured in this deployment. For owner-operated OpenAI key entry, run `node secure-key-setup.mjs` and open its loopback URL. The form checks model access and saves the key directly to Cloudflare without local persistence or paid generation. It expires after 30 minutes. Do not expose it through a public tunnel. Cloudflare's existing Wrangler session must be current.
+   Meta secrets are already configured in this deployment. For owner-operated OpenAI key entry, run `node secure-key-setup.mjs` and open its loopback URL. The form checks model access and saves the key directly to Cloudflare without local persistence. By default it only checks model access; set `REKHA_APPROVED_CONNECTION_TEST=true` only after owner approval for a small paid Responses test. It expires after 30 minutes. Do not expose it through a public tunnel. Cloudflare's existing Wrangler session must be current.
 2. Set `OPENAI_MODEL` to an available Responses model in the owner's OpenAI project; set `GRAPH_API_VERSION` to the supported version shown in Meta's API setup. Keep `SEND_ENABLED=false`.
 3. With the owner's required approval for persistent API access, configure Meta's callback and matching verify token, and subscribe to `messages`. Meta displays a separate WABA subscription switch; it was already on during inspection. Verify both app field subscription and WABA subscription.
 4. Validate Meta token access to the configured phone, then make one owner-approved small OpenAI test using noncustomer text. Credentials must not appear in output/logs.
-5. Before enabling, review/drop any preactivation pending jobs that should not be answered. Check that no legacy automation is subscribed to this number. Add `* * * * *` to the new Worker's cron triggers, and set `SEND_ENABLED=true` only after credentials and test recipient are ready. Keep deployment configuration synchronized with live variables; do not redeploy this disabled config over an active service accidentally.
+5. Before enabling, review/drop any preactivation pending jobs that should not be answered. Check that no legacy automation is subscribed to this number. Set `SEND_ENABLED=true` only after credentials and the owner-approved connection test are ready. This account has reached its five free cron triggers, so this Worker currently runs directly from authenticated inbound messages and delivery callbacks. Existing services were left unchanged and no paid upgrade was made. Add an optional `* * * * *` cron only when a slot is available. Keep deployment configuration synchronized with live variables; do not redeploy this disabled config over an active service accidentally.
 6. Ask the owner to send an inbound WhatsApp message from their own phone. Check the reply and `delivered`/`read` webhook in `lead_jobs`. A successful challenge or `accepted` state does not prove delivery.
 
 ## Operational behavior
@@ -32,9 +32,9 @@ The separate `rekha-whatsapp-leads` Worker answers incoming text in Hindi, Engli
 - STOP/unsubscribe pauses automation immediately, even during generation. START resumes only if newer than the last control message. Requests for a person also pause automation; the owner must follow up. This service has no separate human inbox UI yet.
 - Each generation uses `store:false`, up to four recent turns and 300 output tokens. This setting does not mean zero provider retention; review the applicable OpenAI project data controls.
 - Defaults: 100 total AI requests/day and 12 accepted/ambiguous sends per contact/day. Failed attempts still consume the global reservation. Raising limits can increase charges and requires owner review.
-- One queued message is processed after an inbound webhook; cron processes up to five per minute for recovery. This initial service is bounded; it is not a high-concurrency campaign engine.
+- One queued message is processed after each authenticated webhook, including delivery callbacks. Without cron, a job delayed by a concurrent contact lock waits for the next webhook; there is no scheduled recovery guarantee. An optional cron processes up to five per minute. This initial service is bounded; it is not a high-concurrency campaign engine.
 - Meta acceptance, delivery, read and failure states are separate. Ambiguous timeouts/interrupted processing are marked `unknown` and never resent automatically. OpenAI/Meta errors are marked failed for owner review, not retried in a loop.
-- Message bodies/replies expire after seven days when cron runs. Opt-out records persist. Logs contain generic error codes only. Add explicit retention/deletion handling if the support workflow changes.
+- Message bodies/replies older than seven days are removed on the next authenticated webhook or optional cron. Inactive periods can extend physical retention until that next event. Opt-out records persist. Logs contain generic error codes only. Add explicit retention/deletion handling if the support workflow changes.
 - To pause, set `SEND_ENABLED=false`. Do not remove opt-out records while cleaning content.
 
 ## Checks

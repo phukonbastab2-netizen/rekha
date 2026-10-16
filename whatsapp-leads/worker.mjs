@@ -160,6 +160,14 @@ export async function drain(env, fetcher=fetch, limit=1) {
   for(const job of jobs.results) await processJob(env,job,Date.now(),fetcher);
 }
 
+async function pruneHistory(env) {
+  // Also run on authenticated traffic when the account has no available cron slot.
+  await env.DB.batch([
+    q(env,'DELETE FROM lead_jobs WHERE created_at<?',Date.now()-7*86400000),
+    q(env,'DELETE FROM lead_budget WHERE day<?',new Date(Date.now()-8*86400000).toISOString().slice(0,10)),
+  ]);
+}
+
 async function webhook(request, env, ctx) {
   const url=new URL(request.url);
   if(request.method==='GET'&&url.pathname==='/health') return json({ok:true,service:'rekha-whatsapp-leads',...readiness(env)});
@@ -180,6 +188,7 @@ async function webhook(request, env, ctx) {
   if(!env.DB||!env.WHATSAPP_WABA_ID||!env.WHATSAPP_PHONE_NUMBER_ID) return new Response('Setup incomplete',{status:503});
   const now=Date.now(); const events=parseEvents(payload,env,now);
   await ingest(env,events,now);
+  ctx.waitUntil(pruneHistory(env).catch(()=>console.error('lead_retention_failed')));
   ctx.waitUntil(drain(env).catch(()=>console.error('lead_processor_failed')));
   return new Response('EVENT_RECEIVED');
 }
@@ -190,8 +199,7 @@ export default {
     ctx.waitUntil((async()=>{
       await drain(env,fetch,5);
       // Keep a short conversation history; retain opt-outs after content expires.
-      await q(env,'DELETE FROM lead_jobs WHERE created_at<?',Date.now()-7*86400000).run();
-      await q(env,'DELETE FROM lead_budget WHERE day<?',new Date(Date.now()-8*86400000).toISOString().slice(0,10)).run();
+      await pruneHistory(env);
     })().catch(()=>console.error('lead_schedule_failed')));
   },
 };
