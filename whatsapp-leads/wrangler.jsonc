@@ -1,0 +1,17 @@
+{
+ "name": "rekha-whatsapp-leads",
+ "main": "worker.mjs",
+ "compatibility_date": "2026-10-16",
+ "account_id": "17b4c6b100c17f80099c4d7eaf7ed744",
+ "workers_dev": true,
+ "vars": {
+   "SEND_ENABLED": "false",
+   "WHATSAPP_PHONE_NUMBER_ID": "1368894806304328",
+   "WHATSAPP_WABA_ID": "1630536172004218",
+   "DAILY_AI_LIMIT": "100",
+   "PER_CONTACT_DAILY_LIMIT": "12"
+ },
+ "d1_databases": [{"binding":"DB","database_name":"whatsapp-db","database_id":"485443fc-f52a-485a-bf0a-1efb57d1a206"}],
+ "observability": {"enabled":true,"head_sampling_rate":0.1,"logs":{"enabled":true,"invocation_logs":false}},
+ "triggers": {"crons": []}
+}
