@@ -6,6 +6,8 @@
  "workers_dev": true,
  "vars": {
    "SEND_ENABLED": "false",
+   "GRAPH_API_VERSION": "v26.0",
+   "OPENAI_MODEL": "gpt-6-luna",
    "WHATSAPP_PHONE_NUMBER_ID": "1368894806304328",
    "WHATSAPP_WABA_ID": "1630536172004218",
    "DAILY_AI_LIMIT": "100",

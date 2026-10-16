@@ -90,7 +90,8 @@ export function safeReply(text) {
 export async function generateReply(env, history, fetcher=fetch) {
   const response=await fetcher('https://api.openai.com/v1/responses',{
     method:'POST',headers:{authorization:`Bearer ${env.OPENAI_API_KEY}`,'content-type':'application/json'},
-    body:JSON.stringify({model:env.OPENAI_MODEL,instructions:INSTRUCTIONS,input:history,store:false,max_output_tokens:300}),
+    body:JSON.stringify({model:env.OPENAI_MODEL,instructions:INSTRUCTIONS,input:history,store:false,max_output_tokens:300,
+      ...(env.OPENAI_MODEL==='gpt-6-luna'?{reasoning:{effort:'none'}}:{})}),
     signal:AbortSignal.timeout(12000),
   });
   if(!response.ok) throw new Error(`openai_${response.status}`);

@@ -8,13 +8,15 @@ The separate `rekha-whatsapp-leads` Worker answers incoming text in Hindi, Engli
 
 - Callback: `https://rekha-whatsapp-leads.phukonbastab2.workers.dev/webhook`
 - Health/readiness: `/health`
-- Deployed with `SEND_ENABLED=false`, no scheduled trigger and no live API credentials.
+- Deployed with `SEND_ENABLED=false` and no scheduled trigger. Meta token and app secret are now stored as Worker secrets; the OpenAI key is pending owner entry.
 - The verification token is a Worker secret. Its setup copy is kept outside Git in the workspace's private Cloudflare folder.
-- The Meta callback has not been saved and no messages have been sent.
+- The Meta callback is saved. App-level `messages` subscription and WABA app subscription were verified using Meta's API. No messages have been sent.
+- Graph API `v26.0` was observed in Meta's webhook setup and successfully used for app subscription verification. OpenAI model `gpt-6-luna` uses `reasoning.effort=none` for short support replies, per its official model documentation. Project access and a real reply remain to be verified after key entry.
 
 ## Finish activation
 
 1. Store `META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and `OPENAI_API_KEY` as **Worker secrets**, using Cloudflare Settings -> Variables and Secrets. Never commit keys or paste them in chat. The Meta token must belong to the app/account above and allow `whatsapp_business_messaging`. Follow Meta's system-user/token flow and use only necessary assets/permissions.
+   Meta secrets are already configured in this deployment. For owner-operated OpenAI key entry, run `node secure-key-setup.mjs` and open its loopback URL. The form checks model access and saves the key directly to Cloudflare without local persistence or paid generation. It expires after 30 minutes. Do not expose it through a public tunnel. Cloudflare's existing Wrangler session must be current.
 2. Set `OPENAI_MODEL` to an available Responses model in the owner's OpenAI project; set `GRAPH_API_VERSION` to the supported version shown in Meta's API setup. Keep `SEND_ENABLED=false`.
 3. With the owner's required approval for persistent API access, configure Meta's callback and matching verify token, and subscribe to `messages`. Meta displays a separate WABA subscription switch; it was already on during inspection. Verify both app field subscription and WABA subscription.
 4. Validate Meta token access to the configured phone, then make one owner-approved small OpenAI test using noncustomer text. Credentials must not appear in output/logs.
