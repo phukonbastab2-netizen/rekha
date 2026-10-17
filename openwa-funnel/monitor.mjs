@@ -35,7 +35,7 @@ export function createMonitor({engine,data,profile,cloudStatus}){
     return{checkedAt:Date.now(),counts,disk,database:{bytes:page*pageSize,reusableBytes:freePages*pageSize,walBytes:fs.existsSync(path.join(data,'funnel.sqlite-wal'))?fs.statSync(path.join(data,'funnel.sqlite-wal')).size:0},folders,
       memory:{serverUsed:os.totalmem()-os.freemem(),serverTotal:os.totalmem(),gatewayRss:process.memoryUsage().rss},load:os.loadavg(),cpuCores:os.availableParallelism(),uptime:process.uptime(),eventLoopP99Ms:Math.round(delay.percentile(99)/1e6),oldestReadyAt:oldest||null,
       cloud:{...cloud,storageScope:'Shared D1 database, not only this funnel',d1MaxBytes:10*1000**3,providerUsage:'Request/operation bills and full R2 usage are in the provider dashboard; no guessed totals.'},
-      limits:{targetStoredCustomers:1000000,simultaneousSends:1,gapPerCustomerMs:5000,maxAttachmentBytes:25*1024**2,attachmentDiskReserveBytes:2*1024**3,retentionDays:90,backupBatch:50},warnings,
+      limits:{targetStoredCustomers:1000000,simultaneousSends:2,gapPerCustomerMs:5000,maxAttachmentBytes:25*1024**2,attachmentDiskReserveBytes:2*1024**3,retentionDays:90,backupBatch:50},warnings,
       capacityStatus:'One million stored customers is a storage target. WhatsApp delivery capacity is limited by the linked account and single browser; no million-per-day claim.'};
   }
   return{snapshot,scan,close(){clearInterval(timer);delay.disable();}};

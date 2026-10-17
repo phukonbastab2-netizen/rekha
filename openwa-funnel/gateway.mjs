@@ -8,7 +8,7 @@ import { ensurePairingCompatibility } from './pairing-compat.mjs';
 import { withPersistentProfile } from './persistent-driver.mjs';
 import {createMonitor} from './monitor.mjs';
 import {createMobileBridge} from './mobile-bridge.mjs';
-import {createInboxSync,normalizeIncoming} from './inbox-sync.mjs';
+import {createInboxSync,normalizeIncoming,installFastInboxBridge} from './inbox-sync.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -44,7 +44,8 @@ if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-202
   copyRestored=engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('shop-qr-shahrukh-20261018')");
 }
 if(copyRestored)console.log('Updated pending automatic messages to current owner-approved content.');
-let client, runtime, connecting = false, stopping = false, busy = false, syncing = false, connectedSince = 0, eventsInstalled = false;
+let client, runtime, connecting = false, stopping = false, busy = 0, syncing = false, connectedSince = 0, eventsInstalled = false;
+let fastBridge={ready:false},checkingBridge=false;
 let mediaActive=0;
 const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>client.evaluate(fn,arg),onIncoming:message=>incoming(message,true)});
 const pendingAcks = new Map();
@@ -136,6 +137,11 @@ async function incoming(message,recovered=false) {
   if (!['text','payment'].includes(type) && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
   void sync(); void pump();return true;
 }
+async function checkFastBridge(){
+  if(checkingBridge||stopping||!client||state.connection!=='connected')return;
+  checkingBridge=true;
+  try{fastBridge=await client.evaluate(installFastInboxBridge,{since:inboxSync.since});}catch{fastBridge={ready:false};}finally{checkingBridge=false;}
+}
 async function connect() {
   if (connecting || (client && state.connection === 'connected') || stopping) return;
   connecting = true; state.connection = 'starting'; state.error = '';
@@ -165,6 +171,7 @@ async function connect() {
     // Saving the encrypted checkpoint must not depend on message bridge readiness.
     await runtime.getTransport().portable.activate().catch(error => saveConnectionDiagnostic(error,'session_save'));
     state.connection = 'connected'; state.qr = null; state.pairingCode = null; state.connectedAt = Date.now();
+    await checkFastBridge();
     void inboxSync.scan().then(()=>sync());
     if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
   } catch (error) {
@@ -183,9 +190,9 @@ function saveConnectionDiagnostic(error, phase) {
   fs.writeFileSync(path.join(data,'connection-error.json'),JSON.stringify({at:Date.now(),phase,name:/^[A-Za-z]{1,30}$/.test(error?.name || '')?error.name:'Error',detail:detail.slice(0,1500)}),{mode:0o600});
 }
 async function pump() {
-  if (busy || !client || state.connection !== 'connected' || !runtime?.getReadiness().ready || stopping) return;
+  if (busy>=2 || !client || state.connection !== 'connected' || !runtime?.getReadiness().ready || stopping) return;
   const disk=fs.statfsSync(data);if(disk.bavail*disk.bsize<500*1024**2){state.error='Storage nearly full. Outgoing sends are paused until space is available.';return;}
-  busy = true;
+  busy++;
   try {
     const j = engine.reserve(); if (!j) return;
     try {
@@ -201,7 +208,7 @@ async function pump() {
       for (const [id, pending] of pendingAcks) if (engine.ack(id, pending.ack) || Date.now() - pending.at > 60000) pendingAcks.delete(id);
     } catch { engine.finish(j.key, null, 'Send outcome uncertain; check WhatsApp before resolving. Automatic replies paused for this customer.'); }
     void sync();
-  } finally { busy = false; }
+  } finally { busy--; }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -221,7 +228,7 @@ const server = http.createServer(async (req, res) => {
       // The pinned client declares getConnectionState unsupported. Probe only safe
       // connection metadata through its supported evaluate API instead.
       const [probe,number]=client?await Promise.all([timed(client.evaluate(()=>{const store=globalThis.Store,models=store?.Msg?.getModelsArray?.()||store?.Msg?._models||store?.Msg?.models||[];return{socket:store?.State?.Socket?.state||store?.State?.default?.state||null,loadedMessages:models.length,lastIncomingAt:models.slice(-200).reduce((latest,m)=>!m.id?.fromMe?Math.max(latest,Number(m.t||0)*1000):latest,0),online:navigator.onLine};}).catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
-      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status});
+      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status,fastBridge});
     }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;
@@ -284,13 +291,14 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, '127.0.0.1', () => console.log(`Private WhatsApp controls: ${origin}`));
 const pumping = setInterval(() => void pump(), 1000), backing = setInterval(() => void sync(), 15000);
 const inboxPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void inboxSync.scan().then(()=>sync());},15000);
+const bridgeChecking=setInterval(()=>void checkFastBridge(),3000);
 const mobilePolling=setInterval(()=>void mobileBridge?.poll(),5000);
 const housekeeping = setInterval(() => {
   engine.prune();
   const expiry = Date.now() - 90 * 86400000;
   for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
 }, 3600000);
-async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(inboxPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy||syncing||mediaActive||mobileBridge?.busy||inboxSync.status.running) await sleep(100); engine.close(); process.exit(exitCode); }
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); while (busy||syncing||mediaActive||mobileBridge?.busy||inboxSync.status.running||checkingBridge) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
 void mobileBridge?.poll();

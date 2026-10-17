@@ -2,6 +2,26 @@ import {validPeer} from './engine.mjs';
 
 export const idOf = value => typeof value === 'string' ? value : value?._serialized || '';
 const types=new Set(['text','image','video','audio','ptt','document','sticker','payment']);
+// Some synced/decrypted incoming models have isNewMsg=false, so the SDK's
+// legacy onAnyMessage filter misses them. Listen to those model transitions as
+// well; the gateway's durable time boundary and receipt IDs remain authoritative.
+export function installFastInboxBridge({since}) {
+  const root=globalThis,collection=root.Store?.Msg,emit=root.OpenWA_RuntimeMessageReceived;
+  if(!collection?.on||typeof emit!=='function')return{ready:false};
+  let state=root.__REKHA_INBOX_BRIDGE__;
+  if(state?.collection===collection){state.since=since;return{ready:true,emitted:state.emitted,failed:state.failed};}
+  if(state?.collection?.off)for(const event of ['add','change:type','change:body'])state.collection.off(event,state.handler);
+  state={collection,since,emitted:0,failed:0};
+  state.handler=model=>{
+    if(!model||model.id?.fromMe||Number(model.t||0)*1000<state.since||!['chat','text','image','video','audio','ptt','document','sticker','payment'].includes(model.type))return;
+    try{
+      const message=root.WAPI._serializeMessageObj(model);if(!message)return;
+      state.emitted++;Promise.resolve(root.OpenWA_RuntimeMessageReceived(message)).catch(()=>{state.failed++;});
+    }catch{state.failed++;}
+  };
+  for(const event of ['add','change:type','change:body'])collection.on(event,state.handler);
+  root.__REKHA_INBOX_BRIDGE__=state;return{ready:true,emitted:0,failed:0};
+}
 export function normalizeIncoming(message, since, now=Date.now()) {
   const peer=idOf(message.from),id=idOf(message.id),at=Number(message.timestamp??message.t)*1000;
   const type=message.type==='chat'?'text':message.type;

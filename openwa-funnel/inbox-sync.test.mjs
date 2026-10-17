@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import {EventEmitter} from 'node:events';
 import {Engine,isSensitive} from './engine.mjs';
-import {createInboxSync,normalizeIncoming,readProviderInbox} from './inbox-sync.mjs';
+import {createInboxSync,normalizeIncoming,readProviderInbox,installFastInboxBridge} from './inbox-sync.mjs';
 import {MEDIA_DELAY} from './funnel.mjs';
 const peer='919876543210@c.us';
 const message=(id,at,extra={})=>({id,from:peer,type:'chat',timestamp:at/1000,body:'Hi',...extra});
@@ -52,4 +53,23 @@ test('background recovery does not restore history the owner deleted',t=>{
  assert.equal(e.importHistory({peer,id:'unloaded-old',type:'text',body:'Old history',at:900000}),false);
  assert.equal(e.inbound({peer,id:'missed-before-delete',type:'text',body:'Old history',at:950000,recovered:true}).ignored,true);
  assert.equal(e.stats().messages,0);assert.equal(e.stats().queued,0);assert.equal(e.contact(peer).paused,true);
+});
+test('live bridge receives new and decrypted messages even when the SDK new-message flag is false',async()=>{
+ const collection=new EventEmitter(),received=[];
+ const context={Store:{Msg:collection},WAPI:{_serializeMessageObj:m=>m},OpenWA_RuntimeMessageReceived:async m=>received.push(m)};
+ const install=vm.runInNewContext('('+installFastInboxBridge.toString()+')',context);
+ assert.equal(install({since:1000000}).ready,true);install({since:1000000});
+ assert.equal(collection.listenerCount('add'),1);
+ const fresh={id:{fromMe:false},t:1001,type:'chat',isNewMsg:false};collection.emit('add',fresh);
+ collection.emit('change:type',{...fresh,type:'image'});
+ collection.emit('add',{...fresh,t:900});collection.emit('add',{...fresh,id:{fromMe:true}});
+ assert.equal(received.length,2);
+ const replacement=new EventEmitter();context.Store.Msg=replacement;install({since:1000000});
+ assert.equal(collection.listenerCount('add'),0);assert.equal(replacement.listenerCount('add'),1);
+});
+test('another customer can send while a media job is in flight without overlapping the same customer',t=>{
+ const e=new Engine(':memory:',()=>1000000);t.after(()=>e.close());e.enable(true);
+ for(const p of [peer,'919876543211@c.us'])e.inbound({peer:p,id:p,type:'text',body:'Hi',at:1000000});
+ const a=e.reserve(),b=e.reserve();assert.ok(a&&b);assert.notEqual(a.peer,b.peer);assert.equal(e.reserve(),null);
+ assert.equal(e.stats().sending,2);e.finish(b.key,'provider-b');assert.equal(e.stats().sending,1);assert.equal(e.get(a.key).state,'sending');
 });
