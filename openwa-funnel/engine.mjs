@@ -112,6 +112,8 @@ export class Engine {
     const scheduleAt=input.recovered&&Number.isFinite(input.at)&&input.at>0?Math.min(input.at,this.now()):this.now();
     return this.transaction(() => {
       if (this.db.prepare('SELECT id FROM receipts WHERE id=?').get(input.id)) return { duplicate: true };
+      const existing=this.contact(input.peer);
+      if(input.recovered&&existing?.contentDeletedAt&&input.at<=existing.contentDeletedAt)return{ignored:true};
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id, input.peer, this.now());
       let c = this.contact(input.peer);
       const isNew = !c;
@@ -140,11 +142,12 @@ export class Engine {
   importHistory(input) {
     if(!validPeer(input.peer)||!input.id||input.id.length>300)return false;
     return this.transaction(()=>{
+      const current=this.contact(input.peer);
+      if(current?.contentDeletedAt&&input.at<=current.contentDeletedAt)return false;
       if(this.db.prepare('SELECT 1 FROM receipts WHERE id=?').get(input.id))return false;
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id,input.peer,this.now());
       const body=String(input.body||'').slice(0,8000),sensitive=isSensitive(body),at=input.at||this.now();
       this.put({key:'in:'+input.id,kind:'message',peer:input.peer,id:input.id,direction:'in',type:input.type||'text',body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),sensitive,status:'received',historical:true});
-      const current=this.contact(input.peer);
       const c=current||{key:'contact:'+input.peer,kind:'contact',peer:input.peer,name:String(input.name||'').slice(0,100),firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
       const command=body.trim().toLowerCase();
       if(!current||at>(c.lastInboundAt||0)){

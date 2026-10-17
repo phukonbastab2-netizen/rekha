@@ -46,3 +46,10 @@ test('recovered photo keeps the one-hour delay from its original receipt time',t
  e.inbound({peer,id:'missed-photo',type:'image',body:'',at:900000,recovered:true});
  assert.equal(e.get('job:'+peer+':media:0').dueAt,900000+MEDIA_DELAY);
 });
+test('background recovery does not restore history the owner deleted',t=>{
+ const e=new Engine(':memory:',()=>1000000);t.after(()=>e.close());
+ e.inbound({peer,id:'first',type:'text',body:'Hi',at:900000});e.deleteContent(peer);
+ assert.equal(e.importHistory({peer,id:'unloaded-old',type:'text',body:'Old history',at:900000}),false);
+ assert.equal(e.inbound({peer,id:'missed-before-delete',type:'text',body:'Old history',at:950000,recovered:true}).ignored,true);
+ assert.equal(e.stats().messages,0);assert.equal(e.stats().queued,0);assert.equal(e.contact(peer).paused,true);
+});
