@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { Engine, validPeer, isSensitive } from './engine.mjs';
+import { ensurePairingCompatibility } from './pairing-compat.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -99,6 +100,7 @@ async function connect() {
   if (connecting || (client && state.connection === 'connected') || stopping) return;
   connecting = true; state.connection = 'starting'; state.error = '';
   try {
+    ensurePairingCompatibility();
     const [{ Client, createClient, ev }, { PuppeteerDriver }, QRCode] = await Promise.all([import('@open-wa/wa-automate'), import('@open-wa/driver-puppeteer'), import('qrcode')]);
     if (!eventsInstalled) {
       ev.on('qr.**', async qr => { if (typeof qr === 'string' && !stopping) { state.qr = await QRCode.default.toDataURL(qr, { width: 300, margin: 2 }); state.pairingCode = null; state.connection = 'scan_qr'; if (pairingPhone) state.error = 'WhatsApp did not offer a pairing code. You can scan the QR or request a fresh code.'; } });
@@ -118,7 +120,12 @@ async function connect() {
     if (!runtime.getReadiness().ready) throw Error('WhatsApp is not ready');
     state.connection = 'connected'; state.qr = null; state.pairingCode = null; state.connectedAt = Date.now();
     if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
-  } catch {
+  } catch (error) {
+    // Keep a redacted diagnostic on the private host, never in cloud backups.
+    let detail = String(error?.message || 'Unknown connection failure');
+    if (/bearer|secret|access.?token|session.?data/i.test(detail)) detail = 'Private provider error';
+    else detail = detail.replace(/https?:\/\/\S+/g, '[url]').replace(/(?:\+?\d[\s()-]*){6,}/g, '[number]').replace(/\b(?=[A-Z0-9-]{8,10}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]{4}-?[A-Z0-9]{4}\b/g, '[code]').replace(/[A-Za-z0-9+/_=-]{32,}/g, '[private]');
+    fs.writeFileSync(path.join(data,'connection-error.json'),JSON.stringify({at:Date.now(),name:/^[A-Za-z]{1,30}$/.test(error?.name || '')?error.name:'Error',detail:detail.slice(0,1500)}),{mode:0o600});
     state.connection = 'error'; state.qr = null; state.pairingCode = null; state.error = 'Could not connect WhatsApp. Check the browser installation, account and internet connection, then restart the gateway.';
     // Do not log exceptions: third-party errors may contain account/session data.
     client = null;

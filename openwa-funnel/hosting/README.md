@@ -1,6 +1,6 @@
 # Private Oracle cloud hosting
 
-The standalone gateway is installed on an Oracle Mumbai Always Free A1 VM with 2 OCPUs, 12 GB RAM, Ubuntu 24.04 ARM and a 50 GB boot volume. No account billing upgrade was performed. The service is active, enabled at boot and configured to restart after a failure. All 20 tests pass on the ARM server, and a service restart was verified. The browser runs with its sandbox enabled.
+The standalone gateway is installed on an Oracle Mumbai Always Free A1 VM with 2 OCPUs, 12 GB RAM, Ubuntu 24.04 ARM and a 50 GB boot volume. No account billing upgrade was performed. The service is active, enabled at boot and configured to restart after a failure. The browser runs with its sandbox enabled. The current suite contains 24 checks; recipient delivery still requires the pairing test below.
 
 The PC gateway was stopped before transferring a consistent SQLite backup and its source ID. Server-only Cloudflare backup credentials were transferred privately over SSH, outside Git. The owner controls bind to loopback and are accessed through an owner SSH tunnel; port 4341 is not a public web service. The customer app remains unchanged.
 
@@ -37,6 +37,8 @@ The cloud unit enables `ALLOW_PAIRING_RESTART=true`. In the private panel, enter
 Successful linking clears the temporary number file and the displayed code. QR login remains available when WhatsApp does not offer code linking. The route validates international number format, rejects foreign-origin requests and repeated restarts, and refuses to replace an already-connected account. Authentication restarts preserve the SQLite state, queue and funnel pause setting. On a standalone process without a supervisor, leave this option disabled.
 
 The private browser controls renew their HttpOnly session automatically after a service restart. Only an explicit authentication rejection is retried; network failures never automatically retry a possible message send. A QR-mode restart was checked through the live panel: it recovered and restored enabled linking controls without a page reload. Phone-code generation still needs an owner-entered number and confirmation on that phone.
+
+OpenWA 5.6.6's shipped launch asset still reads `PairingType` from `WAWebAltDeviceLinkingApi`, which currently throws while reading `QR_CODE`. The gateway applies a narrow compatibility repair to use `WAWebPairingType`, as OpenWA's own current QR-reset path does. The repair validates the entire original asset hash, is idempotent, and refuses unknown asset versions. A live phone-code request successfully reached `enter_code` after this repair. Owner confirmation on the phone and recipient delivery remain separate checks. Connection-failure diagnostics are redacted and stored only on the private host, outside the cloud backup and repository.
 
 ## Other hosts evaluated
 
