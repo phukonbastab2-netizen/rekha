@@ -1,0 +1,23 @@
+# Template for an Ubuntu VM. Verify these paths and the actual Chromium binary
+# before installation. This file does not provision cloud resources or billing.
+[Unit]
+Description=Rekha private WhatsApp funnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/rekha/openwa-funnel
+Environment=AUTO_CONNECT=true
+Environment=CHROME_PATH=/snap/bin/chromium
+Environment=WHATSAPP_PROFILE_DIR=/home/ubuntu/snap/chromium/common/rekha-29
+ExecStart=/home/ubuntu/.local/node/bin/node --env-file-if-exists=.env gateway.mjs
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=90
+UMask=0077
+LimitNOFILE=32768
+
+[Install]
+WantedBy=multi-user.target

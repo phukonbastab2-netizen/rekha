@@ -104,7 +104,7 @@ async function connect() {
     }
     if (client) { try { await client.stop('Owner reconnecting'); } catch {} client = null; }
     const chromePath = process.env.CHROME_PATH || (process.platform === 'win32' && fs.existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe') ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : undefined);
-    runtime = await createClient({ sessionId: 'rekha-29', driver: new PuppeteerDriver(), headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, userDataDir: path.join(root, '.sessions', 'rekha-29'), sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
+    runtime = await createClient({ sessionId: 'rekha-29', driver: new PuppeteerDriver(), headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, userDataDir: process.env.WHATSAPP_PROFILE_DIR || path.join(root, '.sessions', 'rekha-29'), sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
     client = new Client({ client: runtime, transport: runtime.getTransport() });
     // Register before start so no live message is lost in a readiness/listener gap.
     client.onMessage(message => incoming(message).catch(() => { state.error = 'An incoming message needs checking in WhatsApp.'; }));
