@@ -123,15 +123,16 @@ async function incoming(message) {
   const peer = safeId(message.from), id = safeId(message.id), at = Number(message.timestamp || message.t || 0) * 1000;
   ingress.lastShape={peerType:typeof message.from,idType:typeof message.id,timestampType:typeof(message.timestamp??message.t),timestamp:at,fromMe:!!message.fromMe,group:!!message.isGroupMsg,notification:!!message.isNotification,type:String(message.type||'').slice(0,25),validPeer:validPeer(peer),hasId:!!id};
   // Never run the funnel against synced historical chats, groups or account/service notices.
-  const reject=!validPeer(peer)?'peer':!id?'id':message.fromMe?'outgoing':message.isGroupMsg?'group':message.isNotification?'notification':!Number.isFinite(at)?'timestamp':at<connectedSince-10000?'older_than_start':at>Date.now()+300000?'future_timestamp':null;
+  const isPayment=message.type==='payment';
+  const reject=!validPeer(peer)?'peer':!id?'id':message.fromMe?'outgoing':message.isGroupMsg?'group':message.isNotification&&!isPayment?'notification':!Number.isFinite(at)?'timestamp':at<connectedSince-10000?'older_than_start':at>Date.now()+300000?'future_timestamp':null;
   if(reject){ingress.rejected[reject]=(ingress.rejected[reject]||0)+1;return;}
   const type = message.type === 'chat' ? 'text' : message.type || 'text';
-  if (!['text','image','video','audio','ptt','document','sticker'].includes(type)) return;
+  if (!['text','image','video','audio','ptt','document','sticker','payment'].includes(type)) return;
   const result = engine.inbound({ peer, id, type, body: type === 'text' ? message.body || '' : message.caption || '', name: message.sender?.pushname || message.sender?.formattedName || '', at });
   if(result.duplicate)ingress.duplicates++;
   if (!result.accepted) return;
   ingress.accepted++;ingress.lastAcceptedAt=Date.now();
-  if (type !== 'text' && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
+  if (!['text','payment'].includes(type) && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
   void sync(); void pump();
 }
 async function connect() {
@@ -215,8 +216,10 @@ const server = http.createServer(async (req, res) => {
     if(req.method==='GET'&&url.pathname==='/api/runtime-status'){
       const ready=runtime?.getReadiness?.();
       const timed=promise=>Promise.race([promise,new Promise(resolve=>{const t=setTimeout(()=>resolve(null),8000);t.unref();})]);
-      const [socket,number]=client?await Promise.all([timed(client.getConnectionState().catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
-      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],socket:typeof socket==='string'?socket.slice(0,40):null,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress});
+      // The pinned client declares getConnectionState unsupported. Probe only safe
+      // connection metadata through its supported evaluate API instead.
+      const [probe,number]=client?await Promise.all([timed(client.evaluate(()=>{const store=globalThis.Store,models=store?.Msg?.models||[];return{socket:store?.State?.Socket?.state||store?.State?.default?.state||null,loadedMessages:models.length,lastIncomingAt:models.slice(-200).reduce((latest,m)=>!m.id?.fromMe?Math.max(latest,Number(m.t||0)*1000):latest,0),online:navigator.onLine};}).catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
+      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress});
     }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;

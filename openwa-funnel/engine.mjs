@@ -128,8 +128,8 @@ export class Engine {
       } else if (!sensitive && !c.optedOut && !isNew && c.stage === 'waiting_for_details' && !c.reminderScheduled) {
         c.reminderScheduled = true; this.job(c.peer, 'reminder', 0, this.now() + REMINDER_DELAY, reminder);
       }
-      if (!sensitive && !c.optedOut && ['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(input.type) && !c.mediaScheduled) {
-        c.mediaScheduled = true; c.payment = 'pending';
+      if (!sensitive && !c.optedOut && ['image', 'video', 'audio', 'ptt', 'document', 'sticker','payment'].includes(input.type) && !c.mediaScheduled) {
+        c.mediaScheduled = true; if(c.payment!=='verified_by_owner')c.payment = 'pending';
         mediaSequence.forEach((p, i) => this.job(c.peer, 'media', i, this.now() + MEDIA_DELAY + i * GAP, p));
       }
       this.put(c);
