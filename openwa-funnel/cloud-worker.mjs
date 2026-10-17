@@ -1,3 +1,4 @@
+import {mobile,bridge} from './mobile-worker.mjs';
 const reply = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const validSource = value => /^[a-f0-9-]{36}$/.test(value || '');
 async function authorized(request, secret) {
@@ -10,9 +11,13 @@ async function authorized(request, secret) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if(url.pathname==='/admin'||url.pathname.startsWith('/admin/')||url.pathname==='/downloads/rekha-whatsapp-admin.apk'){
+      try{return await mobile(request,env);}catch{return reply({error:'Request failed'},400);}
+    }
     if (url.pathname === '/health' && request.method === 'GET') return reply({ service: 'rekha-openwa-private-backup', ok: true });
     if (!await authorized(request, env.BRIDGE_TOKEN)) return reply({ error: 'Unauthorized' }, 401);
     try {
+      if(url.pathname.startsWith('/bridge/'))return await bridge(request,env);
       if (request.method === 'POST' && url.pathname === '/sync') {
         if (Number(request.headers.get('Content-Length') || 0) > 1000000) return reply({ error: 'Too large' }, 413);
         const raw = await request.text(); if (raw.length > 1000000) return reply({ error: 'Too large' }, 413);
@@ -24,7 +29,7 @@ export default {
           return env.DB.prepare(`INSERT INTO ow_backup(source,key,kind,peer,revision,stamp,payload) VALUES(?,?,?,?,?,?,?)
             ON CONFLICT(source,key) DO UPDATE SET kind=excluded.kind,peer=excluded.peer,revision=excluded.revision,stamp=excluded.stamp,payload=excluded.payload WHERE excluded.revision>ow_backup.revision`).bind(source,c.key,c.kind,c.peer,c.seq,c.stamp,c.json);
         });
-        await env.DB.batch(statements);
+        const written=await env.DB.batch(statements);
         for (const c of changes) {
           const value = JSON.parse(c.json);
           if (value.kind === 'deleted' && /^[a-f0-9]{64}$/.test(value.mediaId || '')) {
@@ -32,7 +37,7 @@ export default {
             if (current?.revision === c.seq && current.kind === 'deleted') await env.MEDIA.delete('openwa-private/' + source + '/' + value.mediaId);
           }
         }
-        return reply({ acknowledged: changes.at(-1).seq });
+        return reply({ acknowledged: changes.at(-1).seq,databaseBytes:written?.at(-1)?.meta?.size_after??null });
       }
       if (request.method === 'GET' && url.pathname === '/records') {
         const source = url.searchParams.get('source'), cursor = url.searchParams.get('cursor') || '', kind = url.searchParams.get('kind');

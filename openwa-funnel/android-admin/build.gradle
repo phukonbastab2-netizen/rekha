@@ -1,0 +1,10 @@
+plugins { id 'com.android.application' version '8.9.1' }
+android {
+    namespace 'in.rekhaastrology.whatsappadmin'
+    compileSdk 36
+    defaultConfig { applicationId 'in.rekhaastrology.whatsappadmin'; minSdk 26; targetSdk 35; versionCode 1; versionName '1.0.0' }
+    sourceSets { main { manifest.srcFile 'AndroidManifest.xml'; java.srcDirs = ['src']; res.srcDirs = ['res'] } }
+    buildTypes { release { minifyEnabled false } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+dependencies {}

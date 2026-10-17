@@ -1,0 +1,48 @@
+{
+  "syntheticOnly": true,
+  "customers": 1000000,
+  "historyMessages": 1000000,
+  "queuedJobsSeeded": 1000000,
+  "seededMs": 0.056800000000066575,
+  "queries": {
+    "stats": {
+      "p50Ms": 0.11180000000013024,
+      "p95Ms": 0.18039999999996326,
+      "maxMs": 1.6440000000000055,
+      "runs": 100
+    },
+    "contacts": {
+      "p50Ms": 0.6048999999998159,
+      "p95Ms": 1.4986999999998716,
+      "maxMs": 3.0782000000001517,
+      "runs": 100
+    },
+    "deepPage": {
+      "p50Ms": 0.4193000000000211,
+      "p95Ms": 0.616399999999885,
+      "maxMs": 0.835399999999936,
+      "runs": 100
+    },
+    "dispatch": {
+      "p50Ms": 2.5645999999999276,
+      "p95Ms": 4.270499999999856,
+      "maxMs": 29.354700000000093,
+      "runs": 50
+    },
+    "newInbound": {
+      "p50Ms": 1.0059000000001106,
+      "p95Ms": 2.815299999999752,
+      "maxMs": 27.13869999999997,
+      "runs": 100
+    },
+    "oneChat": {
+      "p50Ms": 0.4720999999999549,
+      "p95Ms": 0.6900999999998021,
+      "maxMs": 1.3445999999999003,
+      "runs": 100
+    }
+  },
+  "databaseBytes": 2061692928,
+  "processRssBytes": 54755328,
+  "limits": "Storage/query test on this development PC only; no WhatsApp throughput, Cloudflare quota, server hardware, delivery, attachments or million-per-day validation."
+}

@@ -6,6 +6,8 @@ import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypt
 import { Engine, validPeer, isSensitive } from './engine.mjs';
 import { ensurePairingCompatibility } from './pairing-compat.mjs';
 import { withPersistentProfile } from './persistent-driver.mjs';
+import {createMonitor} from './monitor.mjs';
+import {createMobileBridge} from './mobile-bridge.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -34,7 +36,14 @@ const pairingFile = path.join(data, 'pairing-phone');
 const canPairWithPhone = process.env.ALLOW_PAIRING_RESTART === 'true';
 const pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, 'utf8').trim() : '';
 const state = { connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
+const monitor=createMonitor({engine,data,profile:process.env.WHATSAPP_PROFILE_DIR||path.join(root,'.sessions','rekha-29'),cloudStatus:()=>({state:state.cloud,lastSynced:state.lastBackup,databaseBytes:state.cloudDatabaseBytes||null,databaseMeasuredAt:state.cloudDatabaseMeasuredAt||null})});
+let copyRestored=0;
+if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='original-copy-e8df2492'").get()){
+  copyRestored=engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('original-copy-e8df2492')");
+}
+if(copyRestored)console.log('Updated queued automatic captions to the original saved copy.');
 let client, runtime, connecting = false, stopping = false, busy = false, syncing = false, connectedSince = 0, eventsInstalled = false;
+let mediaActive=0;
 const pendingAcks = new Map();
 const safeId = value => typeof value === 'string' ? value : value?._serialized || '';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -54,12 +63,20 @@ async function backupRequest(route, options = {}) {
   if (!response.ok) throw Error('Cloud backup request failed (' + response.status + ')');
   return response;
 }
+function removeMedia(ids){for(const id of ids)if(/^[a-f0-9]{64}$/.test(id))for(const suffix of['','.synced']){const file=path.join(data,'media',id+suffix);if(fs.existsSync(file))fs.unlinkSync(file);}}
+let mobileMonitor=null,mobileMonitorAt=0;
+const mobileBridge=cloud&&token?createMobileBridge({engine,source,request:backupRequest,removeMedia,status:()=>{
+  if(Date.now()-mobileMonitorAt>30000){mobileMonitor=monitor.snapshot();mobileMonitorAt=Date.now();}
+  return{connection:state.connection,enabled:engine.settings().enabled,...engine.stats(),cloud:state.cloud,monitor:mobileMonitor};
+}}):null;
 async function sync() {
   if (syncing || !cloud || !token || stopping) return;
   syncing = true;
   try {
+    // Drain several bounded batches per cycle so a growing inbox does not outrun backup.
+    for(let batch=0;batch<20&&!stopping;batch++){
     const changes = engine.changes();
-    if (!changes.length) { state.cloud = 'synced'; return; }
+    if (!changes.length) { state.cloud = 'synced'; break; }
     // An attachment reaches the private bucket before a message references it.
     for (const c of changes) {
       const value = JSON.parse(c.json), m = value.media;
@@ -71,11 +88,17 @@ async function sync() {
     const result = await (await backupRequest('/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, changes }) })).json();
     if (result.acknowledged !== changes.at(-1).seq) throw Error('Unexpected backup acknowledgement');
     engine.synced(result.acknowledged); state.cloud = 'synced'; state.lastBackup = Date.now();
+    if(Number.isFinite(result.databaseBytes)){state.cloudDatabaseBytes=result.databaseBytes;state.cloudDatabaseMeasuredAt=Date.now();}
+    }
   } catch { state.cloud = 'retrying'; } finally { syncing = false; }
 }
 async function saveIncomingMedia(message, recordKey) {
   if (!client || engine.get(recordKey)?.sensitive) return;
+  if(mediaActive>=2){const m=engine.get(recordKey);if(m?.kind==='message')engine.put({...m,attachmentError:'Attachment storage is busy. The original file remains in WhatsApp.'});return;}
+  mediaActive++;
   try {
+    const disk=fs.statfsSync(data);
+    if(disk.bavail*disk.bsize<2*1024**3)throw Error('Low disk space');
     // Only customer-chosen attachments in this chat are accessed.
     const encoded = await client.decryptMedia(message);
     const match = /^data:(image\/(?:jpeg|png|webp)|video\/mp4|audio\/(?:mpeg|ogg|mp4|wav)|application\/pdf);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(encoded);
@@ -83,8 +106,9 @@ async function saveIncomingMedia(message, recordKey) {
     const bytes = Buffer.from(match[2], 'base64'); if (!bytes.length || bytes.length > 25 * 1024 * 1024) return;
     const id = createHash('sha256').update(recordKey).digest('hex');
     fs.writeFileSync(path.join(data, 'media', id), bytes, { mode: 0o600 });
-    const m = engine.get(recordKey); if (m) engine.put({ ...m, media: { id, mime: match[1], size: bytes.length } });
-  } catch { const m = engine.get(recordKey); if (m) engine.put({ ...m, attachmentError: 'Open the original attachment in WhatsApp; download was unavailable.' }); }
+    const m = engine.get(recordKey); if (m?.kind==='message') engine.put({ ...m, media: { id, mime: match[1], size: bytes.length } });
+    else fs.unlinkSync(path.join(data,'media',id));
+  } catch { const m = engine.get(recordKey); if (m?.kind==='message') engine.put({ ...m, attachmentError: 'Open the original attachment in WhatsApp; download was unavailable.' }); }finally{mediaActive--;}
 }
 async function incoming(message) {
   const peer = safeId(message.from), id = safeId(message.id), at = Number(message.timestamp || message.t || 0) * 1000;
@@ -144,6 +168,7 @@ function saveConnectionDiagnostic(error, phase) {
 }
 async function pump() {
   if (busy || !client || state.connection !== 'connected' || !runtime?.getReadiness().ready || stopping) return;
+  const disk=fs.statfsSync(data);if(disk.bavail*disk.bsize<500*1024**2){state.error='Storage nearly full. Outgoing sends are paused until space is available.';return;}
   busy = true;
   try {
     const j = engine.reserve(); if (!j) return;
@@ -173,6 +198,7 @@ const server = http.createServer(async (req, res) => {
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
     if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
     if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source });
+    if (req.method === 'GET' && url.pathname === '/api/monitor') return json(res,monitor.snapshot());
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;
       const browser = runtime ? await runtime.evaluateScript('(() => { const p=globalThis.OpenWA_PortableSession; return {present:!!p,methods:p?Object.keys(p):[],startupFailure:p?.startupFailure?.()??null}; })()').catch(()=>null) : null;
@@ -187,6 +213,23 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       if (req.headers.origin !== origin || !String(req.headers['content-type']).startsWith('application/json')) return json(res, { error: 'Forbidden' }, 403);
       const input = await body(req);
+      if(url.pathname==='/api/mobile-link'){
+        if(!mobileBridge)return json(res,{error:'Cloud backup is not configured'},409);
+        return json(res,{...await mobileBridge.issueCode(),url:cloud+'/admin',apk:cloud+'/downloads/rekha-whatsapp-admin.apk'});
+      }
+      if(url.pathname==='/api/mobile-revoke'){
+        if(mobileBridge)await mobileBridge.revoke();return json(res,{ok:true});
+      }
+      if(url.pathname==='/api/cleanup'){
+        if(input.confirm!=='DELETE EXPIRED CONTENT')return json(res,{error:'Confirmation required'},400);
+        engine.prune();void monitor.scan();void sync();return json(res,{ok:true});
+      }
+      if(url.pathname==='/api/delete-content'){
+        if(input.confirm!=='DELETE CHAT CONTENT')return json(res,{error:'Confirmation required'},400);
+        const result=engine.deleteContent(input.peer);
+        removeMedia(result.media);
+        void monitor.scan();void sync();return json(res,{deleted:result.deleted,more:result.more,cloudDeletion:'pending_backup'});
+      }
       if (url.pathname === '/api/pairing') {
         if (!canPairWithPhone) return json(res, { error: 'Phone linking requires the cloud service.' }, 409);
         if (['connected','restarting'].includes(state.connection) || stopping) return json(res, { error: 'WhatsApp is connected or restarting.' }, 409);
@@ -216,12 +259,14 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(port, '127.0.0.1', () => console.log(`Private WhatsApp controls: ${origin}`));
 const pumping = setInterval(() => void pump(), 1000), backing = setInterval(() => void sync(), 15000);
+const mobilePolling=setInterval(()=>void mobileBridge?.poll(),5000);
 const housekeeping = setInterval(() => {
   engine.prune();
   const expiry = Date.now() - 90 * 86400000;
   for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
 }, 3600000);
-async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy) await sleep(100); engine.close(); process.exit(exitCode); }
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy||syncing||mediaActive||mobileBridge?.busy) await sleep(100); engine.close(); process.exit(exitCode); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
+void mobileBridge?.poll();
 if (process.env.AUTO_CONNECT === 'true') void connect();

@@ -5,3 +5,7 @@ node_modules/
 *.data.json
 *.session.json
 *.log
+android-admin/.gradle/
+android-admin/build/
+android-admin/local.properties
+*.apk

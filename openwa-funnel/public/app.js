@@ -34,6 +34,7 @@ async function loadMessages(older = false) {
   $('name').textContent = currentContact.name || currentContact.peer.split('@')[0];
   $('details').textContent = `${currentContact.peer.split('@')[0]} · ${currentContact.optedOut ? 'Opted out' : currentContact.paused ? 'Automation paused' : 'Automation ready'} · Payment: ${currentContact.payment.replaceAll('_', ' ')}`;
   $('chatActions').hidden = false; $('composer').hidden = false;
+  if(!$('deleteChat')){const b=element('button','Delete chat content');b.id='deleteChat';b.onclick=deleteChat;$('chatActions').append(b);}
   $('pause').textContent = currentContact.paused ? 'Resume automation' : 'Pause automation';
   $('payment').textContent = currentContact.payment === 'verified_by_owner' ? 'Mark payment pending' : 'Verify payment';
   $('reply').disabled = !!currentContact.optedOut; $('send').disabled = !!currentContact.optedOut || posting;
@@ -104,3 +105,25 @@ $('composer').onsubmit = async event => {
 };
 $('reply').oninput = () => { draftId = ''; };
 void refresh(); setInterval(refresh, 3000);
+
+const bytes=n=>Number.isFinite(n)?(n/1024**3>=1?(n/1024**3).toFixed(2)+' GB':(n/1024**2).toFixed(1)+' MB'):'Not measured';
+async function checkBackend(){
+  try{
+    const m=await api('monitor'),cards=$('monitorCards');cards.replaceChildren();
+    const rows=[['Server disk',bytes(m.disk.free)+' free / '+bytes(m.disk.total)],['Chat database',bytes(m.database.bytes)+' · '+bytes(m.database.reusableBytes)+' reusable'],['Customer attachments',bytes(m.folders.media.bytes)+(m.folders.media.partial?' (partial count)':'')],['WhatsApp profile',bytes(m.folders.profile.bytes)],['Server memory',bytes(m.memory.serverUsed)+' / '+bytes(m.memory.serverTotal)],['Gateway memory',bytes(m.memory.gatewayRss)],['Queue',m.counts.queued+' waiting · '+m.counts.uncertain+' uncertain'],['Cloud backup',m.cloud.state+' · '+m.counts.backupPending+' pending changes'],['D1 storage',bytes(m.cloud.databaseBytes)+' / '+bytes(m.cloud.d1MaxBytes)+' (shared database)'],['Retention','90 days · duplicate markers retained'],['Stored customer target','1,000,000 · delivery capacity is separate'],['Checked',new Date(m.checkedAt).toLocaleTimeString()+' · file sizes '+(m.folders.checkedAt?new Date(m.folders.checkedAt).toLocaleTimeString():'scanning')]];
+    for(const[label,value]of rows){const card=element('div',undefined,'monitor-card');card.append(element('small',label),element('strong',String(value)));cards.append(card);}
+    $('monitorWarnings').textContent=[...m.warnings,m.capacityStatus,m.cloud.providerUsage].join('\n');
+  }catch(e){$('monitorWarnings').textContent=e.message;}
+}
+async function deleteChat(){
+  const peer=selected;if(!peer||!confirm('Delete this customer’s stored chat content and attachments? Automation will pause. Cloud deletion finishes after backup sync. WhatsApp messages on the phones are unchanged.'))return;
+  const b=$('deleteChat');b.disabled=true;
+  try{let r;do{r=await api('delete-content',{peer,confirm:'DELETE CHAT CONTENT'});}while(r.more);currentMessages.clear();messageCursor='';await loadContacts();if(selected===peer)await loadMessages();toast('Content deleted locally. Cloud deletion is pending until backup sync completes.');}
+  catch(e){toast(e.message);}finally{b.disabled=false;}
+}
+$('backend').ontoggle=()=>{if($('backend').open)void checkBackend();};
+$('checkBackend').onclick=checkBackend;
+$('cleanExpired').onclick=async()=>{if(!confirm('Delete one batch of chat content older than 90 days? Active and uncertain sends will remain.'))return;try{await api('cleanup',{confirm:'DELETE EXPIRED CONTENT'});await checkBackend();toast('Expired-content cleanup finished for this batch.');}catch(e){toast(e.message);}};
+setInterval(()=>{if($('backend').open&&!document.hidden)void checkBackend();},30000);
+$('mobileCodeButton').onclick=async()=>{const b=$('mobileCodeButton');b.disabled=true;try{const r=await api('mobile-link',{});$('mobileCode').textContent=r.code+' · expires '+new Date(r.expires).toLocaleTimeString();setTimeout(()=>$('mobileCode').textContent='',Math.max(0,r.expires-Date.now()));}catch(e){toast(e.message);}finally{b.disabled=false;}};
+$('revokeMobile').onclick=async()=>{if(!confirm('Sign out every phone/browser admin session? Generate a new code to sign in again.'))return;try{await api('mobile-revoke',{});$('mobileCode').textContent='';toast('All remote admin sessions signed out.');}catch(e){toast(e.message);}};
