@@ -5,6 +5,8 @@ import {repairPairingAsset} from './pairing-compat.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
+import os from 'node:os';
+import {withPersistentProfile} from './persistent-driver.mjs';
 const reply = (status, data={}) => new Response(JSON.stringify(data),{status});
 test('an old session renews after restart and retries the rejected request once',async()=>{
   const calls=[];
@@ -33,4 +35,17 @@ test('the pinned phone-pairing asset fix is narrow, idempotent and rejects unexp
   assert.equal(fixed.split('require("WAWebPairingType").PairingType').length-1,2);
   assert.equal(repairPairingAsset(fixed),fixed);
   assert.throws(()=>repairPairingAsset(source+'unreviewed code'),/Unrecognized/);
+});
+test('explicit persistent browser profile survives core option removal without changing sandbox options',async()=>{
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'rekha-profile-'));
+  try {
+    let received;
+    const fake={name:'puppeteer',launch:async options=>{received=options;return 'browser';}};
+    const driver=withPersistentProfile(fake,path.join(temp,'profile'));
+    assert.equal(await driver.launch({args:['--some-safe-flag'],headless:true,userDataDir:undefined}),'browser');
+    assert.equal(received.userDataDir,path.join(temp,'profile'));
+    assert.deepEqual(received.args,['--some-safe-flag']);assert.equal(received.headless,true);
+    assert.equal(driver.name,'puppeteer');
+    if(process.platform!=='win32')assert.equal(fs.statSync(received.userDataDir).mode&0o777,0o700);
+  } finally {fs.rmSync(temp,{recursive:true,force:true});}
 });

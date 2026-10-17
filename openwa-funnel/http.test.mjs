@@ -15,6 +15,8 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   assert.equal((await fetch(base+'/api/status')).status,401);
   const page=await fetch(base+'/'),cookie=page.headers.get('set-cookie').split(';')[0];assert.equal(page.status,200);assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
   const status=await(await fetch(base+'/api/status',{headers:{Cookie:cookie}})).json();assert.equal(status.connection,'disconnected');assert.equal(status.enabled,false);
+  const persistence=await(await fetch(base+'/api/session-status',{headers:{Cookie:cookie}})).json();
+  assert.equal(persistence.saved,false);assert.equal(persistence.checkpoint,false);assert.equal(persistence.browser,null);
   assert.equal((await fetch(base+'/api/enabled',{method:'POST',headers:{Cookie:cookie,Origin:'https://foreign.test','Content-Type':'application/json'},body:'{"enabled":true}'})).status,403);
   assert.equal((await fetch(base+'/api/enabled',{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json'},body:'{"enabled":true}'})).status,200);
   const rawStatus = headers => new Promise((resolve,reject) => { const req = http.request(base+'/api/status',{headers},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end(); });

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID, randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import { Engine, validPeer, isSensitive } from './engine.mjs';
 import { ensurePairingCompatibility } from './pairing-compat.mjs';
+import { withPersistentProfile } from './persistent-driver.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -110,7 +111,10 @@ async function connect() {
     }
     if (client) { try { await client.stop('Owner reconnecting'); } catch {} client = null; }
     const chromePath = process.env.CHROME_PATH || (process.platform === 'win32' && fs.existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe') ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : undefined);
-    runtime = await createClient({ sessionId: 'rekha-29', driver: new PuppeteerDriver(), headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, ...(pairingPhone ? { linkCode: pairingPhone } : {}), userDataDir: process.env.WHATSAPP_PROFILE_DIR || path.join(root, '.sessions', 'rekha-29'), sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
+    const profile = process.env.WHATSAPP_PROFILE_DIR || path.join(root, '.sessions', 'rekha-29');
+    const driver = withPersistentProfile(new PuppeteerDriver(),profile);
+    runtime = await createClient({ sessionId: 'rekha-29', driver, headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, ...(pairingPhone ? { linkCode: pairingPhone } : {}), userDataDir: profile, sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
+    runtime.events.on('error', event => saveConnectionDiagnostic(event.error, 'runtime'));
     client = new Client({ client: runtime, transport: runtime.getTransport() });
     // Register before start so no live message is lost in a readiness/listener gap.
     client.onMessage(message => incoming(message).catch(() => { state.error = 'An incoming message needs checking in WhatsApp.'; }));
@@ -118,19 +122,25 @@ async function connect() {
     connectedSince = Date.now();
     await client.start();
     if (!runtime.getReadiness().ready) throw Error('WhatsApp is not ready');
+    // The pinned core can skip persistence when runtime bridge installation fails.
+    // Saving the encrypted checkpoint must not depend on message bridge readiness.
+    await runtime.getTransport().portable.activate().catch(error => saveConnectionDiagnostic(error,'session_save'));
     state.connection = 'connected'; state.qr = null; state.pairingCode = null; state.connectedAt = Date.now();
     if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
   } catch (error) {
-    // Keep a redacted diagnostic on the private host, never in cloud backups.
-    let detail = String(error?.message || 'Unknown connection failure');
-    if (/bearer|secret|access.?token|session.?data/i.test(detail)) detail = 'Private provider error';
-    else detail = detail.replace(/https?:\/\/\S+/g, '[url]').replace(/(?:\+?\d[\s()-]*){6,}/g, '[number]').replace(/\b(?=[A-Z0-9-]{8,10}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]{4}-?[A-Z0-9]{4}\b/g, '[code]').replace(/[A-Za-z0-9+/_=-]{32,}/g, '[private]');
-    fs.writeFileSync(path.join(data,'connection-error.json'),JSON.stringify({at:Date.now(),name:/^[A-Za-z]{1,30}$/.test(error?.name || '')?error.name:'Error',detail:detail.slice(0,1500)}),{mode:0o600});
+    saveConnectionDiagnostic(error,'connection');
     state.connection = 'error'; state.qr = null; state.pairingCode = null; state.error = 'Could not connect WhatsApp. Check the browser installation, account and internet connection, then restart the gateway.';
     // Do not log exceptions: third-party errors may contain account/session data.
     client = null;
     try { await runtime?.stop?.('connection failure'); } catch {}
   } finally { connecting = false; }
+}
+function saveConnectionDiagnostic(error, phase) {
+  // Keep a redacted diagnostic on the private host, never in cloud backups.
+  let detail = String(error?.message || 'Unknown connection failure');
+  if (/bearer|secret|access.?token|session.?data/i.test(detail)) detail = 'Private provider error';
+  else detail = detail.replace(/https?:\/\/\S+/g, '[url]').replace(/(?:\+?\d[\s()-]*){6,}/g, '[number]').replace(/\b(?=[A-Z0-9-]{8,10}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]{4}-?[A-Z0-9]{4}\b/g, '[code]').replace(/[A-Za-z0-9+/_=-]{32,}/g, '[private]');
+  fs.writeFileSync(path.join(data,'connection-error.json'),JSON.stringify({at:Date.now(),phase,name:/^[A-Za-z]{1,30}$/.test(error?.name || '')?error.name:'Error',detail:detail.slice(0,1500)}),{mode:0o600});
 }
 async function pump() {
   if (busy || !client || state.connection !== 'connected' || !runtime?.getReadiness().ready || stopping) return;
@@ -163,6 +173,11 @@ const server = http.createServer(async (req, res) => {
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
     if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
     if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source });
+    if (req.method === 'GET' && url.pathname === '/api/session-status') {
+      const portable = runtime?.getTransport?.()?.portable;
+      const browser = runtime ? await runtime.evaluateScript('(() => { const p=globalThis.OpenWA_PortableSession; return {present:!!p,methods:p?Object.keys(p):[],startupFailure:p?.startupFailure?.()??null}; })()').catch(()=>null) : null;
+      return json(res,{saved:fs.existsSync(path.join(root,'.sessions','rekha-29.data.json')),checkpoint:!!portable?.hasCheckpoint,revision:portable?.revision,documentBound:!!portable?.documentId,browser});
+    }
     if (req.method === 'GET' && url.pathname === '/api/contacts') return json(res, engine.list('contact', '', url.searchParams.get('before') || '', 50));
     if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); return json(res, { messages: engine.list('message', peer, url.searchParams.get('before') || '', 50), jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='unknown' LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }
     if (req.method === 'GET' && /^\/media\/[a-f0-9]{64}$/.test(url.pathname)) {
