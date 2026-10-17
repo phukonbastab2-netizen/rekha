@@ -13,6 +13,18 @@ const cookie=(token,age=2592000)=>`ow_mobile=${token}; Path=/admin; HttpOnly; Se
 function cleanStatus(s){return{connection:['connected','starting','error','disconnected','scan_qr','enter_code','restarting'].includes(s?.connection)?s.connection:'disconnected',enabled:!!s?.enabled,contacts:Number(s?.contacts)||0,queued:Number(s?.queued)||0,uncertain:Number(s?.uncertain)||0,cloud:['synced','retrying','waiting'].includes(s?.cloud)?s.cloud:'waiting',monitor:s?.monitor||null};}
 export async function bridge(request,env){
   const url=new URL(request.url),now=Date.now();
+  if(url.pathname==='/bridge/releases/payment-qr'&&request.method==='PUT'){
+    if(Number(request.headers.get('Content-Length')||0)>3000000)return json({error:'Too large'},413);
+    const bytes=await request.arrayBuffer(),magic=new Uint8Array(bytes).slice(0,8);
+    if(bytes.byteLength<1000||bytes.byteLength>3000000||hex(magic)!=='89504e470d0a1a0a')return json({error:'Invalid PNG'},400);
+    const key='openwa-public/qr-shahrukh-20261018.png';
+    // Versioned payment assets are immutable; changing recipients needs a new URL.
+    const existing=await env.MEDIA.get(key);
+    const digest=hex(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)));
+    if(existing){const old=await existing.arrayBuffer();if(hex(new Uint8Array(await crypto.subtle.digest('SHA-256',old)))!==digest)return json({error:'Versioned QR already exists'},409);}
+    else await env.MEDIA.put(key,bytes,{httpMetadata:{contentType:'image/png'}});
+    return json({bytes:bytes.byteLength,sha256:digest});
+  }
   if(url.pathname==='/bridge/releases/admin'&&request.method==='PUT'){
     const bytes=await request.arrayBuffer();if(bytes.byteLength<1000||bytes.byteLength>15000000||new Uint8Array(bytes)[0]!==80||new Uint8Array(bytes)[1]!==75)return json({error:'Invalid APK'},400);
     await env.MEDIA.put('openwa-public/rekha-whatsapp-admin.apk',bytes,{httpMetadata:{contentType:'application/vnd.android.package-archive'}});
@@ -44,6 +56,10 @@ export async function bridge(request,env){
 }
 export async function mobile(request,env){
   const url=new URL(request.url),route=url.pathname,now=Date.now();
+  if(route==='/assets/qr-shahrukh-20261018.png'&&request.method==='GET'){
+    const object=await env.MEDIA.get('openwa-public/qr-shahrukh-20261018.png');if(!object)return json({error:'Not found'},404);
+    return new Response(object.body,{headers:{'Content-Type':'image/png','Cache-Control':'public,max-age=31536000,immutable','X-Content-Type-Options':'nosniff'}});
+  }
   if(route==='/downloads/rekha-whatsapp-admin.apk'){
     const object=await env.MEDIA.get('openwa-public/rekha-whatsapp-admin.apk');if(!object)return json({error:'APK not available yet'},404);
     return new Response(object.body,{headers:{'Content-Type':'application/vnd.android.package-archive','Content-Disposition':'attachment; filename="RekhaWhatsAppAdmin.apk"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});

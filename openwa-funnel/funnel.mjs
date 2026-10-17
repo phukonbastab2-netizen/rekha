@@ -1,4 +1,5 @@
 import copy from "./funnel-copy.json" with { type: "json" };
+import payment from "./payment-config.json" with { type: "json" };
 // Public media only. Authentication and WhatsApp session data never belong here.
 const base = 'https://pub-e67cd25c4ce94bc38f1077c04b6cfd17.r2.dev/';
 const media = (type, file, body) => ({ type, url: base + file, body });
@@ -9,7 +10,7 @@ export const firstSequence = [
   {type: "text", body: copy.greeting},
   media("video", "wp%20video%201.mp4", copy.firstCaption),
   media("video", "testimonials.mp4", copy.testimonialsCaption),
-  media("image", "qr.jpg", copy.qrCaption),
+  {type:"image",url:payment.qrUrl,body:copy.qrCaption+'\n\n'+payment.shopNote},
   {type: "text", body: copy.final}
 ];
 export const reminder = {type: "text", body: copy.reminder};

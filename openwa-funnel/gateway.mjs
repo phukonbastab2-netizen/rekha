@@ -38,10 +38,10 @@ const pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, '
 const state = { connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
 const monitor=createMonitor({engine,data,profile:process.env.WHATSAPP_PROFILE_DIR||path.join(root,'.sessions','rekha-29'),cloudStatus:()=>({state:state.cloud,lastSynced:state.lastBackup,databaseBytes:state.cloudDatabaseBytes||null,databaseMeasuredAt:state.cloudDatabaseMeasuredAt||null})});
 let copyRestored=0;
-if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='original-copy-e8df2492'").get()){
-  copyRestored=engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('original-copy-e8df2492')");
+if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-20261018'").get()){
+  copyRestored=engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('shop-qr-shahrukh-20261018')");
 }
-if(copyRestored)console.log('Updated queued automatic captions to the original saved copy.');
+if(copyRestored)console.log('Updated pending automatic messages to current owner-approved content.');
 let client, runtime, connecting = false, stopping = false, busy = false, syncing = false, connectedSince = 0, eventsInstalled = false;
 let mediaActive=0;
 const pendingAcks = new Map();

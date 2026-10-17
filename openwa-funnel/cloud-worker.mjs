@@ -11,7 +11,7 @@ async function authorized(request, secret) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if(url.pathname==='/admin'||url.pathname.startsWith('/admin/')||url.pathname==='/downloads/rekha-whatsapp-admin.apk'){
+    if(url.pathname==='/admin'||url.pathname.startsWith('/admin/')||url.pathname==='/downloads/rekha-whatsapp-admin.apk'||url.pathname==='/assets/qr-shahrukh-20261018.png'){
       try{return await mobile(request,env);}catch{return reply({error:'Request failed'},400);}
     }
     if (url.pathname === '/health' && request.method === 'GET') return reply({ service: 'rekha-openwa-private-backup', ok: true });
