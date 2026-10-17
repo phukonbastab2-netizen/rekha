@@ -15,6 +15,7 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   assert.equal((await fetch(base+'/api/status')).status,401);
   const page=await fetch(base+'/'),cookie=page.headers.get('set-cookie').split(';')[0];assert.equal(page.status,200);assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
   const status=await(await fetch(base+'/api/status',{headers:{Cookie:cookie}})).json();assert.equal(status.connection,'disconnected');assert.equal(status.enabled,false);
+  assert.equal(status.linkedBefore,false);
   const persistence=await(await fetch(base+'/api/session-status',{headers:{Cookie:cookie}})).json();
   assert.equal(persistence.saved,false);assert.equal(persistence.checkpoint,false);assert.equal(persistence.browser,null);
   assert.equal((await fetch(base+'/api/enabled',{method:'POST',headers:{Cookie:cookie,Origin:'https://foreign.test','Content-Type':'application/json'},body:'{"enabled":true}'})).status,403);
@@ -25,6 +26,10 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   assert.equal((await fetch(base+'/media/../../.env',{headers:{Cookie:cookie}})).status,404);
   assert.equal((await fetch(base+'/api/send',{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({peer:'12345678@g.us',body:'hello',requestId:'request-0001'})})).status,400);
   const pair = (data, origin=base) => fetch(base+'/api/pairing',{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)});
+  fs.writeFileSync(path.join(temp,'whatsapp-linked.json'),'{}');
+  assert.equal((await pair({mode:'phone',phone:'+15551234567'})).status,409);
+  assert.equal(fs.existsSync(path.join(temp,'pairing-phone')),false);
+  fs.unlinkSync(path.join(temp,'whatsapp-linked.json'));
   assert.equal((await pair({mode:'phone',phone:'+1 5551234567'},'https://foreign.test')).status,403);
   for (const phone of ['','123','+0123456789','+15551234567;rm','+1234567890123456']) assert.equal((await pair({mode:'phone',phone})).status,400);
   assert.equal(fs.existsSync(path.join(temp,'pairing-phone')),false);

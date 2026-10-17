@@ -74,3 +74,16 @@ test('another customer can send while a media job is in flight without overlappi
  const a=e.reserve(),b=e.reserve();assert.ok(a&&b);assert.notEqual(a.peer,b.peer);assert.equal(e.reserve(),null);
  assert.equal(e.stats().sending,2);e.finish(b.key,'provider-b');assert.equal(e.stats().sending,1);assert.equal(e.get(a.key).state,'sending');
 });
+
+test('native delivery receipts forward only outgoing acknowledgements and replace stale listeners',()=>{
+ const collection=new EventEmitter(),acks=[];
+ const context={Store:{Msg:collection,State:{Socket:{state:'CONNECTED'}}},OpenWA_RuntimeMessageReceived:async()=>{},OpenWA_RuntimeAckChanged:m=>acks.push(m)};
+ const install=vm.runInNewContext('('+installFastInboxBridge.toString()+')',context);
+ assert.equal(install({since:0}).socket,'CONNECTED');install({since:0});assert.equal(collection.listenerCount('change:ack'),1);
+ collection.emit('change:ack',{id:{_serialized:'outgoing',fromMe:true},ack:3,t:1000});
+ collection.emit('change:ack',{id:{_serialized:'incoming',fromMe:false},ack:3});
+ collection.emit('change:ack',{id:{_serialized:'invalid',fromMe:true},ack:'invalid'});
+ assert.equal(acks.length,1);assert.equal(acks[0].id,'outgoing');assert.equal(acks[0].ack,3);
+ const replacement=new EventEmitter();context.Store.Msg=replacement;install({since:0});
+ assert.equal(collection.listenerCount('change:ack'),0);assert.equal(replacement.listenerCount('change:ack'),1);
+});

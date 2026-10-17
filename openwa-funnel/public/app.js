@@ -67,10 +67,10 @@ async function refresh() {
     const status = await api('status'); enabled = status.enabled;
     $('connection').textContent = status.connection.replaceAll('_', ' '); $('connection').className = 'badge ' + status.connection;
     $('connect').disabled = ['connected','starting','scan_qr','enter_code','restarting'].includes(status.connection);
-    $('linkOptions').hidden = !status.canPairWithPhone || status.connection === 'connected';
+    $('linkOptions').hidden = !status.canPairWithPhone || !(['scan_qr','enter_code'].includes(status.connection)||(!status.linkedBefore&&['disconnected','error'].includes(status.connection)));
     $('generateCode').disabled = $('useQr').disabled = ['starting','restarting','connected'].includes(status.connection);
     $('toggle').textContent = enabled ? 'Pause funnel' : 'Enable funnel';
-    $('summary').textContent = `${status.contacts} saved chats · ${status.queued} queued · ${status.uncertain} need checking${status.inboxSync?.checkedAt?' · WhatsApp session: '+status.inboxSync.providerChats+' chats':''}${status.inboxSync?.error?' · '+status.inboxSync.error:''}`;
+    $('summary').textContent = `${status.contacts} saved chats · ${status.queued} queued · ${status.uncertain} need checking${status.inboxSync?.checkedAt?' · WhatsApp session: '+status.inboxSync.providerChats+' chats':''}${status.receiver?.healthy===false?' · '+status.receiver.error:''}${status.inboxSync?.error?' · '+status.inboxSync.error:''}`;
     $('backup').textContent = `Cloud backup: ${status.cloud.replaceAll('_', ' ')}${status.backupPending ? ' · ' + status.backupPending + ' changes pending' : ''}`;
     $('pairing').hidden = !status.qr && !status.pairingCode;
     $('codePanel').hidden = !status.pairingCode; $('pairCode').textContent = status.pairingCode || '';

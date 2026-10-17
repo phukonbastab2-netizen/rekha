@@ -9,6 +9,7 @@ import { withPersistentProfile } from './persistent-driver.mjs';
 import {createMonitor} from './monitor.mjs';
 import {createMobileBridge} from './mobile-bridge.mjs';
 import {createInboxSync,normalizeIncoming,installFastInboxBridge} from './inbox-sync.mjs';
+import {createReceiverWatchdog} from './receiver-watchdog.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -35,7 +36,9 @@ const origin = `http://127.0.0.1:${port}`;
 const cloud = process.env.CLOUD_BACKUP_URL || '', token = process.env.CLOUD_BACKUP_TOKEN || '';
 const pairingFile = path.join(data, 'pairing-phone');
 const canPairWithPhone = process.env.ALLOW_PAIRING_RESTART === 'true';
-const pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, 'utf8').trim() : '';
+let pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, 'utf8').trim() : '';
+const linkedFile=path.join(data,'whatsapp-linked.json');
+const linkedBefore=()=>fs.existsSync(linkedFile);
 const state = { connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
 const ingress={events:0,accepted:0,duplicates:0,lastEventAt:null,lastAcceptedAt:null,lastShape:null,rejected:{}};
 const monitor=createMonitor({engine,data,profile:process.env.WHATSAPP_PROFILE_DIR||path.join(root,'.sessions','rekha-29'),cloudStatus:()=>({state:state.cloud,lastSynced:state.lastBackup,databaseBytes:state.cloudDatabaseBytes||null,databaseMeasuredAt:state.cloudDatabaseMeasuredAt||null})});
@@ -140,14 +143,21 @@ async function incoming(message,recovered=false) {
 async function checkFastBridge(){
   if(checkingBridge||stopping||!client||state.connection!=='connected')return;
   checkingBridge=true;
-  try{fastBridge=await client.evaluate(installFastInboxBridge,{since:inboxSync.since});}catch{fastBridge={ready:false};}finally{checkingBridge=false;}
+  let timeout;
+  try{fastBridge=await Promise.race([client.evaluate(installFastInboxBridge,{since:inboxSync.since}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Receiver probe timed out')),8000);})]);return fastBridge;}catch{fastBridge={ready:false};return fastBridge;}finally{clearTimeout(timeout);checkingBridge=false;}
 }
+const receiverWatchdog=createReceiverWatchdog({
+ probe:async()=>state.connection==='connected'?await checkFastBridge():{ready:false},
+ canReconnect:()=>process.env.AUTO_CONNECT==='true'&&!stopping&&!connecting&&!busy&&!syncing&&!mediaActive&&!inboxSync.status.running&&['connected','disconnected','error'].includes(state.connection),
+ reconnect:async()=>{state.connection='disconnected';await connect();}
+});
 async function connect() {
   if (connecting || (client && state.connection === 'connected') || stopping) return;
   connecting = true; state.connection = 'starting'; state.error = '';
   try {
     ensurePairingCompatibility();
     const [{ Client, createClient, ev }, { PuppeteerDriver }, QRCode] = await Promise.all([import('@open-wa/wa-automate'), import('@open-wa/driver-puppeteer'), import('qrcode')]);
+    if(stopping)return;
     if (!eventsInstalled) {
       ev.on('qr.**', async qr => { if (typeof qr === 'string' && !stopping) { state.qr = await QRCode.default.toDataURL(qr, { width: 300, margin: 2 }); state.pairingCode = null; state.connection = 'scan_qr'; if (pairingPhone) state.error = 'WhatsApp did not offer a pairing code. You can scan the QR or request a fresh code.'; } });
       ev.on('linkCode.**', code => { if (typeof code === 'string' && /^[a-z0-9-]{8,10}$/i.test(code) && !stopping) { state.pairingCode = code; state.qr = null; state.error = ''; state.connection = 'enter_code'; } });
@@ -159,6 +169,7 @@ async function connect() {
     const profile = process.env.WHATSAPP_PROFILE_DIR || path.join(root, '.sessions', 'rekha-29');
     const driver = withPersistentProfile(new PuppeteerDriver(),profile);
     runtime = await createClient({ sessionId: 'rekha-29', driver, headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, ...(pairingPhone ? { linkCode: pairingPhone } : {}), userDataDir: profile, sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
+    if(stopping){await runtime.stop('Gateway stopping');return;}
     runtime.events.on('error', event => saveConnectionDiagnostic(event.error, 'runtime'));
     client = new Client({ client: runtime, transport: runtime.getTransport() });
     // Register before start so no live message is lost in a readiness/listener gap.
@@ -166,11 +177,14 @@ async function connect() {
     client.onAck(message => { const id = safeId(message.id); if (!engine.ack(id, message.ack)) { pendingAcks.set(id, { ack: message.ack, at: Date.now() }); if (pendingAcks.size > 1000) pendingAcks.delete(pendingAcks.keys().next().value); } });
     connectedSince = Date.now();
     await client.start();
+    if(stopping)return;
     if (!runtime.getReadiness().ready) throw Error('WhatsApp is not ready');
     // The pinned core can skip persistence when runtime bridge installation fails.
     // Saving the encrypted checkpoint must not depend on message bridge readiness.
     await runtime.getTransport().portable.activate().catch(error => saveConnectionDiagnostic(error,'session_save'));
     state.connection = 'connected'; state.qr = null; state.pairingCode = null; state.connectedAt = Date.now();
+    fs.writeFileSync(linkedFile,JSON.stringify({lastConnectedAt:state.connectedAt}),{mode:0o600});
+    pairingPhone='';
     await checkFastBridge();
     void inboxSync.scan().then(()=>sync());
     if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
@@ -220,7 +234,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
     if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
-    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:inboxSync.status });
+    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, linkedBefore:linkedBefore(), enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:inboxSync.status,receiver:receiverWatchdog.status });
     if (req.method === 'GET' && url.pathname === '/api/monitor') return json(res,monitor.snapshot());
     if(req.method==='GET'&&url.pathname==='/api/runtime-status'){
       const ready=runtime?.getReadiness?.();
@@ -228,7 +242,7 @@ const server = http.createServer(async (req, res) => {
       // The pinned client declares getConnectionState unsupported. Probe only safe
       // connection metadata through its supported evaluate API instead.
       const [probe,number]=client?await Promise.all([timed(client.evaluate(()=>{const store=globalThis.Store,models=store?.Msg?.getModelsArray?.()||store?.Msg?._models||store?.Msg?.models||[];return{socket:store?.State?.Socket?.state||store?.State?.default?.state||null,loadedMessages:models.length,lastIncomingAt:models.slice(-200).reduce((latest,m)=>!m.id?.fromMe?Math.max(latest,Number(m.t||0)*1000):latest,0),online:navigator.onLine};}).catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
-      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status,fastBridge});
+      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status,fastBridge,receiver:receiverWatchdog.status});
     }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;
@@ -263,7 +277,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname === '/api/pairing') {
         if (!canPairWithPhone) return json(res, { error: 'Phone linking requires the cloud service.' }, 409);
-        if (['connected','restarting'].includes(state.connection) || stopping) return json(res, { error: 'WhatsApp is connected or restarting.' }, 409);
+        if ((connecting&&!['scan_qr','enter_code'].includes(state.connection))||['connected','restarting'].includes(state.connection) || stopping) return json(res, { error: 'WhatsApp is connected or restarting.' }, 409);
+        if(linkedBefore()&&!['scan_qr','enter_code'].includes(state.connection))return json(res,{error:'The saved login will be reused. Choose Connect WhatsApp to restore the connection.'},409);
         if (!['phone','qr'].includes(input.mode)) return json(res, { error: 'Choose phone number or QR.' }, 400);
         const phone = typeof input.phone === 'string' && /^\+?[0-9 -]+$/.test(input.phone) ? input.phone.replace(/[+ -]/g, '') : '';
         if (input.mode === 'phone' && !/^[1-9][0-9]{7,14}$/.test(phone)) return json(res, { error: 'Enter your WhatsApp number with country code, for example +91 9876543210.' }, 400);
@@ -291,14 +306,14 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, '127.0.0.1', () => console.log(`Private WhatsApp controls: ${origin}`));
 const pumping = setInterval(() => void pump(), 1000), backing = setInterval(() => void sync(), 15000);
 const inboxPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void inboxSync.scan().then(()=>sync());},15000);
-const bridgeChecking=setInterval(()=>void checkFastBridge(),3000);
+const bridgeChecking=setInterval(()=>{if(!stopping)void receiverWatchdog.tick();},3000);
 const mobilePolling=setInterval(()=>void mobileBridge?.poll(),5000);
 const housekeeping = setInterval(() => {
   engine.prune();
   const expiry = Date.now() - 90 * 86400000;
   for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
 }, 3600000);
-async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); while (busy||syncing||mediaActive||mobileBridge?.busy||inboxSync.status.running||checkingBridge) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); if(connecting)try{await runtime?.stop?.('Gateway stopping');}catch{} while (busy||syncing||mediaActive||mobileBridge?.busy||inboxSync.status.running||checkingBridge||connecting||receiverWatchdog.busy) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
 void mobileBridge?.poll();

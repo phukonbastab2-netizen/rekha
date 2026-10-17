@@ -9,9 +9,10 @@ export function installFastInboxBridge({since}) {
   const root=globalThis,collection=root.Store?.Msg,emit=root.OpenWA_RuntimeMessageReceived;
   if(!collection?.on||typeof emit!=='function')return{ready:false};
   let state=root.__REKHA_INBOX_BRIDGE__;
-  if(state?.collection===collection&&state.version===2){state.since=since;return{ready:true,emitted:state.emitted,failed:state.failed};}
+  if(state?.collection===collection&&state.version===3&&state.failed===0){state.since=since;return{ready:true,emitted:state.emitted,failed:state.failed,socket:root.Store?.State?.Socket?.state||root.Store?.State?.default?.state||null};}
   if(state?.collection?.off)for(const event of ['add','change:type','change:body'])state.collection.off(event,state.handler);
-  state={collection,since,version:2,emitted:0,failed:0};
+  if(state?.collection?.off&&state.ackHandler)state.collection.off('change:ack',state.ackHandler);
+  state={collection,since,version:3,emitted:0,failed:0};
   state.handler=model=>{
     if(!model||model.id?.fromMe||Number(model.t||0)*1000<state.since||!['chat','text','image','video','audio','ptt','document','sticker','payment'].includes(model.type))return;
     try{
@@ -25,7 +26,13 @@ export function installFastInboxBridge({since}) {
     }catch{state.failed++;}
   };
   for(const event of ['add','change:type','change:body'])collection.on(event,state.handler);
-  root.__REKHA_INBOX_BRIDGE__=state;return{ready:true,emitted:0,failed:0};
+  state.ackHandler=model=>{
+    const id=typeof model?.id==='string'?model.id:model?.id?._serialized;
+    if(!id||!model?.id?.fromMe||!Number.isFinite(Number(model.ack))||typeof root.OpenWA_RuntimeAckChanged!=='function')return;
+    try{Promise.resolve(root.OpenWA_RuntimeAckChanged({id,ack:Number(model.ack),fromMe:true,type:model.type,timestamp:model.t})).catch(()=>{state.failed++;});}catch{state.failed++;}
+  };
+  collection.on('change:ack',state.ackHandler);
+  root.__REKHA_INBOX_BRIDGE__=state;return{ready:true,emitted:0,failed:0,socket:root.Store?.State?.Socket?.state||root.Store?.State?.default?.state||null};
 }
 export function normalizeIncoming(message, since, now=Date.now()) {
   const peer=idOf(message.from),id=idOf(message.id),at=Number(message.timestamp??message.t)*1000;

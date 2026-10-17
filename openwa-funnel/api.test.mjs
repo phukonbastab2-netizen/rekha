@@ -46,6 +46,11 @@ test('explicit persistent browser profile survives core option removal without c
     assert.equal(received.userDataDir,path.join(temp,'profile'));
     assert.deepEqual(received.args,['--some-safe-flag']);assert.equal(received.headless,true);
     assert.equal(driver.name,'puppeteer');
+    fs.writeFileSync(path.join(received.userDataDir,'saved-login-marker'),'retained');
+    const restarted=withPersistentProfile({launch:async options=>options},path.join(temp,'profile'));
+    const relaunched=await restarted.launch({userDataDir:path.join(temp,'temporary-profile')});
+    assert.equal(relaunched.userDataDir,path.join(temp,'profile'));
+    assert.equal(fs.readFileSync(path.join(relaunched.userDataDir,'saved-login-marker'),'utf8'),'retained');
     if(process.platform!=='win32')assert.equal(fs.statSync(received.userDataDir).mode&0o777,0o700);
   } finally {fs.rmSync(temp,{recursive:true,force:true});}
 });
