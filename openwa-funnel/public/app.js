@@ -7,7 +7,7 @@ const currentMessages = new Map(), draftByPeer = new Map(), messageNodes = new M
 const mediaLabels = {image:'Image',video:'Video',audio:'Audio',ptt:'Voice message',document:'Document',sticker:'Sticker',payment:'WhatsApp payment',location:'Location',vcard:'Contact',multi_vcard:'Contacts'};
 function toast(message) { clearTimeout(toastTimer); $('toast').textContent = message; $('toast').hidden = false; toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 function initials(name) { const words=String(name||'').trim().split(/\s+/); if (/^\+?[\d\s]+$/.test(name)) return '#'; return words.slice(0,2).map(w=>[...w][0]||'').join('').toUpperCase()||'?'; }
-function contactName(c) { return c.name || c.peer.split('@')[0]; }
+function contactName(c) { return c.name || (c.peer.endsWith('@lid')?'WhatsApp contact':c.peer.split('@')[0]); }
 function validDate(at) { const d=new Date(at); return Number.isFinite(d.getTime())?d:null; }
 function contactTime(at) { const date=validDate(at);if(!date||!at)return '';return date.toDateString()===new Date().toDateString()?date.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):date.toLocaleDateString([],{day:'numeric',month:'short'}); }
 function contactList() {
@@ -86,7 +86,8 @@ async function loadMessages(older=false) {
   if(!selected)return;const peer=selected,result=await api('messages?peer='+encodeURIComponent(peer)+(older&&messageCursor?'&before='+encodeURIComponent(messageCursor):''));if(selected!==peer)return;
   currentContact=result.contact;if(!currentContact)return;
   $('name').textContent=contactName(currentContact);$('chatAvatar').textContent=initials(contactName(currentContact));
-  $('details').textContent=`${currentContact.peer.split('@')[0]} · ${currentContact.optedOut?'Opted out':currentContact.paused?'Automation paused':'Automation ready'} · Payment: ${String(currentContact.payment||'pending').replaceAll('_',' ')}`;
+  const number=currentContact.peer.endsWith('@lid')?'':currentContact.peer.split('@')[0]+' · ';
+  $('details').textContent=`${number}${currentContact.optedOut?'Opted out':currentContact.paused?'Automation paused':'Automation ready'} · Payment: ${String(currentContact.payment||'pending').replaceAll('_',' ')}`;
   $('chatActions').hidden=false;$('composer').hidden=false;
   if(!$('deleteChat')){const b=element('button','Delete chat content');b.id='deleteChat';b.onclick=deleteChat;$('chatActions').querySelector('.chat-options-menu').append(b);}
   $('pause').textContent=currentContact.paused?'Resume automation':'Pause automation';$('payment').textContent=currentContact.payment==='verified_by_owner'?'Mark payment pending':'Verify payment';updateComposer();
