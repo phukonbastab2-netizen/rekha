@@ -1,6 +1,10 @@
-# Cloud host preparation — not yet deployed
+# Private Oracle cloud hosting
 
-No VM has been created and no WhatsApp profile or secrets have been transferred. The local setup remains separate from the existing customer app.
+The standalone gateway is installed on an Oracle Mumbai Always Free A1 VM with 2 OCPUs, 12 GB RAM, Ubuntu 24.04 ARM and a 50 GB boot volume. No account billing upgrade was performed. The service is active, enabled at boot and configured to restart after a failure. All 20 tests pass on the ARM server, and a service restart was verified. The browser runs with its sandbox enabled.
+
+The PC gateway was stopped before transferring a consistent SQLite backup and its source ID. Server-only Cloudflare backup credentials were transferred privately over SSH, outside Git. The owner controls bind to loopback and are accessed through an owner SSH tunnel; port 4341 is not a public web service. The customer app remains unchanged.
+
+**Release boundary:** WhatsApp is awaiting the owner's QR scan and the funnel remains paused. A running service or QR does not prove recipient delivery. Complete the consenting-recipient and restart checks below before claiming an operational funnel.
 
 ## Oracle Always Free candidate
 
@@ -23,6 +27,8 @@ Sources checked directly:
 6. Leave port 4341 bound to loopback. Access the private controls with an SSH tunnel (`ssh -L 4341:127.0.0.1:4341 <owner>@<vm>`). The owner's PC need only be online while using the tunnel; the VM runs the funnel independently. Never expose this unauthenticated local bootstrap page publicly. Public/mobile owner access would require a separately authenticated HTTPS gateway.
 7. Before cutover, stop the PC gateway so only one linked runtime sends messages. If there are existing customers, migrate the SQLite state with a consistent backup and preserve its installation ID to avoid replay. Mark any in-progress sends uncertain and resolve them before enabling automation. Keep the old machine's state until recipient tests succeed.
 8. Pair WhatsApp, enable the funnel, and verify one consenting sender end to end: greeting/media order, true delivered ACK, one-time replay protection and a manual reply. Test process restart and queued follow-up recovery. Only then claim the server is live without the PC.
+
+`provision-ubuntu.sh` implements the package/browser/Node/source preparation. `activate-ubuntu.sh` performs the initial private state migration and systemd activation, and refuses to overwrite an existing conversation database. Do not rerun initial migration against a working service.
 
 ## Other hosts evaluated
 
