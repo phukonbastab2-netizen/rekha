@@ -8,6 +8,7 @@ import { ensurePairingCompatibility } from './pairing-compat.mjs';
 import { withPersistentProfile } from './persistent-driver.mjs';
 import {createMonitor} from './monitor.mjs';
 import {createMobileBridge} from './mobile-bridge.mjs';
+import {createInboxSync,normalizeIncoming} from './inbox-sync.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -45,6 +46,7 @@ if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-202
 if(copyRestored)console.log('Updated pending automatic messages to current owner-approved content.');
 let client, runtime, connecting = false, stopping = false, busy = false, syncing = false, connectedSince = 0, eventsInstalled = false;
 let mediaActive=0;
+const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>client.evaluate(fn,arg),onIncoming:message=>incoming(message,true)});
 const pendingAcks = new Map();
 const safeId = value => typeof value === 'string' ? value : value?._serialized || '';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -118,22 +120,21 @@ async function saveIncomingMedia(message, recordKey) {
     else fs.unlinkSync(path.join(data,'media',id));
   } catch { const m = engine.get(recordKey); if (m?.kind==='message') engine.put({ ...m, attachmentError: 'Open the original attachment in WhatsApp; download was unavailable.' }); }finally{mediaActive--;}
 }
-async function incoming(message) {
+async function incoming(message,recovered=false) {
   ingress.events++;ingress.lastEventAt=Date.now();
   const peer = safeId(message.from), id = safeId(message.id), at = Number(message.timestamp || message.t || 0) * 1000;
   ingress.lastShape={peerType:typeof message.from,idType:typeof message.id,timestampType:typeof(message.timestamp??message.t),timestamp:at,fromMe:!!message.fromMe,group:!!message.isGroupMsg,notification:!!message.isNotification,type:String(message.type||'').slice(0,25),validPeer:validPeer(peer),hasId:!!id};
   // Never run the funnel against synced historical chats, groups or account/service notices.
-  const isPayment=message.type==='payment';
-  const reject=!validPeer(peer)?'peer':!id?'id':message.fromMe?'outgoing':message.isGroupMsg?'group':message.isNotification&&!isPayment?'notification':!Number.isFinite(at)?'timestamp':at<connectedSince-10000?'older_than_start':at>Date.now()+300000?'future_timestamp':null;
+  const normalized=normalizeIncoming(message,inboxSync.since);
+  const reject=normalized.reason;
   if(reject){ingress.rejected[reject]=(ingress.rejected[reject]||0)+1;return;}
-  const type = message.type === 'chat' ? 'text' : message.type || 'text';
-  if (!['text','image','video','audio','ptt','document','sticker','payment'].includes(type)) return;
-  const result = engine.inbound({ peer, id, type, body: type === 'text' ? message.body || '' : message.caption || '', name: message.sender?.pushname || message.sender?.formattedName || '', at });
+  const {type}=normalized.input;
+  const result = engine.inbound({...normalized.input,recovered});
   if(result.duplicate)ingress.duplicates++;
   if (!result.accepted) return;
   ingress.accepted++;ingress.lastAcceptedAt=Date.now();
   if (!['text','payment'].includes(type) && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
-  void sync(); void pump();
+  void sync(); void pump();return true;
 }
 async function connect() {
   if (connecting || (client && state.connection === 'connected') || stopping) return;
@@ -164,6 +165,7 @@ async function connect() {
     // Saving the encrypted checkpoint must not depend on message bridge readiness.
     await runtime.getTransport().portable.activate().catch(error => saveConnectionDiagnostic(error,'session_save'));
     state.connection = 'connected'; state.qr = null; state.pairingCode = null; state.connectedAt = Date.now();
+    void inboxSync.scan().then(()=>sync());
     if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
   } catch (error) {
     saveConnectionDiagnostic(error,'connection');
@@ -211,15 +213,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
     if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
-    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source });
+    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:inboxSync.status });
     if (req.method === 'GET' && url.pathname === '/api/monitor') return json(res,monitor.snapshot());
     if(req.method==='GET'&&url.pathname==='/api/runtime-status'){
       const ready=runtime?.getReadiness?.();
       const timed=promise=>Promise.race([promise,new Promise(resolve=>{const t=setTimeout(()=>resolve(null),8000);t.unref();})]);
       // The pinned client declares getConnectionState unsupported. Probe only safe
       // connection metadata through its supported evaluate API instead.
-      const [probe,number]=client?await Promise.all([timed(client.evaluate(()=>{const store=globalThis.Store,models=store?.Msg?.models||[];return{socket:store?.State?.Socket?.state||store?.State?.default?.state||null,loadedMessages:models.length,lastIncomingAt:models.slice(-200).reduce((latest,m)=>!m.id?.fromMe?Math.max(latest,Number(m.t||0)*1000):latest,0),online:navigator.onLine};}).catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
-      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress});
+      const [probe,number]=client?await Promise.all([timed(client.evaluate(()=>{const store=globalThis.Store,models=store?.Msg?.getModelsArray?.()||store?.Msg?._models||store?.Msg?.models||[];return{socket:store?.State?.Socket?.state||store?.State?.default?.state||null,loadedMessages:models.length,lastIncomingAt:models.slice(-200).reduce((latest,m)=>!m.id?.fromMe?Math.max(latest,Number(m.t||0)*1000):latest,0),online:navigator.onLine};}).catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
+      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status});
     }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;
@@ -281,13 +283,14 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(port, '127.0.0.1', () => console.log(`Private WhatsApp controls: ${origin}`));
 const pumping = setInterval(() => void pump(), 1000), backing = setInterval(() => void sync(), 15000);
+const inboxPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void inboxSync.scan().then(()=>sync());},15000);
 const mobilePolling=setInterval(()=>void mobileBridge?.poll(),5000);
 const housekeeping = setInterval(() => {
   engine.prune();
   const expiry = Date.now() - 90 * 86400000;
   for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
 }, 3600000);
-async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy||syncing||mediaActive||mobileBridge?.busy) await sleep(100); engine.close(); process.exit(exitCode); }
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(inboxPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy||syncing||mediaActive||mobileBridge?.busy||inboxSync.status.running) await sleep(100); engine.close(); process.exit(exitCode); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
 void mobileBridge?.poll();

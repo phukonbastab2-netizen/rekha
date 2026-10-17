@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { firstSequence, mediaSequence, reminder, GAP, REMINDER_DELAY, MEDIA_DELAY } from './funnel.mjs';
 
 export const validPeer = peer => typeof peer === 'string' && /^[0-9]{5,25}@(c\.us|lid|s\.whatsapp\.net)$/.test(peer);
-export const isSensitive = text => /\b(?:otp|one.time (?:password|code)|verification code|security code|cvv|password|pin)\b.{0,35}\b\d{3,8}\b|\b\d{3,8}\b.{0,35}\b(?:otp|verification code)\b/i.test(text);
+export const isSensitive = text => /\b(?:otp|one.time (?:password|code)|verification code|confirmation code|security code|cvv|password|pin)\b.{0,35}\b\d{3,8}\b|\b\d{3,8}\b.{0,35}\b(?:otp|verification code|confirmation code)\b/i.test(text);
 export class Engine {
   constructor(path, now = () => Date.now()) {
     this.now = now;
@@ -109,6 +109,7 @@ export class Engine {
   inbound(input) {
     if (!validPeer(input.peer) || typeof input.id !== 'string' || input.id.length > 300 || !input.id) return { ignored: true };
     const body = String(input.body || '').slice(0, 8000), sensitive = isSensitive(body);
+    const scheduleAt=input.recovered&&Number.isFinite(input.at)&&input.at>0?Math.min(input.at,this.now()):this.now();
     return this.transaction(() => {
       if (this.db.prepare('SELECT id FROM receipts WHERE id=?').get(input.id)) return { duplicate: true };
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id, input.peer, this.now());
@@ -124,16 +125,34 @@ export class Engine {
       } else if (command === 'start') c.optedOut = false;
       if (!sensitive && !c.optedOut && !c.firstStarted) {
         c.firstStarted = true; c.stage = 'first_sequence';
-        firstSequence.forEach((p, i) => this.job(c.peer, 'first', i, this.now() + i * GAP, p));
+        firstSequence.forEach((p, i) => this.job(c.peer, 'first', i, scheduleAt + i * GAP, p));
       } else if (!sensitive && !c.optedOut && !isNew && c.stage === 'waiting_for_details' && !c.reminderScheduled) {
-        c.reminderScheduled = true; this.job(c.peer, 'reminder', 0, this.now() + REMINDER_DELAY, reminder);
+        c.reminderScheduled = true; this.job(c.peer, 'reminder', 0, scheduleAt + REMINDER_DELAY, reminder);
       }
       if (!sensitive && !c.optedOut && ['image', 'video', 'audio', 'ptt', 'document', 'sticker','payment'].includes(input.type) && !c.mediaScheduled) {
         c.mediaScheduled = true; if(c.payment!=='verified_by_owner')c.payment = 'pending';
-        mediaSequence.forEach((p, i) => this.job(c.peer, 'media', i, this.now() + MEDIA_DELAY + i * GAP, p));
+        mediaSequence.forEach((p, i) => this.job(c.peer, 'media', i, scheduleAt + MEDIA_DELAY + i * GAP, p));
       }
       this.put(c);
       return { accepted: true };
+    });
+  }
+  importHistory(input) {
+    if(!validPeer(input.peer)||!input.id||input.id.length>300)return false;
+    return this.transaction(()=>{
+      if(this.db.prepare('SELECT 1 FROM receipts WHERE id=?').get(input.id))return false;
+      this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id,input.peer,this.now());
+      const body=String(input.body||'').slice(0,8000),sensitive=isSensitive(body),at=input.at||this.now();
+      this.put({key:'in:'+input.id,kind:'message',peer:input.peer,id:input.id,direction:'in',type:input.type||'text',body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),sensitive,status:'received',historical:true});
+      const current=this.contact(input.peer);
+      const c=current||{key:'contact:'+input.peer,kind:'contact',peer:input.peer,name:String(input.name||'').slice(0,100),firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
+      const command=body.trim().toLowerCase();
+      if(!current||at>(c.lastInboundAt||0)){
+        if(['stop','unsubscribe','बंद','बंद करें'].includes(command))c.optedOut=true;
+        else if(command==='start')c.optedOut=false;
+      }
+      if(!current||at>(c.lastAt||0)){c.lastAt=at;c.lastInboundAt=at;c.preview=sensitive?'[Sensitive message omitted]':(body||'['+input.type+']').slice(0,150);}
+      this.put(c);return true;
     });
   }
   markSeen(peer) { const c = this.contact(peer); if (c?.unread) this.put({ ...c, unread: 0 }); }

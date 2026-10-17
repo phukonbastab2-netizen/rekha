@@ -70,7 +70,7 @@ async function refresh() {
     $('linkOptions').hidden = !status.canPairWithPhone || status.connection === 'connected';
     $('generateCode').disabled = $('useQr').disabled = ['starting','restarting','connected'].includes(status.connection);
     $('toggle').textContent = enabled ? 'Pause funnel' : 'Enable funnel';
-    $('summary').textContent = `${status.contacts} customers · ${status.queued} queued · ${status.uncertain} need checking`;
+    $('summary').textContent = `${status.contacts} saved chats · ${status.queued} queued · ${status.uncertain} need checking${status.inboxSync?.checkedAt?' · WhatsApp session: '+status.inboxSync.providerChats+' chats':''}${status.inboxSync?.error?' · '+status.inboxSync.error:''}`;
     $('backup').textContent = `Cloud backup: ${status.cloud.replaceAll('_', ' ')}${status.backupPending ? ' · ' + status.backupPending + ' changes pending' : ''}`;
     $('pairing').hidden = !status.qr && !status.pairingCode;
     $('codePanel').hidden = !status.pairingCode; $('pairCode').textContent = status.pairingCode || '';

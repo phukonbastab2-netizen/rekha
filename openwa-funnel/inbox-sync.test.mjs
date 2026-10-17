@@ -1,0 +1,48 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {Engine,isSensitive} from './engine.mjs';
+import {createInboxSync,normalizeIncoming,readProviderInbox} from './inbox-sync.mjs';
+import {MEDIA_DELAY} from './funnel.mjs';
+const peer='919876543210@c.us';
+const message=(id,at,extra={})=>({id,from:peer,type:'chat',timestamp:at/1000,body:'Hi',...extra});
+test('reception boundary survives restart and recovers missed messages without duplicate replies',async t=>{
+ const e=new Engine(':memory:',()=>1000000);t.after(()=>e.close());e.enable(true);
+ e.inbound({peer,id:'first',type:'text',body:'Hi',at:900000});
+ const page={total:1,eligible:1,next:1,chats:[{messages:[message('first',900000),message('missed',1050000)]}]};
+ let now=1100000;
+ const build=()=>createInboxSync({engine:e,now:()=>now,evaluate:async()=>page,onIncoming:async m=>{
+  const n=normalizeIncoming(m,1000000,now);return n.input?e.inbound(n.input).accepted:false;
+ }});
+ const a=build();assert.equal(a.since,1000000);await a.scan();assert.equal(a.status.recovered,1);assert.equal(e.stats().messages,2);
+ const queued=e.stats().queued;now=1200000;const b=build();assert.equal(b.since,1000000);await b.scan();assert.equal(b.status.recovered,0);assert.equal(e.stats().queued,queued);
+});
+test('old chat history appears without starting the funnel; future customer message starts it once',t=>{
+ const e=new Engine(':memory:',()=>1000000);t.after(()=>e.close());
+ const input={peer,id:'old',type:'text',body:'Hello',name:'Customer',at:100000};
+ assert.equal(e.importHistory(input),true);assert.equal(e.importHistory(input),false);
+ assert.equal(e.stats().contacts,1);assert.equal(e.stats().queued,0);assert.equal(e.contact(peer).stage,'history_only');
+ e.inbound({...input,id:'new',at:1000000});assert.equal(e.stats().queued,5);
+ e.importHistory({...input,id:'another-old',body:'START'});assert.equal(e.stats().queued,5);
+});
+test('recovery rejects service, group, outgoing, missing timestamps and pre-boundary messages',()=>{
+ assert.equal(normalizeIncoming(message('a',1000000,{sender:{pushname:'Facebook Business'}}),0,1000000).reason,'service');
+ for(const extra of [{fromMe:true},{id:{_serialized:'a',fromMe:true}},{isGroupMsg:true},{isNotification:true}])assert.ok(normalizeIncoming(message('a',1000000,extra),0,1000000).reason);
+ assert.equal(normalizeIncoming(message('a',900000),1000000,1100000).reason,'older_than_start');
+ assert.equal(normalizeIncoming(message('a',0),0,1100000).reason,'timestamp');
+ assert.ok(normalizeIncoming(message('pay',1000000,{type:'payment',isNotification:true}),0,1100000).input);
+ assert.equal(isSensitive('12345 is your Facebook confirmation code'),true);
+});
+test('provider snapshot supports modern collections and history loader without sending or marking read',async()=>{
+ const m={id:{_serialized:'a',fromMe:false},from:{_serialized:peer},type:'chat',body:'Hi',t:1000};
+ const chat={id:{_serialized:peer},t:1000,contact:{pushname:'Customer'},msgs:{_models:[]}};
+ let loads=0;
+ const context={Store:{Chat:{_models:[chat]}},require:n=>{assert.equal(n,'WAWebChatLoadMessages');return{loadEarlierMsgs:async({chat:c})=>{loads++;assert.equal(c,chat);return[m];}};},setTimeout,clearTimeout};
+ const fn=vm.runInNewContext('('+readProviderInbox.toString()+')',context);
+ const result=await fn({after:0,offset:0,limit:10});assert.equal(result.total,1);assert.equal(result.chats[0].messages[0].body,'Hi');assert.equal(loads,1);
+});
+test('recovered photo keeps the one-hour delay from its original receipt time',t=>{
+ const e=new Engine(':memory:',()=>1000000);t.after(()=>e.close());
+ e.inbound({peer,id:'missed-photo',type:'image',body:'',at:900000,recovered:true});
+ assert.equal(e.get('job:'+peer+':media:0').dueAt,900000+MEDIA_DELAY);
+});
