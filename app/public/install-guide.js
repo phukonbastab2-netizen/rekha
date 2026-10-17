@@ -1,7 +1,7 @@
 const customerAppUrl='https://astrorani.rekhaastrology.in/';
 const copy={
   hi:{
-    pageTitle:'Rekha Astrology — डाउनलोड',skip:'मुख्य सामग्री पर जाएँ',title:'Rekha से बात करें',intro:'आपकी निजी ज्योतिष चैट।',
+    pageTitle:'Rekha Astrology | निजी ज्योतिष चैट और ऐप डाउनलोड',skip:'मुख्य सामग्री पर जाएँ',title:'Rekha से बात करें',intro:'Rekha Astrology पर हिन्दी और English में निजी ज्योतिष चैट।',
     download:'ऐप डाउनलोड करें',meta:'Android 8+',iosOpen:'iPhone / iPad पर खोलें',
     guideTitle:'3 आसान कदम',step1Title:'डाउनलोड करें',step1Text:'डाउनलोड अपने-आप शुरू होगा। न हो तो ऊपर बटन दबाएँ।',step2Title:'फ़ाइल खोलें',step2Text:'फोन के Downloads में जाएँ।',step3Title:'Install → Open',step3Text:'ऐप खोलकर शुरू करें।',
     fileHelpTitle:'फ़ाइल नहीं मिल रही?',fileHelpText:'Files → Downloads → RekhaAstrology.apk',
@@ -13,7 +13,7 @@ const copy={
     languageLabel:'भाषा',platformLabel:'अपना फोन चुनें'
   },
   en:{
-    pageTitle:'Rekha Astrology — Download',skip:'Skip to content',title:'Talk with Rekha',intro:'Your private astrology chat.',
+    pageTitle:'Rekha Astrology | Astrology Chat App Download',skip:'Skip to content',title:'Talk with Rekha',intro:'Private astrology chat with Rekha Astrology in Hindi and English.',
     download:'Download for Android',meta:'Android 8+',iosOpen:'Open for iPhone / iPad',
     guideTitle:'3 simple steps',step1Title:'Download',step1Text:'Download starts automatically. If needed, tap above.',step2Title:'Open the file',step2Text:'Find it in Downloads.',step3Title:'Install → Open',step3Text:'Open the app to begin.',
     fileHelpTitle:'Cannot find the file?',fileHelpText:'Files → Downloads → RekhaAstrology.apk',

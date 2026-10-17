@@ -296,7 +296,7 @@ export default {
     const url=new URL(request.url);
     const downloadHost=url.hostname==='rekhaastrology.in';
     const policy=url.pathname.match(/^\/(?:astrorani\/)?(privacy-policy|terms-and-conditions|refund-cancellation|disclaimer|shipping-policy|data-deletion|support|contact|about)(?:\.html|\/)?$/);
-    if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani')&&!policy&&!['/policies.css','/app-ads.txt','/api/activity'].includes(url.pathname))return fetch(request);
+    if(downloadHost&&url.pathname!=='/'&&!url.pathname.startsWith('/astrorani')&&!policy&&!['/policies.css','/app-ads.txt','/api/activity','/robots.txt','/sitemap.xml'].includes(url.pathname))return fetch(request);
     // Keep website telemetry within the existing /astrorani route as well.
     if(url.pathname==='/astrorani/api/activity')return handleApi(new Request(new URL('/api/activity',url),request),env,executionContext);
     if(url.pathname.startsWith('/api/'))return handleApi(request,env,executionContext);
@@ -361,6 +361,9 @@ export default {
       if(executionContext?.waitUntil)executionContext.waitUntil(recording);else await recording;
     }
     const out=new Response(response.body,response);for(const [key,value]of Object.entries(headers))out.headers.set(key,value);
+    // Only the public download and information pages belong in search results.
+    if((asset.endsWith('.html')&&!policy&&asset!=='/download.html')||(asset==='/'&&!downloadHost))out.headers.set('X-Robots-Tag','noindex, nofollow');
+    if(['/robots.txt','/sitemap.xml'].includes(asset))out.headers.set('Cache-Control','public, max-age=300');
     if(asset.endsWith('.apk')){out.headers.set('Content-Type','application/vnd.android.package-archive');out.headers.set('Content-Disposition','attachment; filename="RekhaAstrology.apk"');out.headers.set('Cache-Control','public, max-age=300');}
     return out;
   },

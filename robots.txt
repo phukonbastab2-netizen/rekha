@@ -1,4 +1,14 @@
+# Public search access. This does not change model-training permissions.
+User-agent: OAI-SearchBot
+Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /astrorani/api/
+
 User-agent: *
 Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /astrorani/api/
 
 Sitemap: https://rekhaastrology.in/sitemap.xml
