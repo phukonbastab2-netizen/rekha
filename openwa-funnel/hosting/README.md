@@ -4,7 +4,7 @@ The standalone gateway is installed on an Oracle Mumbai Always Free A1 VM with 2
 
 The PC gateway was stopped before transferring a consistent SQLite backup and its source ID. Server-only Cloudflare backup credentials were transferred privately over SSH, outside Git. The owner controls bind to loopback and are accessed through an owner SSH tunnel; port 4341 is not a public web service. The customer app remains unchanged.
 
-**Release boundary:** WhatsApp is awaiting the owner's QR scan and the funnel remains paused. A running service or QR does not prove recipient delivery. Complete the consenting-recipient and restart checks below before claiming an operational funnel.
+**Verified deployment:** WhatsApp is linked and the ₹29 funnel is enabled. The saved-profile fix survived a paired service restart and reconnected without another code. A real incoming test message created one contact and all five first-sequence messages were accepted by WhatsApp; the owner separately confirmed that all five arrived on the sending phone. The queue drained without uncertain sends and private Cloudflare backup reports synced. The provider's stored delivery statuses still show `accepted`, so do not describe those statuses as machine-verified delivered/read receipts. No production-volume capacity or uptime guarantee has been established.
 
 ## Oracle Always Free candidate
 
@@ -44,7 +44,7 @@ OpenWA 5.6.6's shipped launch asset still reads `PairingType` from `WAWebAltDevi
 
 The first phone link was confirmed by both the owner and the server, but the paired restart test returned to QR login. No compact checkpoint had been written. The pinned core sets `resolvedUserDataDir` to undefined even when the application supplies a profile path; `persistent-driver.mjs` now enforces the owner's explicitly configured private profile at the driver boundary while retaining every sandbox/browser option. The real server profile directory is populated and mode 0700. After startup, encrypted checkpoint activation is also attempted independently of message-bridge installation. A private, authenticated `/api/session-status` reports persistence metadata without exporting credentials.
 
-The owner has been asked to link again. A successful saved-login restart and a real incoming/outgoing recipient test are still required before enabling the funnel. Do not interpret a visible browser profile, a pairing confirmation, or a READY flag as evidence of delivery.
+After the second link, the persistent profile grew with browser state and the service restarted successfully without another pairing prompt. The compact checkpoint remained absent; the verified restore uses the private Chromium profile, not an asserted encrypted compact-session backup. The real incoming/outgoing recipient test then passed and the owner confirmed all five messages arrived. Do not interpret a visible profile or a READY flag alone as evidence of delivery.
 
 ## Other hosts evaluated
 
