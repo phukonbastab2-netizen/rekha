@@ -4,9 +4,10 @@ The separate `rekha-whatsapp-leads` Worker serves Meta app `3058202874566006`, W
 
 ## Current behavior
 
-- One Rekha Astrology branded message per lead, containing Hindi in Devanagari and Roman letters and only the owner's requested download website: https://rekhaastrology.in. No separate APK path or attachment.
+- One native video message per new lead: the edited 120-second Android download guide, with short Hindi and English instructions and https://rekhaastrology.in in its caption. No separate greeting, text message or follow-up. Existing once-only markers from the former link flow remain respected; this update does not replay a campaign to previous leads.
 - The message asks the lead to talk in the app rather than WhatsApp. No AI-generated greetings, ongoing replies or separate follow-ups. OpenAI is not called; its existing secret remains unused.
-- The website handles downloading. Meta's documented document formats exclude APK. Never disguise executable content as a supported document or claim a link is an attachment.
+- The website handles APK downloading. The attachment is an H.264/AAC MP4, served from the existing app's R2 bucket at https://astrorani.rekhaastrology.in/intro/download-guide.mp4. Meta fetches that public URL for the video message; there is no expiring uploaded media ID to maintain. This URL must remain reachable with GET/HEAD and the video/mp4 content type. No customer media is published.
+- Meta's documented document formats exclude APK. Never disguise executable content as a supported document or claim an APK download link is an APK attachment.
 - Every new eligible inbound message, including audio/images without downloading them, queues a genuine Meta read request. Read marking never overwrites outgoing delivery/read statuses. Failed read marking retries at most three times on later authenticated traffic. Interrupted read attempts can recover because this operation is idempotent. Blue ticks depend on WhatsApp/client read-receipt settings; outgoing blue ticks cannot be forced.
 - Each lead is reserved atomically in `lead_downloads`. Later incoming messages receive read requests without another app invitation. This minimal delivery marker persists after message-history retention to prevent repeated sends.
 - STOP/unsubscribe and human requests still pause sends; START only resumes if newer. These control messages can receive read receipts. No new human inbox UI.
@@ -19,11 +20,11 @@ The separate `rekha-whatsapp-leads` Worker serves Meta app `3058202874566006`, W
 
 Callback: https://rekha-whatsapp-leads.phukonbastab2.workers.dev/webhook
 
-Readiness: https://rekha-whatsapp-leads.phukonbastab2.workers.dev/health (`app_download_link` mode, `aiReplies=false`).
+Readiness: https://rekha-whatsapp-leads.phukonbastab2.workers.dev/health (`app_download_video` mode, `aiReplies=false`).
 
 Secrets: `VERIFY_TOKEN`, `META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`. Never print credentials or put them in Git/client code. The unused OpenAI secret is not required for this mode. Verification token setup copy remains outside Git.
 
-Apply `schema.sql` before deploying; changes are additive `CREATE TABLE IF NOT EXISTS` statements. Preserve secrets and the existing D1 binding. Keep `wrangler.jsonc` synchronized with live variables. Pause with `SEND_ENABLED=false`.
+Apply `schema.sql` for initial setup; the video update needs no database migration. Preserve secrets and the existing D1 binding. Keep `wrangler.jsonc` synchronized with live variables. Pause with `SEND_ENABLED=false`. Publish and verify the guide MP4 before enabling its message payload.
 
 The free account has no spare cron slots. Work runs from authenticated inbound messages and delivery callbacks; existing schedules were left unchanged. One app job and up to ten read requests are processed per webhook. Jobs blocked by concurrency and failed read retries wait for later webhook traffic; no scheduled recovery guarantee. An optional cron handler remains available if a slot is freed later.
 
@@ -33,6 +34,6 @@ A separate owner-requested compatibility test uploaded the actual 373,383-byte A
 
 ## Checks
 
-Run `node --test worker.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, Hindi/Romanized text, once-per-lead deduplication, media read receipts without downloads, bounded read retries, STOP/human handoff, daily limits, ambiguous sends and truthful outgoing receipts.
+Run `node --test worker.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, the native video payload and Hindi/English caption, once-per-lead deduplication across the old and new flows, media read receipts without downloads, bounded read retries, STOP/human handoff, daily limits, ambiguous sends and truthful outgoing receipts.
 
 Official references: [Meta document formats](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/messages/document/) and [Meta read status object](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/types/StatusObject/). These SDK pages are archived; recheck current Cloud API documentation before changing supported media types.

@@ -68,7 +68,8 @@ try{
   assert.equal((await mf.dispatchFetch(origin+'/api/media/'+testimonialsId,{headers:{Cookie:legacy.cookie}})).status,404);assert.equal((await mf.dispatchFetch(origin+'/api/media/'+testimonialsId)).status,401);assert.equal((await mf.dispatchFetch(origin+'/api/media/'+testimonialsId,{headers:{Cookie:owner}})).status,200);const privateVideoRange=await mf.dispatchFetch(origin+'/api/media/'+testimonialsId,{headers:{Cookie:fresh.cookie,Range:'bytes=4-7'}});assert.equal(privateVideoRange.status,206);assert.equal(await privateVideoRange.text(),'ftyp');const privateVideoHead=await mf.dispatchFetch(origin+'/api/media/'+testimonialsId,{method:'HEAD',headers:{Cookie:fresh.cookie}});assert.equal(privateVideoHead.status,200);assert.equal((await privateVideoHead.arrayBuffer()).byteLength,0);
   const absentClip=await mf.dispatchFetch(origin+'/intro/onboarding.mp4');assert.equal(absentClip.status,404);
   const unauthClip=await mf.dispatchFetch(origin+'/api/admin/intro/onboarding',{method:'PUT',headers:{Origin:origin,'Content-Type':'video/mp4'},body:clip});assert.equal(unauthClip.status,401);
-  for(const slug of ['welcome','introduction','testimonials','onboarding']){
+  assert.equal((await mf.dispatchFetch(origin+'/api/admin/intro/download-guide',{method:'PUT',headers:{Origin:origin,'Content-Type':'video/mp4'},body:clip})).status,401);
+  for(const slug of ['welcome','introduction','testimonials','onboarding','download-guide']){
     const uploaded=await mf.dispatchFetch(origin+'/api/admin/intro/'+slug,{method:'PUT',headers:{Origin:origin,'Content-Type':'video/mp4',Cookie:owner},body:clip});assert.equal(uploaded.status,200,slug+' owner upload');
     const publicClip=await mf.dispatchFetch(origin+'/intro/'+slug+'.mp4');assert.equal(publicClip.status,200,slug+' public video');assert.equal(publicClip.headers.get('Content-Type'),'video/mp4');assert.deepEqual(new Uint8Array(await publicClip.arrayBuffer()),clip);
   }

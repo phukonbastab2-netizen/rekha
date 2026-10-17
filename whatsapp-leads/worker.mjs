@@ -1,6 +1,7 @@
 export const APP_URL = 'https://rekhaastrology.in';
 export const DOWNLOAD_URL = APP_URL;
-export const DOWNLOAD_REPLY = 'रेखा | Rekha Astrology\nमुझसे बात करने के लिए ऐप पर आएँ, यहाँ नहीं।\nMujhse baat karne ke liye app par aaiye, yahan nahi.\n'+DOWNLOAD_URL;
+export const GUIDE_VIDEO_URL = 'https://astrorani.rekhaastrology.in/intro/download-guide.mp4';
+export const DOWNLOAD_REPLY = '*Rekha Astrology*\nऐप डाउनलोड करें / Download app:\n'+DOWNLOAD_URL+'\n\nहिन्दी: यह 2 मिनट का वीडियो पूरा देखें। ऐप खोलकर उसका परिचय वीडियो पूरा देखें, फिर नाम और जन्मतिथि भरकर Send दबाएँ। आगे ऐप पर बात करें।\n\nEnglish: Watch this 2-minute guide. Open the app, watch its introduction fully, then enter your name and date of birth and tap Send. Continue chatting in the app.';
 
 const json = (data, status=200) => new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json','cache-control':'no-store'}});
 const number = (value, fallback, max) => Math.max(1, Math.min(max, Number.parseInt(value,10)||fallback));
@@ -128,7 +129,7 @@ async function processJob(env, job, now, fetcher=fetch) {
     try {
       response=await fetcher(`https://graph.facebook.com/${env.GRAPH_API_VERSION}/${env.WHATSAPP_PHONE_NUMBER_ID}/messages`,{
         method:'POST',headers:{authorization:`Bearer ${env.WHATSAPP_ACCESS_TOKEN}`,'content-type':'application/json'},
-        body:JSON.stringify({messaging_product:'whatsapp',to:job.phone,type:'text',text:{preview_url:false,body:reply}}),signal:AbortSignal.timeout(10000),
+        body:JSON.stringify({messaging_product:'whatsapp',to:job.phone,type:'video',video:{link:GUIDE_VIDEO_URL,caption:reply}}),signal:AbortSignal.timeout(10000),
       });
       const result=await response.json();
       const metaId=result.messages?.[0]?.id;
@@ -159,7 +160,7 @@ async function pruneHistory(env) {
 
 async function webhook(request, env, ctx) {
   const url=new URL(request.url);
-  if(request.method==='GET'&&url.pathname==='/health') return json({ok:true,service:'rekha-whatsapp-leads',mode:'app_download_link',aiReplies:false,...readiness(env)});
+  if(request.method==='GET'&&url.pathname==='/health') return json({ok:true,service:'rekha-whatsapp-leads',mode:'app_download_video',aiReplies:false,guideVideo:GUIDE_VIDEO_URL,...readiness(env)});
   if(url.pathname!=='/webhook') return new Response('Not found',{status:404});
   if(request.method==='GET') {
     if(env.VERIFY_TOKEN && url.searchParams.get('hub.mode')==='subscribe' && url.searchParams.get('hub.verify_token')===env.VERIFY_TOKEN) return new Response(url.searchParams.get('hub.challenge')||'');

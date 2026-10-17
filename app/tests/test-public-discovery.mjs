@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {Miniflare,convertV4MiniflareOptions} from 'miniflare';
 
 // Exercise actual bundled routes without customer data, downloads or outbound calls.
-const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:fs.readFileSync('cloudflare/worker-bundle.mjs','utf8'),compatibilityDate:'2026-09-24',outboundService:()=>{throw Error('Unexpected origin fallback');}}));
+const mf=new Miniflare(convertV4MiniflareOptions({modules:true,script:fs.readFileSync('cloudflare/worker-bundle.mjs','utf8'),compatibilityDate:'2026-09-24',r2Buckets:{MEDIA:'public-guide-fixture'},outboundService:()=>{throw Error('Unexpected origin fallback');}}));
 try{
   const root='https://rekhaastrology.in',app='https://astrorani.rekhaastrology.in';
   const homepage=await mf.dispatchFetch(root+'/');assert.equal(homepage.status,200);assert.equal(homepage.headers.get('X-Robots-Tag'),null);
@@ -26,6 +26,15 @@ try{
   for(const path of ['/','/index.html','/admin','/admin/','/admin.html']){
     const page=await mf.dispatchFetch(app+path);assert.equal(page.status,200);assert.equal(page.headers.get('X-Robots-Tag'),'noindex, nofollow',path);
   }
+  const media=await mf.getR2Bucket('MEDIA'),bytes=new TextEncoder().encode('synthetic-public-guide');
+  await media.put('intro/download-guide.mp4',bytes,{httpMetadata:{contentType:'video/mp4'}});
+  const video=app+'/intro/download-guide.mp4',head=await mf.dispatchFetch(video,{method:'HEAD'});
+  assert.equal(head.status,200);assert.equal(head.headers.get('Content-Type'),'video/mp4');assert.equal(head.headers.get('Content-Length'),String(bytes.length));assert.equal((await head.text()).length,0);
+  const full=await mf.dispatchFetch(video);assert.deepEqual(new Uint8Array(await full.arrayBuffer()),bytes);
+  const partial=await mf.dispatchFetch(video,{headers:{Range:'bytes=0-3'}});assert.equal(partial.status,206);assert.deepEqual(new Uint8Array(await partial.arrayBuffer()),bytes.slice(0,4));
+  assert.equal((await mf.dispatchFetch(video,{method:'POST'})).status,405);
+  assert.equal((await mf.dispatchFetch(video,{headers:{Range:'bytes=9999-'}})).status,416);
+  assert.equal((await mf.dispatchFetch(app+'/intro/private-other.mp4')).status,404);
   assert.deepEqual(fs.readFileSync('../index.html'),fs.readFileSync('public/download.html'),'Static origin fallback must match the Worker homepage');
   for(const file of ['robots.txt','sitemap.xml'])assert.deepEqual(fs.readFileSync('../'+file),fs.readFileSync('public/'+file));
   console.log('Public search metadata, canonical sitemap, crawler rules, private page exclusions and GET/HEAD/POST routes passed.');

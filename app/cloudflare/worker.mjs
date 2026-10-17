@@ -258,7 +258,7 @@ export async function handleApi(request,env,executionContext){
     if(route.startsWith('/api/admin/')){
       await owner();
       if(route==='/api/admin/activity')return await activityRoutes({request,env,route,method,stmt,one,all,result,fail,rate});
-      const intro=route.match(/^\/api\/admin\/intro\/(welcome|introduction|testimonials|onboarding)$/);
+      const intro=route.match(/^\/api\/admin\/intro\/(welcome|introduction|testimonials|onboarding|download-guide)$/);
       if(intro&&method==='PUT'){
         if(request.headers.get('Content-Type')!=='video/mp4')throw fail(415,'MP4 required.');
         const reader=request.body?.getReader();if(!reader)throw fail(400,'Video required.');
@@ -310,7 +310,7 @@ export default {
       const object=await env.MEDIA.get(item.object_key);if(!object)return new Response('Logo unavailable',{status:404,headers});
       return new Response(request.method==='HEAD'?null:object.body,{headers:{...headers,'Content-Type':item.mime,'Content-Length':String(object.size)}});
     }
-    if(/^\/intro\/(welcome|introduction|testimonials|onboarding)\.mp4$/.test(url.pathname)){
+    if(/^\/intro\/(welcome|introduction|testimonials|onboarding|download-guide)\.mp4$/.test(url.pathname)){
       if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405});
       const key=url.pathname.slice(1),meta=await env.MEDIA.head(key);
       if(!meta)return new Response('Video unavailable',{status:404});
