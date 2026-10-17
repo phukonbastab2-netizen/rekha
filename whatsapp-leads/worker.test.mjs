@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {createHmac} from 'node:crypto';
-import worker,{parseEvents,drain,command,verifySignature,markIncomingRead,DOWNLOAD_REPLY,APK_URL,readiness} from './worker.mjs';
+import worker,{parseEvents,drain,command,verifySignature,markIncomingRead,DOWNLOAD_REPLY,DOWNLOAD_URL,readiness} from './worker.mjs';
 
 function fixture(overrides={}) {
  const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('./schema.sql',import.meta.url),'utf8'));
@@ -33,11 +33,13 @@ test('only configured account and recent inbound messages are accepted',()=>{
  const f=fixture(),body=payload();assert.equal(parseEvents(body,f.env).messages.length,1);body.entry[0].id='different';assert.equal(parseEvents(body,f.env).messages.length,0);
  assert.equal(parseEvents(payload('old','hi',Date.now()-86500000),f.env).messages.length,0);
 });
-test('one Rekha-branded app invitation with direct APK URL; no OpenAI dependency',async()=>{
+test('one Rekha-branded app invitation with only the requested homepage URL; no OpenAI dependency',async()=>{
  const f=fixture(),net=fakeNetwork();assert.deepEqual(readiness(f.env).missing,[]);
  await ingest(f,payload());await drain(f.env,net.fetch);
  assert.equal(net.calls.length,1);assert.equal(net.calls[0].body.type,'text');
- assert.equal(net.calls[0].body.text.body,DOWNLOAD_REPLY);assert(DOWNLOAD_REPLY.includes('रेखा | Rekha Astrology'));assert(DOWNLOAD_REPLY.endsWith(APK_URL));
+ assert.equal(net.calls[0].body.text.body,DOWNLOAD_REPLY);assert(DOWNLOAD_REPLY.includes('रेखा | Rekha Astrology'));assert(DOWNLOAD_REPLY.endsWith(DOWNLOAD_URL));
+ assert.equal(DOWNLOAD_URL,'https://rekhaastrology.in');assert.deepEqual(DOWNLOAD_REPLY.match(/https?:\/\/\S+/g),[DOWNLOAD_URL]);
+ assert(!DOWNLOAD_REPLY.includes('.apk'));assert.equal(net.calls[0].body.document,undefined);
  assert(DOWNLOAD_REPLY.includes('मुझसे बात'));assert(DOWNLOAD_REPLY.includes('Mujhse baat'));
  assert.equal(f.sqlite.prepare('SELECT state FROM lead_downloads').get().state,'accepted');
 });

@@ -4,9 +4,9 @@ The separate `rekha-whatsapp-leads` Worker serves Meta app `3058202874566006`, W
 
 ## Current behavior
 
-- One Rekha Astrology branded message per lead, containing Hindi in Devanagari and Roman letters and the direct APK download URL: https://rekhaastrology.in/astrorani/RekhaAstrology.apk.
+- One Rekha Astrology branded message per lead, containing Hindi in Devanagari and Roman letters and only the owner's requested download website: https://rekhaastrology.in. No separate APK path or attachment.
 - The message asks the lead to talk in the app rather than WhatsApp. No AI-generated greetings, ongoing replies or separate follow-ups. OpenAI is not called; its existing secret remains unused.
-- This is a direct download **link**, not an APK attachment. Meta's documented document formats exclude APK. Never disguise executable content as a supported document or claim a link is an attachment.
+- The website handles downloading. Meta's documented document formats exclude APK. Never disguise executable content as a supported document or claim a link is an attachment.
 - Every new eligible inbound message, including audio/images without downloading them, queues a genuine Meta read request. Read marking never overwrites outgoing delivery/read statuses. Failed read marking retries at most three times on later authenticated traffic. Interrupted read attempts can recover because this operation is idempotent. Blue ticks depend on WhatsApp/client read-receipt settings; outgoing blue ticks cannot be forced.
 - Each lead is reserved atomically in `lead_downloads`. Later incoming messages receive read requests without another app invitation. This minimal delivery marker persists after message-history retention to prevent repeated sends.
 - STOP/unsubscribe and human requests still pause sends; START only resumes if newer. These control messages can receive read receipts. No new human inbox UI.

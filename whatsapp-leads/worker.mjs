@@ -1,6 +1,6 @@
 export const APP_URL = 'https://rekhaastrology.in';
-export const APK_URL = APP_URL+'/astrorani/RekhaAstrology.apk';
-export const DOWNLOAD_REPLY = 'रेखा | Rekha Astrology\nमुझसे बात करने के लिए ऐप पर आएँ, यहाँ नहीं।\nMujhse baat karne ke liye app par aaiye, yahan nahi.\n'+APK_URL;
+export const DOWNLOAD_URL = APP_URL;
+export const DOWNLOAD_REPLY = 'रेखा | Rekha Astrology\nमुझसे बात करने के लिए ऐप पर आएँ, यहाँ नहीं।\nMujhse baat karne ke liye app par aaiye, yahan nahi.\n'+DOWNLOAD_URL;
 
 const json = (data, status=200) => new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json','cache-control':'no-store'}});
 const number = (value, fallback, max) => Math.max(1, Math.min(max, Number.parseInt(value,10)||fallback));
