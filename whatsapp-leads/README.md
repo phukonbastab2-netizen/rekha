@@ -1,44 +1,38 @@
-# Rekha WhatsApp lead assistant
+# Rekha WhatsApp app-download flow
 
-Prepared for Meta app `3058202874566006`, WABA `1630536172004218`, registered number `+15812636719` and phone number ID `1368894806304328`, verified in Meta's production setup on 16 October 2026.
+The separate `rekha-whatsapp-leads` Worker serves Meta app `3058202874566006`, WABA `1630536172004218` and registered number `+15812636719` (phone ID `1368894806304328`). Existing customer app, legacy `whatsapp` Worker and its schedules remain unchanged.
 
-The separate `rekha-whatsapp-leads` Worker answers incoming text in Hindi, English or Hinglish and points interested customers to https://rekhaastrology.in. It uses OpenAI Responses instructions, not model fine-tuning. The existing `whatsapp` Worker, its media funnel, bindings and schedules are unchanged. Check for other subscribed apps/automations before activation so customers do not receive two flows.
+## Current behavior
 
-## Current rollout
+- One Rekha Astrology branded message per lead, containing Hindi in Devanagari and Roman letters and the direct APK download URL: https://rekhaastrology.in/astrorani/RekhaAstrology.apk.
+- The message asks the lead to talk in the app rather than WhatsApp. No AI-generated greetings, ongoing replies or separate follow-ups. OpenAI is not called; its existing secret remains unused.
+- This is a direct download **link**, not an APK attachment. Meta's documented document formats exclude APK. Never disguise executable content as a supported document or claim a link is an attachment.
+- Every new eligible inbound message, including audio/images without downloading them, queues a genuine Meta read request. Read marking never overwrites outgoing delivery/read statuses. Failed read marking retries at most three times on later authenticated traffic. Interrupted read attempts can recover because this operation is idempotent. Blue ticks depend on WhatsApp/client read-receipt settings; outgoing blue ticks cannot be forced.
+- Each lead is reserved atomically in `lead_downloads`. Later incoming messages receive read requests without another app invitation. This minimal delivery marker persists after message-history retention to prevent repeated sends.
+- STOP/unsubscribe and human requests still pause sends; START only resumes if newer. These control messages can receive read receipts. No new human inbox UI.
+- Requests require Meta's raw-body HMAC and the configured WABA/phone. Only fresh inbound messages within the 24-hour service window may trigger a send. No bulk campaign or retroactive replay was enabled.
+- The daily send ceiling remains 100 (`DAILY_SEND_LIMIT`); a lead beyond it is skipped. This is a controlled rollout, not unlimited campaign capacity. Meta/Cloudflare limits also apply.
+- Meta acceptance, delivered, read and failure statuses remain distinct. Ambiguous sends are recorded as unknown and never automatically repeated. Confirmed failures require owner review.
+- Message bodies and per-message read work older than seven days are pruned on subsequent authenticated traffic. Opt-outs and minimal once-per-lead delivery markers persist. No customer content goes to OpenAI.
 
-- Callback: `https://rekha-whatsapp-leads.phukonbastab2.workers.dev/webhook`
-- Health/readiness: `/health`
-- Active with `SEND_ENABLED=true`. Meta credentials and the restricted OpenAI key are stored as Worker secrets. The owner approved activation and a small noncustomer OpenAI test, which passed. The key expires on 15 November 2026 and must be replaced before expiry.
-- The verification token is a Worker secret. Its setup copy is kept outside Git in the workspace's private Cloudflare folder.
-- The Meta callback is saved. App-level `messages` subscription and WABA app subscription were verified using Meta's API. No real inbound WhatsApp delivery has been verified yet.
-- Graph API `v26.0` was observed in Meta's webhook setup and successfully used for app subscription verification. OpenAI model `gpt-6-luna` uses `reasoning.effort=none` for short support replies, per its official model documentation. Project access and Responses generation were verified with a small noncustomer test.
+## Deployment
 
-## Setup and verification
+Callback: https://rekha-whatsapp-leads.phukonbastab2.workers.dev/webhook
 
-1. Store `META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN` and `OPENAI_API_KEY` as **Worker secrets**, using Cloudflare Settings -> Variables and Secrets. Never commit keys or paste them in chat. The Meta token must belong to the app/account above and allow `whatsapp_business_messaging`. Follow Meta's system-user/token flow and use only necessary assets/permissions.
-   Meta secrets are already configured in this deployment. For owner-operated OpenAI key entry, run `node secure-key-setup.mjs` and open its loopback URL. The form checks model access and saves the key directly to Cloudflare without local persistence. By default it only checks model access; set `REKHA_APPROVED_CONNECTION_TEST=true` only after owner approval for a small paid Responses test. It expires after 30 minutes. Do not expose it through a public tunnel. Cloudflare's existing Wrangler session must be current.
-2. Set `OPENAI_MODEL` to an available Responses model in the owner's OpenAI project; set `GRAPH_API_VERSION` to the supported version shown in Meta's API setup. Keep `SEND_ENABLED=false`.
-3. With the owner's required approval for persistent API access, configure Meta's callback and matching verify token, and subscribe to `messages`. Meta displays a separate WABA subscription switch; it was already on during inspection. Verify both app field subscription and WABA subscription.
-4. Validate Meta token access to the configured phone, then make one owner-approved small OpenAI test using noncustomer text. Credentials must not appear in output/logs.
-5. Before enabling, review/drop any preactivation pending jobs that should not be answered. Check that no legacy automation is subscribed to this number. Set `SEND_ENABLED=true` only after credentials and the owner-approved connection test are ready. This account has reached its five free cron triggers, so this Worker currently runs directly from authenticated inbound messages and delivery callbacks. Existing services were left unchanged and no paid upgrade was made. Add an optional `* * * * *` cron only when a slot is available. Keep deployment configuration synchronized with live variables; do not redeploy this disabled config over an active service accidentally.
-6. Ask the owner to send an inbound WhatsApp message from their own phone. Check the reply and `delivered`/`read` webhook in `lead_jobs`. A successful challenge or `accepted` state does not prove delivery.
+Readiness: https://rekha-whatsapp-leads.phukonbastab2.workers.dev/health (`app_download_link` mode, `aiReplies=false`).
 
-## Operational behavior
+Secrets: `VERIFY_TOKEN`, `META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`. Never print credentials or put them in Git/client code. The unused OpenAI secret is not required for this mode. Verification token setup copy remains outside Git.
 
-- Raw-body HMAC SHA256 verification before processing. Events must match the configured WABA and phone ID. Body size is bounded.
-- Text/interactive-title inputs only; images, audio and personal documents are not downloaded or sent to OpenAI.
-- Recent incoming messages are deduplicated by WhatsApp ID in D1. Customer locks and conditional job claims prevent competing processors from double sending.
-- Replies remain within the 24-hour service window. There is no unsolicited campaign or template sender.
-- STOP/unsubscribe pauses automation immediately, even during generation. START resumes only if newer than the last control message. Requests for a person also pause automation; the owner must follow up. This service has no separate human inbox UI yet.
-- Each generation uses `store:false`, up to four recent turns and 300 output tokens. This setting does not mean zero provider retention; review the applicable OpenAI project data controls.
-- Defaults: 100 total AI requests/day and 12 accepted/ambiguous sends per contact/day. Failed attempts still consume the global reservation. Raising limits can increase charges and requires owner review.
-- One queued message is processed after each authenticated webhook, including delivery callbacks. Without cron, a job delayed by a concurrent contact lock waits for the next webhook; there is no scheduled recovery guarantee. An optional cron processes up to five per minute. This initial service is bounded; it is not a high-concurrency campaign engine.
-- Meta acceptance, delivery, read and failure states are separate. Ambiguous timeouts/interrupted processing are marked `unknown` and never resent automatically. OpenAI/Meta errors are marked failed for owner review, not retried in a loop.
-- Message bodies/replies older than seven days are removed on the next authenticated webhook or optional cron. Inactive periods can extend physical retention until that next event. Opt-out records persist. Logs contain generic error codes only. Add explicit retention/deletion handling if the support workflow changes.
-- To pause, set `SEND_ENABLED=false`. Do not remove opt-out records while cleaning content.
+Apply `schema.sql` before deploying; changes are additive `CREATE TABLE IF NOT EXISTS` statements. Preserve secrets and the existing D1 binding. Keep `wrangler.jsonc` synchronized with live variables. Pause with `SEND_ENABLED=false`.
+
+The free account has no spare cron slots. Work runs from authenticated inbound messages and delivery callbacks; existing schedules were left unchanged. One app job and up to ten read requests are processed per webhook. Jobs blocked by concurrency and failed read retries wait for later webhook traffic; no scheduled recovery guarantee. An optional cron handler remains available if a slot is freed later.
+
+On 17 October 2026 the new flow recorded one app invitation with a genuine WhatsApp `read` callback and one accepted inbound read-marking request. The owner also confirmed receiving the link. This verifies that test message, not every future delivery or every client's blue-tick display.
+
+A separate owner-requested compatibility test uploaded the actual 373,383-byte APK with its correct MIME type. Meta returned HTTP 400, code 100, rejecting `application/vnd.android.package-archive`. No customer message was sent by this probe, and its short-lived authenticated route was removed afterward. Do not claim direct APK attachments work on this Cloud API account.
 
 ## Checks
 
-Run `node --test worker.test.mjs` from this folder. Tests use real SQLite and fake provider requests; they do not spend API credits or send WhatsApp messages. Run the existing installed Wrangler with `deploy --dry-run --config wrangler.jsonc` for a bundle check.
+Run `node --test worker.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, Hindi/Romanized text, once-per-lead deduplication, media read receipts without downloads, bounded read retries, STOP/human handoff, daily limits, ambiguous sends and truthful outgoing receipts.
 
-Official API guidance: [OpenAI Responses migration](https://developers.openai.com/api/docs/guides/migrate-to-responses), [Meta WhatsApp webhooks](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/overview/).
+Official references: [Meta document formats](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/messages/document/) and [Meta read status object](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/types/StatusObject/). These SDK pages are archived; recheck current Cloud API documentation before changing supported media types.
