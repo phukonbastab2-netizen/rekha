@@ -36,6 +36,7 @@ const pairingFile = path.join(data, 'pairing-phone');
 const canPairWithPhone = process.env.ALLOW_PAIRING_RESTART === 'true';
 const pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, 'utf8').trim() : '';
 const state = { connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
+const ingress={events:0,accepted:0,duplicates:0,lastEventAt:null,lastAcceptedAt:null,lastShape:null,rejected:{}};
 const monitor=createMonitor({engine,data,profile:process.env.WHATSAPP_PROFILE_DIR||path.join(root,'.sessions','rekha-29'),cloudStatus:()=>({state:state.cloud,lastSynced:state.lastBackup,databaseBytes:state.cloudDatabaseBytes||null,databaseMeasuredAt:state.cloudDatabaseMeasuredAt||null})});
 let copyRestored=0;
 if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-20261018'").get()){
@@ -118,13 +119,18 @@ async function saveIncomingMedia(message, recordKey) {
   } catch { const m = engine.get(recordKey); if (m?.kind==='message') engine.put({ ...m, attachmentError: 'Open the original attachment in WhatsApp; download was unavailable.' }); }finally{mediaActive--;}
 }
 async function incoming(message) {
+  ingress.events++;ingress.lastEventAt=Date.now();
   const peer = safeId(message.from), id = safeId(message.id), at = Number(message.timestamp || message.t || 0) * 1000;
+  ingress.lastShape={peerType:typeof message.from,idType:typeof message.id,timestampType:typeof(message.timestamp??message.t),timestamp:at,fromMe:!!message.fromMe,group:!!message.isGroupMsg,notification:!!message.isNotification,type:String(message.type||'').slice(0,25),validPeer:validPeer(peer),hasId:!!id};
   // Never run the funnel against synced historical chats, groups or account/service notices.
-  if (!validPeer(peer) || !id || message.fromMe || message.isGroupMsg || message.isNotification || !Number.isFinite(at) || at < connectedSince - 10000 || at > Date.now() + 300000) return;
+  const reject=!validPeer(peer)?'peer':!id?'id':message.fromMe?'outgoing':message.isGroupMsg?'group':message.isNotification?'notification':!Number.isFinite(at)?'timestamp':at<connectedSince-10000?'older_than_start':at>Date.now()+300000?'future_timestamp':null;
+  if(reject){ingress.rejected[reject]=(ingress.rejected[reject]||0)+1;return;}
   const type = message.type === 'chat' ? 'text' : message.type || 'text';
   if (!['text','image','video','audio','ptt','document','sticker'].includes(type)) return;
   const result = engine.inbound({ peer, id, type, body: type === 'text' ? message.body || '' : message.caption || '', name: message.sender?.pushname || message.sender?.formattedName || '', at });
+  if(result.duplicate)ingress.duplicates++;
   if (!result.accepted) return;
+  ingress.accepted++;ingress.lastAcceptedAt=Date.now();
   if (type !== 'text' && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
   void sync(); void pump();
 }
@@ -206,6 +212,12 @@ const server = http.createServer(async (req, res) => {
     if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
     if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source });
     if (req.method === 'GET' && url.pathname === '/api/monitor') return json(res,monitor.snapshot());
+    if(req.method==='GET'&&url.pathname==='/api/runtime-status'){
+      const ready=runtime?.getReadiness?.();
+      const timed=promise=>Promise.race([promise,new Promise(resolve=>{const t=setTimeout(()=>resolve(null),8000);t.unref();})]);
+      const [socket,number]=client?await Promise.all([timed(client.getConnectionState().catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
+      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],socket:typeof socket==='string'?socket.slice(0,40):null,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress});
+    }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;
       const browser = runtime ? await runtime.evaluateScript('(() => { const p=globalThis.OpenWA_PortableSession; return {present:!!p,methods:p?Object.keys(p):[],startupFailure:p?.startupFailure?.()??null}; })()').catch(()=>null) : null;
