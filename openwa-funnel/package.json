@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env gateway.mjs",
-    "test": "node --test test.mjs cloud.test.mjs http.test.mjs api.test.mjs scale.test.mjs mobile.test.mjs inbox-sync.test.mjs receiver-watchdog.test.mjs",
+    "test": "node --test test.mjs cloud.test.mjs http.test.mjs api.test.mjs scale.test.mjs mobile.test.mjs inbox-sync.test.mjs receiver-watchdog.test.mjs outgoing-engine.test.mjs",
     "build:mobile": "node build-mobile-assets.mjs"
   },
   "dependencies": {

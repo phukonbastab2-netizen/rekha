@@ -12,6 +12,7 @@ export class Engine {
       CREATE INDEX IF NOT EXISTS records_kind_stamp ON records(kind,stamp);
       CREATE INDEX IF NOT EXISTS records_peer_kind_stamp ON records(peer,kind,stamp);
       CREATE INDEX IF NOT EXISTS records_provider ON records(json_extract(json,'$.providerId')) WHERE kind='message';
+      CREATE INDEX IF NOT EXISTS records_media ON records(json_extract(json,'$.media.id')) WHERE kind='message';
       CREATE TABLE IF NOT EXISTS changes(seq INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT NOT NULL,kind TEXT NOT NULL,peer TEXT NOT NULL,stamp INTEGER NOT NULL,json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS receipts(id TEXT PRIMARY KEY,peer TEXT NOT NULL,created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS due_jobs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT UNIQUE NOT NULL,peer TEXT NOT NULL,due_at INTEGER NOT NULL,state TEXT NOT NULL);
@@ -156,6 +157,39 @@ export class Engine {
       }
       if(!current||at>(c.lastAt||0)){c.lastAt=at;c.lastInboundAt=at;c.preview=sensitive?'[Sensitive message omitted]':(body||'['+input.type+']').slice(0,150);}
       this.put(c);return true;
+    });
+  }
+  captureOutgoing(input) {
+    const at=Number(input?.at),since=Number(input?.since),type=input?.type==='chat'?'text':input?.type;
+    const name=String(input?.name||'').slice(0,100);
+    if(!validPeer(input?.peer)||typeof input?.id!=='string'||!input.id||input.id.length>300||!Number.isFinite(at)||at<=0||!Number.isFinite(since)||since<0||at<since||at>this.now()+300000||!['text','image','video','audio','ptt','document','sticker','payment'].includes(type)||input.fromMe===false||input.isGroupMsg||input.isGroup||input.isSelf||input.self===true||input.peer===input.selfPeer||input.peer===input.ownerPeer||input.isPSA||input.isNotification&&type!=='payment'||/^(?:Facebook Business|Meta Business|WhatsApp)$/i.test(name.trim()))return{ignored:true};
+    return this.transaction(()=>{
+      let c=this.contact(input.peer);
+      if(c?.deleted||c?.contentDeletedAt&&at<=c.contentDeletedAt)return{ignored:true};
+      const key='out:provider:'+input.id;
+      // A deleted mirror is a permanent tombstone, including after restarts.
+      if(this.get(key)?.kind==='deleted')return{ignored:true};
+      const row=this.db.prepare("SELECT json FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=? LIMIT 1").get(input.id);
+      if(row){
+        const existing=JSON.parse(row.json);
+        if(existing.peer!==input.peer||existing.direction!=='out')return{ignored:true};
+        const ack=Number(input.ack),status=ack>=3?'read':ack===2?'delivered':ack===1?'sent':ack===-1?'failed':null;
+        const rank={queued:0,accepted:0,sent:1,delivered:2,read:3,failed:4};
+        // Repeated snapshots must not rewrite unchanged ACKs into cloud backup.
+        if(status&&Number.isFinite(ack)&&status!==existing.status&&rank[status]>(rank[existing.status]??0))this.ack(input.id,ack);
+        return{duplicate:true};
+      }
+      // A gateway echo can arrive before finish() returns its provider ID.
+      // Defer it until the next provider scan instead of creating a second row.
+      if(this.db.prepare("SELECT 1 FROM due_jobs WHERE peer=? AND state='sending' LIMIT 1").get(input.peer))return{deferred:true};
+      const body=String(input.body||'').slice(0,8000),sensitive=isSensitive(body);
+      this.put({key,kind:'message',peer:input.peer,id:input.id,providerId:input.id,direction:'out',type,body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),source:'owner_whatsapp',sensitive,media:sensitive?null:input.media||null,status:'queued'});
+      // ACK 0 is only queued on the sending device; it is not delivery evidence.
+      const ack=Number(input.ack);if(Number.isFinite(ack)&&ack!==0)this.ack(input.id,ack);
+      if(!c)c={key:'contact:'+input.peer,kind:'contact',peer:input.peer,name,firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
+      if(at>=(c.lastAt||0))c={...c,lastAt:at,preview:sensitive?'[Sensitive message omitted]':(body||'['+type+']').slice(0,150)};
+      this.put({...c,lastOutboundAt:Math.max(at,c.lastOutboundAt||0)});
+      return{accepted:true,key};
     });
   }
   markSeen(peer) { const c = this.contact(peer); if (c?.unread) this.put({ ...c, unread: 0 }); }

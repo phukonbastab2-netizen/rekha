@@ -8,7 +8,7 @@ import { ensurePairingCompatibility } from './pairing-compat.mjs';
 import { withPersistentProfile } from './persistent-driver.mjs';
 import {createMonitor} from './monitor.mjs';
 import {createMobileBridge} from './mobile-bridge.mjs';
-import {createInboxSync,normalizeIncoming,installFastInboxBridge} from './inbox-sync.mjs';
+import {createInboxSync,normalizeIncoming,normalizeOutgoing,installFastInboxBridge} from './inbox-sync.mjs';
 import {createReceiverWatchdog} from './receiver-watchdog.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -50,7 +50,7 @@ if(copyRestored)console.log('Updated pending automatic messages to current owner
 let client, runtime, connecting = false, stopping = false, busy = 0, syncing = false, connectedSince = 0, eventsInstalled = false;
 let fastBridge={ready:false},checkingBridge=false;
 let mediaActive=0;
-const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>client.evaluate(fn,arg),onIncoming:message=>incoming(message,true)});
+const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>client.evaluate(fn,arg),onIncoming:message=>incoming(message,true),onOutgoing:message=>outgoing(message,true)});
 const pendingAcks = new Map();
 const safeId = value => typeof value === 'string' ? value : value?._serialized || '';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -140,6 +140,14 @@ async function incoming(message,recovered=false) {
   if (!['text','payment'].includes(type) && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
   void sync(); void pump();return true;
 }
+async function outgoing(message,historical=false){
+  const normalized=normalizeOutgoing(message,historical?0:inboxSync.since);
+  if(normalized.reason)return false;
+  const result=engine.captureOutgoing(normalized.input);
+  if(!result.accepted)return false;
+  if(!['text','payment'].includes(normalized.input.type)&&!isSensitive(normalized.input.body))void saveIncomingMedia(message,result.key);
+  void sync();return true;
+}
 async function checkFastBridge(){
   if(checkingBridge||stopping||!client||state.connection!=='connected')return;
   checkingBridge=true;
@@ -174,6 +182,7 @@ async function connect() {
     client = new Client({ client: runtime, transport: runtime.getTransport() });
     // Register before start so no live message is lost in a readiness/listener gap.
     client.onMessage(message => incoming(message).catch(() => { state.error = 'An incoming message needs checking in WhatsApp.'; }));
+    client.onAnyMessage(message=>outgoing(message).catch(()=>{state.error='An outgoing phone message could not be copied to the inbox.';}));
     client.onAck(message => { const id = safeId(message.id); if (!engine.ack(id, message.ack)) { pendingAcks.set(id, { ack: message.ack, at: Date.now() }); if (pendingAcks.size > 1000) pendingAcks.delete(pendingAcks.keys().next().value); } });
     connectedSince = Date.now();
     await client.start();
@@ -253,7 +262,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); return json(res, { messages: engine.list('message', peer, url.searchParams.get('before') || '', 50), jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='unknown' LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }
     if (req.method === 'GET' && /^\/media\/[a-f0-9]{64}$/.test(url.pathname)) {
       const file = path.join(data, 'media', url.pathname.slice(7)); if (!fs.existsSync(file)) return json(res, { error: 'Not found' }, 404);
-      res.writeHead(200, { ...privateHeaders, 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="whatsapp-attachment"' }); return fs.createReadStream(file).pipe(res);
+      const saved=engine.db.prepare("SELECT json_extract(json,'$.media.mime') AS mime FROM records WHERE kind='message' AND json_extract(json,'$.media.id')=? LIMIT 1").get(url.pathname.slice(7));
+      const mime=/^(image\/(jpeg|png|webp)|video\/mp4|audio\/(mpeg|ogg|mp4|wav)|application\/pdf)$/.test(saved?.mime||'')?saved.mime:'application/octet-stream';
+      const inline=url.searchParams.get('inline')==='1'&&mime!=='application/octet-stream';
+      res.writeHead(200, { ...privateHeaders, 'Content-Type': mime, 'Content-Disposition': (inline?'inline':'attachment')+'; filename="whatsapp-attachment"' }); return fs.createReadStream(file).pipe(res);
     }
     if (req.method === 'POST') {
       if (req.headers.origin !== origin || !String(req.headers['content-type']).startsWith('application/json')) return json(res, { error: 'Forbidden' }, 403);

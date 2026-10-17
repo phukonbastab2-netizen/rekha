@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {EventEmitter} from 'node:events';
 import {Engine,isSensitive} from './engine.mjs';
-import {createInboxSync,normalizeIncoming,readProviderInbox,installFastInboxBridge} from './inbox-sync.mjs';
+import {createInboxSync,normalizeIncoming,normalizeOutgoing,readProviderInbox,installFastInboxBridge} from './inbox-sync.mjs';
 import {MEDIA_DELAY} from './funnel.mjs';
 const peer='919876543210@c.us';
 const message=(id,at,extra={})=>({id,from:peer,type:'chat',timestamp:at/1000,body:'Hi',...extra});
@@ -86,4 +86,33 @@ test('native delivery receipts forward only outgoing acknowledgements and replac
  assert.equal(acks.length,1);assert.equal(acks[0].id,'outgoing');assert.equal(acks[0].ack,3);
  const replacement=new EventEmitter();context.Store.Msg=replacement;install({since:0});
  assert.equal(collection.listenerCount('change:ack'),0);assert.equal(replacement.listenerCount('change:ack'),1);
+});
+
+test('phone-sent messages use the all-message bridge and preserve the customer identity',()=>{
+ const collection=new EventEmitter(),outgoing=[];
+ const context={Store:{Msg:collection,Chat:{get:()=>({contact:{pushname:'Customer'}})}},OpenWA_RuntimeMessageReceived:async()=>{},OpenWA_RuntimeAnyMessage:m=>outgoing.push(m)};
+ const install=vm.runInNewContext('('+installFastInboxBridge.toString()+')',context);install({since:1000000});
+ collection.emit('add',{id:{_serialized:'phone-reply',fromMe:true,remote:{_serialized:peer}},senderObj:{pushname:'Owner'},t:1001,type:'chat',body:'My phone reply',ack:2});
+ assert.equal(outgoing.length,1);assert.equal(outgoing[0].to,peer);assert.equal(outgoing[0].fromMe,true);assert.equal(outgoing[0].sender.pushname,'Customer');
+ assert.equal(normalizeOutgoing(outgoing[0],1000000,1100000).input.body,'My phone reply');
+ assert.equal(normalizeOutgoing({...outgoing[0],fromMe:false},1000000,1100000).reason,'incoming');
+ assert.equal(normalizeOutgoing({...outgoing[0],to:'12345@g.us'},1000000,1100000).reason,'peer');
+ assert.equal(normalizeOutgoing(outgoing[0],1100000,1200000).reason,'older_than_start');
+});
+
+test('global message fallback includes orphan messages and fresh messages with stale chat timestamps',async()=>{
+ const fresh={id:{_serialized:'orphan',fromMe:false,remote:{_serialized:peer}},t:1001,type:'chat',body:'New customer message'};
+ const phone={...fresh,id:{_serialized:'outgoing-phone',fromMe:true,remote:{_serialized:peer}},t:1002,body:'Phone reply'};
+ const stale={id:{_serialized:peer},t:100,contact:{pushname:'Customer'},msgs:{_models:[]}};
+ const context={Store:{Chat:{_models:[stale],get:()=>stale},Msg:{_models:[fresh,phone]}}};
+ const read=vm.runInNewContext('('+readProviderInbox.toString()+')',context);
+ const page=await read({after:1000000,recentAfter:1000000,offset:0,limit:10,messageOffset:0});
+ assert.equal(page.chats.length,0);assert.equal(page.recentMessages.length,2);assert.equal(page.messageTotal,2);
+ assert.equal(page.recentMessages[1].to,peer);assert.equal(page.recentMessages[1].fromMe,true);
+ const e=new Engine(':memory:',()=>1100000);let received=0,sent=0;
+ try{
+  e.put({key:'inbox-recovery',kind:'settings',since:1000000});
+  const sync=createInboxSync({engine:e,evaluate:async()=>page,onIncoming:async()=>{received++;return true;},onOutgoing:async()=>{sent++;return true;},now:()=>1100000});
+  await sync.scan();assert.equal(received,1);assert.equal(sent,1);assert.equal(sync.status.outgoingMirrored,1);
+ }finally{e.close();}
 });
