@@ -10,6 +10,7 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/rekha/openwa-funnel
 Environment=AUTO_CONNECT=true
+Environment=ALLOW_PAIRING_RESTART=true
 Environment=CHROME_PATH=/snap/bin/chromium
 Environment=WHATSAPP_PROFILE_DIR=/home/ubuntu/snap/chromium/common/rekha-29
 ExecStart=/home/ubuntu/.local/node/bin/node --env-file-if-exists=.env gateway.mjs

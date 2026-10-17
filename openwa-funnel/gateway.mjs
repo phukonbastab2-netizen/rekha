@@ -28,7 +28,10 @@ const cookie = randomBytes(32).toString('hex');
 const port = Number(process.env.PORT || 4341);
 const origin = `http://127.0.0.1:${port}`;
 const cloud = process.env.CLOUD_BACKUP_URL || '', token = process.env.CLOUD_BACKUP_TOKEN || '';
-const state = { connection: 'disconnected', error: '', qr: null, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
+const pairingFile = path.join(data, 'pairing-phone');
+const canPairWithPhone = process.env.ALLOW_PAIRING_RESTART === 'true';
+const pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, 'utf8').trim() : '';
+const state = { connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
 let client, runtime, connecting = false, stopping = false, busy = false, syncing = false, connectedSince = 0, eventsInstalled = false;
 const pendingAcks = new Map();
 const safeId = value => typeof value === 'string' ? value : value?._serialized || '';
@@ -98,13 +101,14 @@ async function connect() {
   try {
     const [{ Client, createClient, ev }, { PuppeteerDriver }, QRCode] = await Promise.all([import('@open-wa/wa-automate'), import('@open-wa/driver-puppeteer'), import('qrcode')]);
     if (!eventsInstalled) {
-      ev.on('qr.**', async qr => { if (typeof qr === 'string') { state.qr = await QRCode.default.toDataURL(qr, { width: 300, margin: 2 }); state.connection = 'scan_qr'; } });
-      ev.on('session.connection.disconnected', () => { state.connection = 'disconnected'; state.qr = null; });
+      ev.on('qr.**', async qr => { if (typeof qr === 'string' && !stopping) { state.qr = await QRCode.default.toDataURL(qr, { width: 300, margin: 2 }); state.pairingCode = null; state.connection = 'scan_qr'; if (pairingPhone) state.error = 'WhatsApp did not offer a pairing code. You can scan the QR or request a fresh code.'; } });
+      ev.on('linkCode.**', code => { if (typeof code === 'string' && /^[a-z0-9-]{8,10}$/i.test(code) && !stopping) { state.pairingCode = code; state.qr = null; state.error = ''; state.connection = 'enter_code'; } });
+      ev.on('session.connection.disconnected', () => { state.connection = 'disconnected'; state.qr = null; state.pairingCode = null; });
       eventsInstalled = true;
     }
     if (client) { try { await client.stop('Owner reconnecting'); } catch {} client = null; }
     const chromePath = process.env.CHROME_PATH || (process.platform === 'win32' && fs.existsSync('C:/Program Files/Google/Chrome/Application/chrome.exe') ? 'C:/Program Files/Google/Chrome/Application/chrome.exe' : undefined);
-    runtime = await createClient({ sessionId: 'rekha-29', driver: new PuppeteerDriver(), headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, userDataDir: process.env.WHATSAPP_PROFILE_DIR || path.join(root, '.sessions', 'rekha-29'), sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
+    runtime = await createClient({ sessionId: 'rekha-29', driver: new PuppeteerDriver(), headless: true, debug: false, logConsole: false, logConsoleErrors: false, authTimeoutMs: 0, qrTimeoutMs: 0, ...(pairingPhone ? { linkCode: pairingPhone } : {}), userDataDir: process.env.WHATSAPP_PROFILE_DIR || path.join(root, '.sessions', 'rekha-29'), sessionDataPath: path.join(root, '.sessions'), ...(chromePath ? { executablePath: chromePath } : {}) });
     client = new Client({ client: runtime, transport: runtime.getTransport() });
     // Register before start so no live message is lost in a readiness/listener gap.
     client.onMessage(message => incoming(message).catch(() => { state.error = 'An incoming message needs checking in WhatsApp.'; }));
@@ -112,9 +116,10 @@ async function connect() {
     connectedSince = Date.now();
     await client.start();
     if (!runtime.getReadiness().ready) throw Error('WhatsApp is not ready');
-    state.connection = 'connected'; state.qr = null; state.connectedAt = Date.now();
+    state.connection = 'connected'; state.qr = null; state.pairingCode = null; state.connectedAt = Date.now();
+    if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
   } catch {
-    state.connection = 'error'; state.qr = null; state.error = 'Could not connect WhatsApp. Check the browser installation, account and internet connection, then restart the gateway.';
+    state.connection = 'error'; state.qr = null; state.pairingCode = null; state.error = 'Could not connect WhatsApp. Check the browser installation, account and internet connection, then restart the gateway.';
     // Do not log exceptions: third-party errors may contain account/session data.
     client = null;
     try { await runtime?.stop?.('connection failure'); } catch {}
@@ -160,6 +165,19 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       if (req.headers.origin !== origin || !String(req.headers['content-type']).startsWith('application/json')) return json(res, { error: 'Forbidden' }, 403);
       const input = await body(req);
+      if (url.pathname === '/api/pairing') {
+        if (!canPairWithPhone) return json(res, { error: 'Phone linking requires the cloud service.' }, 409);
+        if (['connected','restarting'].includes(state.connection) || stopping) return json(res, { error: 'WhatsApp is connected or restarting.' }, 409);
+        if (!['phone','qr'].includes(input.mode)) return json(res, { error: 'Choose phone number or QR.' }, 400);
+        const phone = typeof input.phone === 'string' && /^\+?[0-9 -]+$/.test(input.phone) ? input.phone.replace(/[+ -]/g, '') : '';
+        if (input.mode === 'phone' && !/^[1-9][0-9]{7,14}$/.test(phone)) return json(res, { error: 'Enter your WhatsApp number with country code, for example +91 9876543210.' }, 400);
+        if (input.mode === 'phone') fs.writeFileSync(pairingFile, phone, { mode: 0o600 });
+        else if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
+        state.connection = 'restarting'; state.qr = null; state.pairingCode = null;
+        json(res, { restarting: true });
+        setTimeout(() => void shutdown(75), 250);
+        return;
+      }
       if (url.pathname === '/api/connect') { void connect(); return json(res, { starting: true }); }
       if (url.pathname === '/api/enabled') { engine.enable(!!input.enabled); return json(res, { enabled: engine.settings().enabled }); }
       if (url.pathname === '/api/send') { const value = engine.manual(input.peer, input.body, input.requestId); void pump(); return json(res, value); }
@@ -181,7 +199,7 @@ const housekeeping = setInterval(() => {
   const expiry = Date.now() - 90 * 86400000;
   for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
 }, 3600000);
-async function shutdown() { if (stopping) return; stopping = true; clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy) await sleep(100); engine.close(); process.exit(0); }
-process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); try { await client?.stop('Owner stopped gateway'); } catch {} while (busy) await sleep(100); engine.close(); process.exit(exitCode); }
+process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
 if (process.env.AUTO_CONNECT === 'true') void connect();

@@ -30,6 +30,12 @@ Sources checked directly:
 
 `provision-ubuntu.sh` implements the package/browser/Node/source preparation. `activate-ubuntu.sh` performs the initial private state migration and systemd activation, and refuses to overwrite an existing conversation database. Do not rerun initial migration against a working service.
 
+## Phone-number linking
+
+The cloud unit enables `ALLOW_PAIRING_RESTART=true`. In the private panel, enter the owner's WhatsApp number with country code and choose **Generate code**. The gateway saves the number in an owner-only local file, responds, and exits with code 75 so systemd starts a fresh authentication attempt. The generated pairing code appears only in the private, no-store controls; enter it on the phone under Linked devices → Link a device → Link with phone number instead. This is a device-linking code, not an SMS OTP. No code needs to be sent to an operator or entered in chat.
+
+Successful linking clears the temporary number file and the displayed code. QR login remains available when WhatsApp does not offer code linking. The route validates international number format, rejects foreign-origin requests and repeated restarts, and refuses to replace an already-connected account. Authentication restarts preserve the SQLite state, queue and funnel pause setting. On a standalone process without a supervisor, leave this option disabled.
+
 ## Other hosts evaluated
 
 Lightning currently shows a platform-access suspension/security incident; its Free plan also requires four-hour restarts. No session/secrets were uploaded there. Render Free sleeps after 15 minutes without inbound traffic and loses local files at restarts, so it is unsuitable for a persistent WhatsApp browser profile. Google Cloud's small free VM and limited free egress are a poorer fit for this video-heavy flow.

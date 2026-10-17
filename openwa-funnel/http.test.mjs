@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import http from 'node:http';
 test('private controls reject unauthenticated, foreign-origin and DNS-rebinding requests', async t => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'rekha-openwa-http-'));
-  const child = spawn(process.execPath, ['gateway.mjs'], { cwd: path.dirname(fileURLToPath(import.meta.url)), windowsHide: true, env: { ...process.env, PORT:'14341', REKHA_DATA_DIR:temp, AUTO_CONNECT:'false', CLOUD_BACKUP_URL:'', CLOUD_BACKUP_TOKEN:'' }, stdio:['ignore','pipe','pipe'] });
+  const child = spawn(process.execPath, ['gateway.mjs'], { cwd: path.dirname(fileURLToPath(import.meta.url)), windowsHide: true, env: { ...process.env, PORT:'14341', REKHA_DATA_DIR:temp, AUTO_CONNECT:'false', ALLOW_PAIRING_RESTART:'true', CLOUD_BACKUP_URL:'', CLOUD_BACKUP_TOKEN:'' }, stdio:['ignore','pipe','pipe'] });
   t.after(async () => { if (child.exitCode === null) { const done = new Promise(resolve => child.once('exit',resolve)); child.kill(); await done; } fs.rmSync(temp,{ recursive:true,force:true }); });
   await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('Gateway startup timed out')),10000); child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',code=>{clearTimeout(timeout);reject(Error('Gateway stopped '+code));}); });
   const base = 'http://127.0.0.1:14341';
@@ -22,4 +22,16 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   assert.equal(await rawStatus({Cookie:cookie,'Sec-Fetch-Site':'cross-site'}),403);
   assert.equal((await fetch(base+'/media/../../.env',{headers:{Cookie:cookie}})).status,404);
   assert.equal((await fetch(base+'/api/send',{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({peer:'12345678@g.us',body:'hello',requestId:'request-0001'})})).status,400);
+  const pair = (data, origin=base) => fetch(base+'/api/pairing',{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)});
+  assert.equal((await pair({mode:'phone',phone:'+1 5551234567'},'https://foreign.test')).status,403);
+  for (const phone of ['','123','+0123456789','+15551234567;rm','+1234567890123456']) assert.equal((await pair({mode:'phone',phone})).status,400);
+  assert.equal(fs.existsSync(path.join(temp,'pairing-phone')),false);
+  assert.equal((await pair({mode:'unsupported'})).status,400);
+  const exited = new Promise(resolve => child.once('exit',resolve));
+  const pairing = await pair({mode:'phone',phone:'+1 555 123-4567'});
+  assert.equal(pairing.status,200);
+  assert.equal(fs.readFileSync(path.join(temp,'pairing-phone'),'utf8'),'15551234567');
+  assert.equal((await pair({mode:'phone',phone:'+1 5551234567'})).status,409);
+  assert.equal((await(await fetch(base+'/api/status',{headers:{Cookie:cookie}})).json()).enabled,true);
+  assert.equal(await exited,75);
 });

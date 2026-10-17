@@ -67,17 +67,30 @@ async function refresh() {
   try {
     const status = await api('status'); enabled = status.enabled;
     $('connection').textContent = status.connection.replaceAll('_', ' '); $('connection').className = 'badge ' + status.connection;
-    $('connect').disabled = ['connected','starting','scan_qr'].includes(status.connection);
+    $('connect').disabled = ['connected','starting','scan_qr','enter_code','restarting'].includes(status.connection);
+    $('linkOptions').hidden = !status.canPairWithPhone || status.connection === 'connected';
+    $('generateCode').disabled = $('useQr').disabled = ['starting','restarting','connected'].includes(status.connection);
     $('toggle').textContent = enabled ? 'Pause funnel' : 'Enable funnel';
     $('summary').textContent = `${status.contacts} customers · ${status.queued} queued · ${status.uncertain} need checking`;
     $('backup').textContent = `Cloud backup: ${status.cloud.replaceAll('_', ' ')}${status.backupPending ? ' · ' + status.backupPending + ' changes pending' : ''}`;
-    $('pairing').hidden = !status.qr; if (status.qr && $('qr').getAttribute('src') !== status.qr) $('qr').src = status.qr;
+    $('pairing').hidden = !status.qr && !status.pairingCode;
+    $('codePanel').hidden = !status.pairingCode; $('pairCode').textContent = status.pairingCode || '';
+    $('qr').hidden = !status.qr;
+    if (status.qr && $('qr').getAttribute('src') !== status.qr) $('qr').src = status.qr;
     if (!status.qr) $('qr').removeAttribute('src');
     if (status.error) $('summary').textContent = status.error;
     await loadContacts(); await loadMessages();
   } catch (e) { $('connection').textContent = 'Gateway unavailable'; } finally { polling = false; }
 }
 $('connect').onclick = async () => { try { await api('connect', {}); await refresh(); } catch(e) { toast(e.message); } };
+async function requestPairing(mode) {
+  $('generateCode').disabled = $('useQr').disabled = true;
+  try { await api('pairing', { mode, ...(mode === 'phone' ? {phone:$('pairPhone').value} : {}) }); toast('Preparing your link. The private service will restart; keep this page open.'); }
+  catch (e) { toast(e.message); }
+  await refresh();
+}
+$('phonePairing').onsubmit = event => { event.preventDefault(); void requestPairing('phone'); };
+$('useQr').onclick = () => void requestPairing('qr');
 $('toggle').onclick = async () => { try { await api('enabled', { enabled: !enabled }); await refresh(); } catch(e) { toast(e.message); } };
 $('refresh').onclick = refresh;
 $('moreContacts').onclick = () => loadContacts(true).catch(e => toast(e.message));
