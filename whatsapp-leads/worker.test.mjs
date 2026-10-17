@@ -34,14 +34,14 @@ test('only configured account and valid timestamps are accepted; delayed message
  assert.equal(parseEvents(payload('old','hi',Date.now()-86500000),f.env).messages.length,1);
  assert.equal(parseEvents(payload('future','hi',Date.now()+600000),f.env).messages.length,0);
 });
-test('one video attachment with Hindi and English guidance and the homepage link; no OpenAI dependency',async()=>{
+test('one video attachment with the exact owner caption and only the homepage link; no OpenAI dependency',async()=>{
  const f=fixture(),net=fakeNetwork();assert.deepEqual(readiness(f.env).missing,[]);
  await ingest(f,payload());await drain(f.env,net.fetch);
  assert.equal(net.calls.length,1);assert.equal(net.calls[0].body.type,'video');
- assert.deepEqual(net.calls[0].body.video,{link:GUIDE_VIDEO_URL,caption:DOWNLOAD_REPLY});assert(DOWNLOAD_REPLY.includes('Rekha Astrology'));
+ assert.deepEqual(net.calls[0].body.video,{link:GUIDE_VIDEO_URL,caption:DOWNLOAD_REPLY});
  assert.equal(DOWNLOAD_URL,'https://rekhaastrology.in');assert.deepEqual(DOWNLOAD_REPLY.match(/https?:\/\/\S+/g),[DOWNLOAD_URL]);
  assert(!DOWNLOAD_REPLY.includes('.apk'));assert.equal(net.calls[0].body.document,undefined);assert.equal(net.calls[0].body.text,undefined);
- assert(DOWNLOAD_REPLY.includes('हिन्दी:'));assert(DOWNLOAD_REPLY.includes('English:'));assert(DOWNLOAD_REPLY.includes('जन्मतिथि'));assert(DOWNLOAD_REPLY.includes('date of birth'));
+ assert.equal(DOWNLOAD_REPLY,'इस video को देखिए और app में मुझसे  बात कीजिए free\nhttps://rekhaastrology.in');
  assert(DOWNLOAD_REPLY.length<=1024,'Caption must fit the provider limit');assert.equal(new URL(GUIDE_VIDEO_URL).protocol,'https:');assert(GUIDE_VIDEO_URL.endsWith('/download-guide.mp4'));
  assert.equal(f.sqlite.prepare('SELECT state FROM lead_downloads').get().state,'accepted');
 });

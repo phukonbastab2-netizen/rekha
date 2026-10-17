@@ -10,7 +10,7 @@ INSERT OR IGNORE INTO wa_messages(id,phone,direction,type,body,details_json,sour
 SELECT 'in:'||id,phone,'in','text',body,'{"legacyImport":true}','customer',inbound_at,created_at,'received',id FROM lead_jobs;
 
 INSERT OR IGNORE INTO wa_messages(id,phone,direction,type,body,details_json,source,created_at,received_at,state,meta_id,delivery_status,error_code)
-SELECT 'auto:'||id,phone,'out',CASE WHEN reply LIKE '%Watch this 2-minute guide.%' THEN 'video' ELSE 'text' END,reply,'{}','automatic',MAX(created_at,updated_at),MAX(created_at,updated_at),state,meta_id,delivery_status,error_code
+SELECT 'auto:'||id,phone,'out',CASE WHEN reply LIKE '%Watch this 2-minute guide.%' OR reply LIKE 'इस video को देखिए और app में मुझसे  बात कीजिए free%' THEN 'video' ELSE 'text' END,reply,'{}','automatic',MAX(created_at,updated_at),MAX(created_at,updated_at),state,meta_id,delivery_status,error_code
 FROM lead_jobs WHERE reply IS NOT NULL AND reply!='';
 
 UPDATE wa_inbox_contacts SET

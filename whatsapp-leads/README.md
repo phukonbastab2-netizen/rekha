@@ -4,7 +4,7 @@ The separate `rekha-whatsapp-leads` Worker serves Meta app `3058202874566006`, W
 
 ## Current behavior
 
-- One native video message per new lead: the edited 120-second Android download guide, with short Hindi and English instructions and https://rekhaastrology.in in its caption. No separate greeting, text message or follow-up. Existing once-only markers from the former link flow remain respected; this update does not replay a campaign to previous leads.
+- One native video message per new lead: the edited 120-second Android download guide, with the owner’s exact short caption “इस video को देखिए और app में मुझसे  बात कीजिए free” and https://rekhaastrology.in on the next line. No separate greeting, text message or follow-up. Existing once-only markers from the former link flow remain respected; this update does not replay a campaign to previous leads.
 - The message asks the lead to talk in the app rather than WhatsApp. No AI-generated greetings, ongoing replies or separate follow-ups. OpenAI is not called; its existing secret remains unused.
 - The website handles APK downloading. The attachment is an H.264/AAC MP4, served from the existing app's R2 bucket at https://astrorani.rekhaastrology.in/intro/download-guide.mp4. Meta fetches that public URL for the video message; there is no expiring uploaded media ID to maintain. This URL must remain reachable with GET/HEAD and the video/mp4 content type. No customer media is published.
 - Meta's documented document formats exclude APK. Never disguise executable content as a supported document or claim an APK download link is an APK attachment.
@@ -34,7 +34,7 @@ A separate owner-requested compatibility test uploaded the actual 373,383-byte A
 
 ## Checks
 
-Run `node --test worker.test.mjs inbox.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, the native video payload and Hindi/English caption, more than 100 distinct leads without the old daily gate, persistent once-per-phone deduplication after history cleanup and Worker restarts, media read receipts without downloads, bounded read retries, STOP/human handoff, disabled sending, ambiguous sends and truthful outgoing receipts.
+Run `node --test worker.test.mjs inbox.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, the native video payload and exact owner caption, more than 100 distinct leads without the old daily gate, persistent once-per-phone deduplication after history cleanup and Worker restarts, media read receipts without downloads, bounded read retries, STOP/human handoff, disabled sending, ambiguous sends and truthful outgoing receipts.
 
 Official references: [Meta document formats](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/messages/document/) and [Meta read status object](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/types/StatusObject/). These SDK pages are archived; recheck current Cloud API documentation before changing supported media types.
 

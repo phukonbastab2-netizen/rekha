@@ -2,7 +2,7 @@ import {inboxIncomingStatements,inboxAutomaticStart,inboxAutomaticResult,inboxSt
 export const APP_URL = 'https://rekhaastrology.in';
 export const DOWNLOAD_URL = APP_URL;
 export const GUIDE_VIDEO_URL = 'https://astrorani.rekhaastrology.in/intro/download-guide.mp4';
-export const DOWNLOAD_REPLY = '*Rekha Astrology*\nऐप डाउनलोड करें / Download app:\n'+DOWNLOAD_URL+'\n\nहिन्दी: यह 2 मिनट का वीडियो पूरा देखें। ऐप खोलकर उसका परिचय वीडियो पूरा देखें, फिर नाम और जन्मतिथि भरकर Send दबाएँ। आगे ऐप पर बात करें।\n\nEnglish: Watch this 2-minute guide. Open the app, watch its introduction fully, then enter your name and date of birth and tap Send. Continue chatting in the app.';
+export const DOWNLOAD_REPLY = 'इस video को देखिए और app में मुझसे  बात कीजिए free\n'+DOWNLOAD_URL;
 
 const json = (data, status=200) => new Response(JSON.stringify(data), {status, headers:{'content-type':'application/json','cache-control':'no-store'}});
 const number = (value, fallback, max) => Math.max(1, Math.min(max, Number.parseInt(value,10)||fallback));
