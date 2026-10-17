@@ -9,13 +9,18 @@ export function installFastInboxBridge({since}) {
   const root=globalThis,collection=root.Store?.Msg,emit=root.OpenWA_RuntimeMessageReceived;
   if(!collection?.on||typeof emit!=='function')return{ready:false};
   let state=root.__REKHA_INBOX_BRIDGE__;
-  if(state?.collection===collection){state.since=since;return{ready:true,emitted:state.emitted,failed:state.failed};}
+  if(state?.collection===collection&&state.version===2){state.since=since;return{ready:true,emitted:state.emitted,failed:state.failed};}
   if(state?.collection?.off)for(const event of ['add','change:type','change:body'])state.collection.off(event,state.handler);
-  state={collection,since,emitted:0,failed:0};
+  state={collection,since,version:2,emitted:0,failed:0};
   state.handler=model=>{
     if(!model||model.id?.fromMe||Number(model.t||0)*1000<state.since||!['chat','text','image','video','audio','ptt','document','sticker','payment'].includes(model.type))return;
     try{
-      const message=root.WAPI._serializeMessageObj(model);if(!message)return;
+      // The installed live WAPI patch can return a Promise from its serializer;
+      // the legacy listener then emits an empty object. Read stable model fields
+      // directly so message identity never depends on that serializer.
+      const id=value=>typeof value==='string'?value:value?._serialized||'';
+      const peer=id(model.id?.remote)||id(model.from),chat=root.Store.Chat?.get(model.id?.remote),contact=model.senderObj||chat?.contact||root.Store.Contact?.get(model.id?.remote);
+      const message={id:id(model.id),from:peer,fromMe:false,isGroupMsg:!!model.isGroupMsg,isNotification:!!model.isNotification,isPSA:!!model.isPSA,type:model.type,timestamp:model.t,body:model.type==='chat'||model.type==='text'?model.body||'':'',caption:model.caption||'',sender:{pushname:contact?.pushname||contact?.formattedName||chat?.name||'',isPSA:!!contact?.isPSA},mimetype:model.mimetype,mediaKey:model.mediaKey,clientUrl:model.clientUrl,deprecatedMms3Url:model.deprecatedMms3Url,filehash:model.filehash,encFilehash:model.encFilehash,directPath:model.directPath,size:model.size};
       state.emitted++;Promise.resolve(root.OpenWA_RuntimeMessageReceived(message)).catch(()=>{state.failed++;});
     }catch{state.failed++;}
   };

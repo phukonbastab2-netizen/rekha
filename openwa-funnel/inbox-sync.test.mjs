@@ -56,14 +56,15 @@ test('background recovery does not restore history the owner deleted',t=>{
 });
 test('live bridge receives new and decrypted messages even when the SDK new-message flag is false',async()=>{
  const collection=new EventEmitter(),received=[];
- const context={Store:{Msg:collection},WAPI:{_serializeMessageObj:m=>m},OpenWA_RuntimeMessageReceived:async m=>received.push(m)};
+ const context={Store:{Msg:collection},WAPI:{_serializeMessageObj:async()=>{throw Error('Broken legacy serializer must not be called');}},OpenWA_RuntimeMessageReceived:async m=>received.push(m)};
  const install=vm.runInNewContext('('+installFastInboxBridge.toString()+')',context);
  assert.equal(install({since:1000000}).ready,true);install({since:1000000});
  assert.equal(collection.listenerCount('add'),1);
- const fresh={id:{fromMe:false},t:1001,type:'chat',isNewMsg:false};collection.emit('add',fresh);
+ const fresh={id:{_serialized:'incoming-id',fromMe:false,remote:{_serialized:peer}},t:1001,type:'chat',body:'Hi',isNewMsg:false};collection.emit('add',fresh);
  collection.emit('change:type',{...fresh,type:'image'});
  collection.emit('add',{...fresh,t:900});collection.emit('add',{...fresh,id:{fromMe:true}});
  assert.equal(received.length,2);
+ assert.equal(received[0].from,peer);assert.equal(received[0].id,'incoming-id');assert.equal(received[0].body,'Hi');
  const replacement=new EventEmitter();context.Store.Msg=replacement;install({since:1000000});
  assert.equal(collection.listenerCount('add'),0);assert.equal(replacement.listenerCount('add'),1);
 });
