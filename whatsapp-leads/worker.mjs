@@ -110,11 +110,8 @@ async function processJob(env, job, now, fetcher=fetch) {
     if(previous) {
       await q(env,`UPDATE lead_jobs SET state='skipped',error_code='app_link_already_sent' WHERE id=?`,job.id).run();return;
     }
-    // Preserve the approved daily ceiling, without making any OpenAI requests.
-    const day=new Date(now).toISOString().slice(0,10);
-    await q(env,'INSERT OR IGNORE INTO lead_budget(day,requests) VALUES(?,0)',day).run();
-    const budget=await q(env,'UPDATE lead_budget SET requests=requests+1 WHERE day=? AND requests<?',day,number(env.DAILY_SEND_LIMIT,100,10000)).run();
-    if(!budget.meta.changes) {await q(env,`UPDATE lead_jobs SET state='skipped',error_code='global_limit' WHERE id=?`,job.id).run();return;}
+    // No application daily cap. The durable per-phone reservation below still
+    // prevents duplicate sends across webhooks, restarts and deployments.
     const reply=DOWNLOAD_REPLY;
     // Recheck opt-out and window immediately before reserving the send.
     const current=await q(env,'SELECT paused,last_inbound FROM lead_contacts WHERE phone=?',job.phone).first();
@@ -160,7 +157,7 @@ async function pruneHistory(env) {
 
 async function webhook(request, env, ctx) {
   const url=new URL(request.url);
-  if(request.method==='GET'&&url.pathname==='/health') return json({ok:true,service:'rekha-whatsapp-leads',mode:'app_download_video',aiReplies:false,guideVideo:GUIDE_VIDEO_URL,...readiness(env)});
+  if(request.method==='GET'&&url.pathname==='/health') return json({ok:true,service:'rekha-whatsapp-leads',mode:'app_download_video',aiReplies:false,dailyLeadLimit:null,duplicateProtection:'cloudflare_d1_per_phone',guideVideo:GUIDE_VIDEO_URL,...readiness(env)});
   if(url.pathname!=='/webhook') return new Response('Not found',{status:404});
   if(request.method==='GET') {
     if(env.VERIFY_TOKEN && url.searchParams.get('hub.mode')==='subscribe' && url.searchParams.get('hub.verify_token')===env.VERIFY_TOKEN) return new Response(url.searchParams.get('hub.challenge')||'');

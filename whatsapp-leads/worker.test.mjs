@@ -48,6 +48,7 @@ test('one video attachment with Hindi and English guidance and the homepage link
 test('health reports video delivery without AI replies',async()=>{
  const f=fixture();const health=await(await worker.fetch(new Request('https://x/health'),f.env,{})).json();
  assert.equal(health.mode,'app_download_video');assert.equal(health.aiReplies,false);assert.equal(health.guideVideo,GUIDE_VIDEO_URL);
+ assert.equal(health.dailyLeadLimit,null);assert.equal(health.duplicateProtection,'cloudflare_d1_per_phone');
 });
 
 test('existing once-only markers from the link flow do not trigger a new video campaign',async()=>{
@@ -97,9 +98,27 @@ test('STOP and human handoff pause app sends; their read receipts still work',as
  }
  assert.equal(command('बंद करो'),'stop');
 });
-test('approved daily ceiling and disabled mode prevent additional sends',async()=>{
- const f=fixture({DAILY_SEND_LIMIT:'1'}),net=fakeNetwork();await ingest(f,payload('one'));await ingest(f,payload('two','Hi',Date.now(),'918888888888'));await drain(f.env,net.fetch,5);assert.equal(net.calls.length,1);
- f.env.SEND_ENABLED='false';await ingest(f,payload('three','Hi',Date.now(),'917777777777'));await drain(f.env,net.fetch);await markIncomingRead(f.env,net.fetch);assert.equal(net.calls.length,1);
+test('more than 100 distinct leads send without a daily cap, ignoring old budget settings',async()=>{
+ const f=fixture({DAILY_SEND_LIMIT:'1'}),net=fakeNetwork(),day=new Date().toISOString().slice(0,10);
+ f.sqlite.prepare('INSERT INTO lead_budget(day,requests) VALUES(?,10000)').run(day);
+ for(let i=0;i<125;i++){
+  await ingest(f,payload('lead-'+i,'Hi',Date.now(),String(919000000000+i)));await drain(f.env,net.fetch);
+ }
+ assert.equal(net.calls.length,125);assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM lead_downloads').get().n,125);
+ assert.equal(f.sqlite.prepare('SELECT requests FROM lead_budget WHERE day=?').get(day).requests,10000,'Old daily counters are no longer used');
+});
+
+test('disabled sending remains respected after removing the daily cap',async()=>{
+ const f=fixture({SEND_ENABLED:'false'}),net=fakeNetwork();await ingest(f,payload());await drain(f.env,net.fetch);await markIncomingRead(f.env,net.fetch);assert.equal(net.calls.length,0);
+});
+
+test('Cloudflare D1 once-only marker survives history pruning and a fresh worker environment',async()=>{
+ const f=fixture(),net=fakeNetwork();await ingest(f,payload('first'));await drain(f.env,net.fetch);
+ f.sqlite.prepare('UPDATE lead_jobs SET created_at=1').run();f.sqlite.prepare('DELETE FROM lead_contacts').run();
+ await ingest(f,payload('after-restart'));await drain({...f.env},net.fetch);
+ assert.equal(net.calls.length,1);assert.equal(f.sqlite.prepare("SELECT COUNT(*) n FROM lead_jobs WHERE id='first'").get().n,0);
+ assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM lead_downloads').get().n,1);
+ assert.equal(f.sqlite.prepare("SELECT error_code FROM lead_jobs WHERE id='after-restart'").get().error_code,'app_link_already_sent');
 });
 test('ambiguous send is never repeated, even on a later inbound message',async()=>{
  const f=fixture(),net=fakeNetwork({timeout:true});await ingest(f,payload());await drain(f.env,net.fetch);await ingest(f,payload('again'));await drain(f.env,net.fetch);

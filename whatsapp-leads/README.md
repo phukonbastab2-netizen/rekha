@@ -12,7 +12,7 @@ The separate `rekha-whatsapp-leads` Worker serves Meta app `3058202874566006`, W
 - Each lead is reserved atomically in `lead_downloads`. Later incoming messages receive read requests without another app invitation. This minimal delivery marker persists after message-history retention to prevent repeated sends.
 - STOP/unsubscribe and human requests still pause sends; START only resumes if newer. These control messages can receive read receipts. No new human inbox UI.
 - Requests require Meta's raw-body HMAC and the configured WABA/phone. Only fresh inbound messages within the 24-hour service window may trigger a send. No bulk campaign or retroactive replay was enabled.
-- The daily send ceiling remains 100 (`DAILY_SEND_LIMIT`); a lead beyond it is skipped. This is a controlled rollout, not unlimited campaign capacity. Meta/Cloudflare limits also apply.
+- No application daily lead limit. The former `DAILY_SEND_LIMIT` variable and budget gate have been removed. Meta throughput, service-window rules and the existing Cloudflare plan quotas still apply; this does not create unlimited infrastructure capacity or enable bulk outreach.
 - Meta acceptance, delivered, read and failure statuses remain distinct. Ambiguous sends are recorded as unknown and never automatically repeated. Confirmed failures require owner review.
 - Message bodies and per-message read work older than seven days are pruned on subsequent authenticated traffic. Opt-outs and minimal once-per-lead delivery markers persist. No customer content goes to OpenAI.
 
@@ -34,6 +34,6 @@ A separate owner-requested compatibility test uploaded the actual 373,383-byte A
 
 ## Checks
 
-Run `node --test worker.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, the native video payload and Hindi/English caption, once-per-lead deduplication across the old and new flows, media read receipts without downloads, bounded read retries, STOP/human handoff, daily limits, ambiguous sends and truthful outgoing receipts.
+Run `node --test worker.test.mjs`. Tests use real SQLite and fake providers, without API credit or customer traffic. Coverage includes signature boundaries, the native video payload and Hindi/English caption, more than 100 distinct leads without the old daily gate, persistent once-per-phone deduplication after history cleanup and Worker restarts, media read receipts without downloads, bounded read retries, STOP/human handoff, disabled sending, ambiguous sends and truthful outgoing receipts.
 
 Official references: [Meta document formats](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/messages/document/) and [Meta read status object](https://whatsapp.github.io/WhatsApp-Nodejs-SDK/api-reference/types/StatusObject/). These SDK pages are archived; recheck current Cloud API documentation before changing supported media types.
