@@ -44,5 +44,8 @@
   },
   "databaseBytes": 2061692928,
   "processRssBytes": 54755328,
-  "limits": "Storage/query test on this development PC only; no WhatsApp throughput, Cloudflare quota, server hardware, delivery, attachments or million-per-day validation."
+  "limits": "Storage/query test on this development PC only; no WhatsApp throughput, Cloudflare quota, server hardware, delivery, attachments or million-per-day validation.",
+  "reusedDataset": true,
+  "initialSeedMs": 79442.0664,
+  "datasetNote": "One million synthetic customers, history messages and jobs seeded once; measurements rerun after index correction."
 }

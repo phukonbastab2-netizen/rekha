@@ -76,7 +76,14 @@ async function sync() {
     // Drain several bounded batches per cycle so a growing inbox does not outrun backup.
     for(let batch=0;batch<20&&!stopping;batch++){
     const changes = engine.changes();
-    if (!changes.length) { state.cloud = 'synced'; break; }
+    if (!changes.length) {
+      state.cloud = 'synced';
+      if(!state.cloudDatabaseMeasuredAt||Date.now()-state.cloudDatabaseMeasuredAt>60000){
+        const usage=await(await backupRequest('/usage')).json();
+        if(Number.isFinite(usage.databaseBytes)){state.cloudDatabaseBytes=usage.databaseBytes;state.cloudDatabaseMeasuredAt=usage.checkedAt;}
+      }
+      break;
+    }
     // An attachment reaches the private bucket before a message references it.
     for (const c of changes) {
       const value = JSON.parse(c.json), m = value.media;

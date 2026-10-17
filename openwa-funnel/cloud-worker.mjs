@@ -18,6 +18,10 @@ export default {
     if (!await authorized(request, env.BRIDGE_TOKEN)) return reply({ error: 'Unauthorized' }, 401);
     try {
       if(url.pathname.startsWith('/bridge/'))return await bridge(request,env);
+      if(url.pathname==='/usage'&&request.method==='GET'){
+        const measured=await env.DB.prepare('SELECT 1 AS ok FROM ow_backup LIMIT 1').all();
+        return reply({databaseBytes:measured.meta?.size_after??null,checkedAt:Date.now()});
+      }
       if (request.method === 'POST' && url.pathname === '/sync') {
         if (Number(request.headers.get('Content-Length') || 0) > 1000000) return reply({ error: 'Too large' }, 413);
         const raw = await request.text(); if (raw.length > 1000000) return reply({ error: 'Too large' }, 413);

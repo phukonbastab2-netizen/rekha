@@ -43,5 +43,5 @@ const newInbound=measure(i=>engine.inbound({peer:'990000000001@c.us',id:'synthet
 const contact=engine.list('contact')[0];
 const oneChat=measure(()=>engine.list('message',contact.peer));
 db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-const report={syntheticOnly:true,customers:count,historyMessages:count,queuedJobsSeeded:count,seededMs,queries:{stats,contacts,deepPage,dispatch,newInbound,oneChat},databaseBytes:fs.statSync(dbFile).size,processRssBytes:process.memoryUsage().rss,limits:'Storage/query test on this development PC only; no WhatsApp throughput, Cloudflare quota, server hardware, delivery, attachments or million-per-day validation.'};
+const report={syntheticOnly:true,reusedDataset:reuse,customers:count,historyMessages:count,queuedJobsSeeded:count,seededMs,queries:{stats,contacts,deepPage,dispatch,newInbound,oneChat},databaseBytes:fs.statSync(dbFile).size,processRssBytes:process.memoryUsage().rss,limits:'Storage/query test on this development PC only; no WhatsApp throughput, Cloudflare quota, server hardware, delivery, attachments or million-per-day validation.'};
 fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(report,null,2));engine.close();console.log(JSON.stringify(report));
