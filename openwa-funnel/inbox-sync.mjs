@@ -46,7 +46,7 @@ export function createInboxSync({engine,evaluate,onIncoming,now=()=>Date.now()})
   const saved=engine.get('inbox-recovery');
   const oldest=engine.db.prepare("SELECT min(json_extract(json,'$.firstAt')) AS at FROM records WHERE kind='contact'").get()?.at;
   const since=saved?.since||Number(oldest)||now();
-  if(!saved)engine.put({key:'inbox-recovery',kind:'checkpoint',since});
+  if(!saved||saved.kind!=='settings')engine.put({key:'inbox-recovery',kind:'settings',since});
   const status={running:false,checkedAt:null,providerChats:0,imported:0,recovered:0,error:''};
   let offset=0,scanningAfter=0;
   return{status,since,async scan(){

@@ -14,7 +14,7 @@ test('reception boundary survives restart and recovers missed messages without d
  const build=()=>createInboxSync({engine:e,now:()=>now,evaluate:async()=>page,onIncoming:async m=>{
   const n=normalizeIncoming(m,1000000,now);return n.input?e.inbound(n.input).accepted:false;
  }});
- const a=build();assert.equal(a.since,1000000);await a.scan();assert.equal(a.status.recovered,1);assert.equal(e.stats().messages,2);
+ const a=build();assert.equal(a.since,1000000);assert.equal(e.get('inbox-recovery').kind,'settings');await a.scan();assert.equal(a.status.recovered,1);assert.equal(e.stats().messages,2);
  const queued=e.stats().queued;now=1200000;const b=build();assert.equal(b.since,1000000);await b.scan();assert.equal(b.status.recovered,0);assert.equal(e.stats().queued,queued);
 });
 test('old chat history appears without starting the funnel; future customer message starts it once',t=>{

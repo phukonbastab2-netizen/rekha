@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import worker from './cloud-worker.mjs';
+import {Engine} from './engine.mjs';
+import {createInboxSync} from './inbox-sync.mjs';
 const source='00000000-0000-4000-8000-000000000000';
 function fixture(t) {
   const db = new DatabaseSync(':memory:'); db.exec(fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')); t.after(() => db.close());
@@ -23,3 +25,9 @@ test('cloud health public but every record/media route requires secret',async t=
 test('cloud duplicates and out of order retries never overwrite newer state',async t=>{const{call}=fixture(t);for(const c of [change(2,'New name'),change(1,'Old name'),change(2,'New name')])assert.equal((await call('/sync',{source,changes:[c]})).status,200);const data=await(await call('/records?source='+source)).json();assert.equal(data.records.length,1);assert.equal(JSON.parse(data.records[0].payload).name,'New name');});
 test('cloud malformed batch does not partially save',async t=>{const{call,db}=fixture(t);const result=await call('/sync',{source,changes:[change(1),{...change(2),json:'bad json'}]});assert.equal(result.status,400);assert.equal(db.prepare('SELECT count(*) n FROM ow_backup').get().n,0);});
 test('cloud attachments removed when content retention tombstone is mirrored',async t=>{const{call,objects}=fixture(t);const id='a'.repeat(64),key='openwa-private/'+source+'/'+id;objects.set(key,'private attachment');const c={seq:1,key:'in:id',kind:'deleted',peer:'',stamp:1,json:JSON.stringify({key:'in:id',kind:'deleted',mediaId:id})};assert.equal((await call('/sync',{source,changes:[c]})).status,200);assert.equal(objects.has(key),false);});
+test('recovery checkpoint and imported history remain compatible with the deployed backup contract',async t=>{
+ const {call}=fixture(t),engine=new Engine(':memory:');t.after(()=>engine.close());
+ createInboxSync({engine,evaluate:async()=>{},onIncoming:async()=>{}});
+ engine.importHistory({peer:'919876543210@c.us',id:'history',type:'text',body:'Hello',at:1000000});
+ assert.equal((await call('/sync',{source,changes:engine.changes()})).status,200);
+});
