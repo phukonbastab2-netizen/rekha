@@ -36,6 +36,8 @@ The cloud unit enables `ALLOW_PAIRING_RESTART=true`. In the private panel, enter
 
 Successful linking clears the temporary number file and the displayed code. QR login remains available when WhatsApp does not offer code linking. The route validates international number format, rejects foreign-origin requests and repeated restarts, and refuses to replace an already-connected account. Authentication restarts preserve the SQLite state, queue and funnel pause setting. On a standalone process without a supervisor, leave this option disabled.
 
+The private browser controls renew their HttpOnly session automatically after a service restart. Only an explicit authentication rejection is retried; network failures never automatically retry a possible message send. A QR-mode restart was checked through the live panel: it recovered and restored enabled linking controls without a page reload. Phone-code generation still needs an owner-entered number and confirmation on that phone.
+
 ## Other hosts evaluated
 
 Lightning currently shows a platform-access suspension/security incident; its Free plan also requires four-hour restarts. No session/secrets were uploaded there. Render Free sleeps after 15 minutes without inbound traffic and loses local files at restarts, so it is unsuitable for a persistent WhatsApp browser profile. Google Cloud's small free VM and limited free egress are a poorer fit for this video-heavy flow.
