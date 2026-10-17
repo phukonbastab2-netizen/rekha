@@ -154,7 +154,7 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { ...privateHeaders, 'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': `rekha_owner=${cookie}; HttpOnly; SameSite=Strict; Path=/` }); return res.end(fs.readFileSync(path.join(root, 'public', 'index.html')));
     }
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
-    if (['/app.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
+    if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
     if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, enabled: engine.settings().enabled, ...engine.stats(), source });
     if (req.method === 'GET' && url.pathname === '/api/contacts') return json(res, engine.list('contact', '', url.searchParams.get('before') || '', 50));
     if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); return json(res, { messages: engine.list('message', peer, url.searchParams.get('before') || '', 50), jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='unknown' LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }

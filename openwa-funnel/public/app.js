@@ -1,10 +1,8 @@
+import { createApi } from './api.js';
+const api = createApi();
 const $ = id => document.getElementById(id);
 const element = (tag, text, className) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (className) e.className = className; return e; };
 let selected = '', enabled = false, currentContact, contacts = [], contactCursor = '', messageCursor = '', currentMessages = new Map(), polling = false, posting = false;
-async function api(route, data) {
-  const response = await fetch('/api/' + route, data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-  const value = await response.json(); if (!response.ok) throw Error(value.error || 'Please try again'); return value;
-}
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; setTimeout(() => $('toast').hidden = true, 4500); }
 function contactList() {
   $('contacts').replaceChildren(); $('empty').hidden = contacts.length > 0;
@@ -80,7 +78,7 @@ async function refresh() {
     if (!status.qr) $('qr').removeAttribute('src');
     if (status.error) $('summary').textContent = status.error;
     await loadContacts(); await loadMessages();
-  } catch (e) { $('connection').textContent = 'Gateway unavailable'; } finally { polling = false; }
+  } catch (e) { $('connection').textContent = 'Reconnecting to gateway…'; } finally { polling = false; }
 }
 $('connect').onclick = async () => { try { await api('connect', {}); await refresh(); } catch(e) { toast(e.message); } };
 async function requestPairing(mode) {
