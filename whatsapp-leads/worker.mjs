@@ -1,3 +1,4 @@
+import {inboxIncomingStatements,inboxAutomaticStart,inboxAutomaticResult,inboxStatusStatement,inboxOwnerRoute,inboxArchiveMedia,inboxCleanup} from './inbox.mjs';
 export const APP_URL = 'https://rekhaastrology.in';
 export const DOWNLOAD_URL = APP_URL;
 export const GUIDE_VIDEO_URL = 'https://astrorani.rekhaastrology.in/intro/download-guide.mp4';
@@ -27,10 +28,13 @@ export function parseEvents(payload, env, now=Date.now()) {
       for(const item of value.messages||[]) {
         const timestamp=Number(item.timestamp)*1000;
         if(!/^[0-9]{6,20}$/.test(item.from||'') || typeof item.id!=='string' || item.id.length>256 ||
-          !Number.isFinite(timestamp)||timestamp<now-86400000||timestamp>now+300000) continue;
+          !Number.isFinite(timestamp)||timestamp<0||timestamp>now+300000) continue;
         const text=item.type==='text'?item.text?.body:item.type==='interactive'?(item.interactive?.button_reply?.title||item.interactive?.list_reply?.title):null;
         // Never download inbound media; a non-text message can still receive a read receipt and app link.
-        messages.push({id:item.id,phone:item.from,text:typeof text==='string'?text.trim().slice(0,2000):'',timestamp});
+        const media=['image','video','audio','document','sticker'].includes(item.type)?item[item.type]:null;
+        const content=typeof text==='string'?text:typeof media?.caption==='string'?media.caption:'';
+        const profile=value.contacts?.find(c=>String(c.wa_id)===item.from)?.profile;
+        messages.push({id:item.id,phone:item.from,text:content.trim().slice(0,4096),timestamp,type:String(item.type||'unknown').slice(0,40),name:typeof profile?.name==='string'?profile.name.slice(0,128):'',details:item});
       }
       for(const item of value.statuses||[]) {
         if(typeof item.id==='string' && ['sent','delivered','read','failed'].includes(item.status)) {
@@ -57,6 +61,7 @@ async function ingest(env, events, now) {
       AND (delivery_status IS NULL OR delivery_status='sent' OR (?='read' AND delivery_status='delivered'))`,
       status.status,status.timestamp||now,status.errorCode,status.id,status.status).run();
     await q(env,`UPDATE lead_downloads SET delivery_status=?,delivery_at=?,error_code=? WHERE meta_id=? AND (delivery_status IS NULL OR delivery_status='sent' OR (?='read' AND delivery_status='delivered'))`,status.status,status.timestamp||now,status.errorCode,status.id,status.status).run();
+    await inboxStatusStatement(env,status).run();
   }
   for(const message of events.messages) {
     await env.DB.batch([
@@ -64,6 +69,7 @@ async function ingest(env, events, now) {
       q(env,`INSERT OR IGNORE INTO lead_jobs(id,phone,body,inbound_at,created_at,state) VALUES(?,?,?,?,?,'pending')`,message.id,message.phone,message.text,message.timestamp,now),
       q(env,`UPDATE lead_contacts SET last_inbound=MAX(last_inbound,?) WHERE phone=?`,message.timestamp,message.phone),
       q(env,`INSERT OR IGNORE INTO lead_read_receipts(id,created_at) VALUES(?,?)`,message.id,now),
+      ...inboxIncomingStatements(env,message,now,command(message.text)),
     ]);
     const action=command(message.text);
     if(action) await q(env,`UPDATE lead_contacts SET paused=?,control_at=? WHERE phone=? AND (control_at<? OR (control_at=? AND ?=1))`,action==='start'?0:1,message.timestamp,message.phone,message.timestamp,message.timestamp,action==='start'?0:1).run();
@@ -120,6 +126,7 @@ async function processJob(env, job, now, fetcher=fetch) {
     }
     const reservation=await q(env,`INSERT OR IGNORE INTO lead_downloads(phone,job_id,state,created_at,updated_at) VALUES(?,?,'sending',?,?)`,job.phone,job.id,Date.now(),Date.now()).run();
     if(!reservation.meta.changes){await q(env,`UPDATE lead_jobs SET state='skipped',error_code='app_link_already_sent' WHERE id=?`,job.id).run();return;}
+    await inboxAutomaticStart(env,job,reply,GUIDE_VIDEO_URL,Date.now());
     await q(env,`UPDATE lead_jobs SET state='sending',reply=?,updated_at=? WHERE id=?`,reply,Date.now(),job.id).run();
     // A timeout can mean Meta accepted the message. Mark unknown; never blindly retry.
     let response;
@@ -133,7 +140,7 @@ async function processJob(env, job, now, fetcher=fetch) {
       await q(env,`UPDATE lead_jobs SET state=?,meta_id=?,error_code=?,updated_at=? WHERE id=?`,response.ok&&metaId?'accepted':response.ok?'unknown':'failed',metaId||null,response.ok?'':`meta_${result.error?.code||response.status}`,Date.now(),job.id).run();
       await q(env,`UPDATE lead_downloads SET state=?,meta_id=?,error_code=?,updated_at=? WHERE job_id=?`,response.ok&&metaId?'accepted':response.ok?'unknown':'failed',metaId||null,response.ok?'':`meta_${result.error?.code||response.status}`,Date.now(),job.id).run();
     } catch { await q(env,`UPDATE lead_jobs SET state='unknown',error_code='send_outcome_unknown',updated_at=? WHERE id=?`,Date.now(),job.id).run(); await q(env,`UPDATE lead_downloads SET state='unknown',error_code='send_outcome_unknown',updated_at=? WHERE job_id=?`,Date.now(),job.id).run(); }
-  } finally { await q(env,`UPDATE lead_contacts SET lock_until=0,lock_token=NULL WHERE phone=? AND lock_token=?`,job.phone,lock).run(); }
+  } finally { await inboxAutomaticResult(env,job,Date.now());await q(env,`UPDATE lead_contacts SET lock_until=0,lock_token=NULL WHERE phone=? AND lock_token=?`,job.phone,lock).run(); }
 }
 
 export async function drain(env, fetcher=fetch, limit=1) {
@@ -153,10 +160,12 @@ async function pruneHistory(env) {
     q(env,'DELETE FROM lead_read_receipts WHERE created_at<?',Date.now()-7*86400000),
     q(env,'DELETE FROM lead_budget WHERE day<?',new Date(Date.now()-8*86400000).toISOString().slice(0,10)),
   ]);
+  await inboxCleanup(env);
 }
 
 async function webhook(request, env, ctx) {
   const url=new URL(request.url);
+  if(url.pathname.startsWith('/owner/'))return inboxOwnerRoute(request,env);
   if(request.method==='GET'&&url.pathname==='/health') return json({ok:true,service:'rekha-whatsapp-leads',mode:'app_download_video',aiReplies:false,dailyLeadLimit:null,duplicateProtection:'cloudflare_d1_per_phone',guideVideo:GUIDE_VIDEO_URL,...readiness(env)});
   if(url.pathname!=='/webhook') return new Response('Not found',{status:404});
   if(request.method==='GET') {
@@ -178,6 +187,7 @@ async function webhook(request, env, ctx) {
   ctx.waitUntil(pruneHistory(env).catch(()=>console.error('lead_retention_failed')));
   ctx.waitUntil(markIncomingRead(env).catch(()=>console.error('lead_read_receipt_failed')));
   ctx.waitUntil(drain(env).catch(()=>console.error('lead_processor_failed')));
+  ctx.waitUntil(inboxArchiveMedia(env).catch(()=>console.error('inbox_archive_failed')));
   return new Response('EVENT_RECEIVED');
 }
 

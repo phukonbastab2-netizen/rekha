@@ -11,6 +11,7 @@ import {createChatHistory,historyHeaders,captureThreadAnchor,restoreThreadAnchor
 import {createInboxPages} from './inbox-pages.js';
 import {createChatSounds} from './chat-sounds.js';
 import {openCustomerActivity,closeCustomerActivity} from './activity-admin.js';
+import {openWhatsAppInbox,closeWhatsAppInbox} from './whatsapp-admin.js';
 
 const app = document.querySelector('#admin-app');
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -74,6 +75,7 @@ function closeRecorder(cancel=true){
   const button=app.querySelector('#voice-record');if(button)button.disabled=actionBusy||startRecording.pending;
 }
 function login({clearDrafts=true}={}) {
+  closeWhatsAppInbox();
   closeCustomerActivity();
   sounds.reset();soundedSends.clear();
   if(clearDrafts)clearOwnerDrafts();dirty=false;attachment=null;quoted=null;sendAttempt=null;replySending=false;replyFailure='';lastInboxSync=0;connectionPaused=false;
@@ -91,6 +93,8 @@ async function workspace() {
   app.querySelector('#open-library').onclick=()=>openLibrary({api,notice});
   app.querySelector('#open-quick-replies').onclick=()=>quickReplies(false);
   const tools=app.querySelector('.owner-tools-panel'),signOut=app.querySelector('#logout');
+  const whatsAppButton=document.createElement('button');whatsAppButton.type='button';whatsAppButton.id='open-whatsapp-inbox';whatsAppButton.textContent='WhatsApp inbox';
+  whatsAppButton.onclick=()=>{closeWhatsAppInbox();inboxPoll.stop();threadPoll.stop();openWhatsAppInbox({api,notice,onClose:()=>{if(app.dataset.view!=='login'){inboxPoll.start();if(selected)threadPoll.start();}}});};app.querySelector('.links').prepend(whatsAppButton);
   const appEditor=document.createElement('button');appEditor.type='button';appEditor.textContent='Edit customer app';appEditor.id='open-app-settings';appEditor.onclick=()=>openAppSettings({api,notice});tools.prepend(appEditor);
   const access=document.createElement('button');access.type='button';access.textContent='Feature access';access.id='feature-access';access.onclick=()=>openFeatureAccess();tools.insertBefore(access,signOut);
   const soundToggle=document.createElement('button');soundToggle.id='chat-sounds';soundToggle.type='button';const drawSounds=()=>{soundToggle.textContent='Chat sounds · '+(sounds.enabled()?'On':'Off');soundToggle.setAttribute('aria-pressed',String(sounds.enabled()));};drawSounds();soundToggle.onclick=()=>{sounds.setEnabled(!sounds.enabled());drawSounds();};tools.insertBefore(soundToggle,signOut);

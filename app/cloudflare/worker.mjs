@@ -257,6 +257,13 @@ export async function handleApi(request,env,executionContext){
     if(route==='/api/admin/login'&&method==='POST'){await rate(`login:${request.headers.get('CF-Connecting-IP')||'unknown'}`,6,300000);const data=await body();if(typeof data.password!=='string'||await hash(data.password)!==env.ADMIN_PASSWORD_HASH)throw fail(401,'Incorrect owner password.');const session=token();await stmt('INSERT INTO admin_sessions(token_hash,expires) VALUES(?,?)',await hash(session),Date.now()+8*3600000).run();return result({ok:true},200,{'Set-Cookie':cookie('ar_admin',session)});}
     if(route.startsWith('/api/admin/')){
       await owner();
+      if(route.startsWith('/api/admin/whatsapp/')){
+        if(!env.WHATSAPP_LEADS||!env.WHATSAPP_ADMIN_TOKEN)throw fail(503,'WhatsApp inbox is being connected.');
+        const endpoint=new URL(request.url);endpoint.hostname='whatsapp.internal';endpoint.pathname=route.replace('/api/admin/whatsapp/','/owner/');
+        const forwarded=new Request(endpoint,{method,headers:{Authorization:'Bearer '+env.WHATSAPP_ADMIN_TOKEN,...(request.headers.has('Content-Type')?{'Content-Type':request.headers.get('Content-Type')}:{}),...(request.headers.has('Range')?{Range:request.headers.get('Range')}:{})},...(!['GET','HEAD'].includes(method)?{body:request.body}:{})});
+        const upstream=await env.WHATSAPP_LEADS.fetch(forwarded),out=new Response(upstream.body,upstream);
+        out.headers.set('Cache-Control','no-store');out.headers.set('X-Robots-Tag','noindex, nofollow');out.headers.set('X-Content-Type-Options','nosniff');return out;
+      }
       if(route==='/api/admin/activity')return await activityRoutes({request,env,route,method,stmt,one,all,result,fail,rate});
       const intro=route.match(/^\/api\/admin\/intro\/(welcome|introduction|testimonials|onboarding|download-guide)$/);
       if(intro&&method==='PUT'){

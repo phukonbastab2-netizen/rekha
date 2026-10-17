@@ -29,9 +29,10 @@ test('challenge, bad signatures and oversized events never mark read or send',as
  assert.equal(f.sqlite.prepare('SELECT COUNT(*) n FROM lead_read_receipts').get().n,0);
  assert.equal((await worker.fetch(new Request('https://x/webhook',{method:'POST',body:'x'.repeat(262145)}),f.env,{})).status,413);
 });
-test('only configured account and recent inbound messages are accepted',()=>{
+test('only configured account and valid timestamps are accepted; delayed messages remain available in the inbox',()=>{
  const f=fixture(),body=payload();assert.equal(parseEvents(body,f.env).messages.length,1);body.entry[0].id='different';assert.equal(parseEvents(body,f.env).messages.length,0);
- assert.equal(parseEvents(payload('old','hi',Date.now()-86500000),f.env).messages.length,0);
+ assert.equal(parseEvents(payload('old','hi',Date.now()-86500000),f.env).messages.length,1);
+ assert.equal(parseEvents(payload('future','hi',Date.now()+600000),f.env).messages.length,0);
 });
 test('one video attachment with Hindi and English guidance and the homepage link; no OpenAI dependency',async()=>{
  const f=fixture(),net=fakeNetwork();assert.deepEqual(readiness(f.env).missing,[]);
