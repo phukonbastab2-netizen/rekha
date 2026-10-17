@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import http from 'node:http';
+test('private controls reject unauthenticated, foreign-origin and DNS-rebinding requests', async t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'rekha-openwa-http-'));
+  const child = spawn(process.execPath, ['gateway.mjs'], { cwd: path.dirname(fileURLToPath(import.meta.url)), windowsHide: true, env: { ...process.env, PORT:'14341', REKHA_DATA_DIR:temp, AUTO_CONNECT:'false', CLOUD_BACKUP_URL:'', CLOUD_BACKUP_TOKEN:'' }, stdio:['ignore','pipe','pipe'] });
+  t.after(async () => { if (child.exitCode === null) { const done = new Promise(resolve => child.once('exit',resolve)); child.kill(); await done; } fs.rmSync(temp,{ recursive:true,force:true }); });
+  await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('Gateway startup timed out')),10000); child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',code=>{clearTimeout(timeout);reject(Error('Gateway stopped '+code));}); });
+  const base = 'http://127.0.0.1:14341';
+  assert.equal((await fetch(base+'/api/status')).status,401);
+  const page=await fetch(base+'/'),cookie=page.headers.get('set-cookie').split(';')[0];assert.equal(page.status,200);assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
+  const status=await(await fetch(base+'/api/status',{headers:{Cookie:cookie}})).json();assert.equal(status.connection,'disconnected');assert.equal(status.enabled,false);
+  assert.equal((await fetch(base+'/api/enabled',{method:'POST',headers:{Cookie:cookie,Origin:'https://foreign.test','Content-Type':'application/json'},body:'{"enabled":true}'})).status,403);
+  assert.equal((await fetch(base+'/api/enabled',{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json'},body:'{"enabled":true}'})).status,200);
+  const rawStatus = headers => new Promise((resolve,reject) => { const req = http.request(base+'/api/status',{headers},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end(); });
+  assert.equal(await rawStatus({Cookie:cookie,Host:'evil.test'}),403);
+  assert.equal(await rawStatus({Cookie:cookie,'Sec-Fetch-Site':'cross-site'}),403);
+  assert.equal((await fetch(base+'/media/../../.env',{headers:{Cookie:cookie}})).status,404);
+  assert.equal((await fetch(base+'/api/send',{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({peer:'12345678@g.us',body:'hello',requestId:'request-0001'})})).status,400);
+});
