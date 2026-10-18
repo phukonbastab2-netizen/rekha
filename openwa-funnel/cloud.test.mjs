@@ -2,18 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
-import worker from './cloud-worker.mjs';
+import worker,{backupFailure} from './cloud-worker.mjs';
 import {Engine} from './engine.mjs';
 import {createInboxSync} from './inbox-sync.mjs';
 const source='00000000-0000-4000-8000-000000000000';
-function fixture(t) {
+function fixture(t,{batchError}={}) {
   const db = new DatabaseSync(':memory:'); db.exec(fs.readFileSync(new URL('./schema.sql', import.meta.url), 'utf8')); t.after(() => db.close());
   const objects = new Map();
   const env = {
     BRIDGE_TOKEN: 'private-test-token',
     DB: {
       prepare(sql) { return { bind(...args) { return { run: () => db.prepare(sql).run(...args), all: async () => ({ results: db.prepare(sql).all(...args) }) }; } }; },
-      async batch(statements) { db.exec('BEGIN'); try { for (const s of statements) s.run(); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; } }
+      async batch(statements) { if(batchError)throw batchError;db.exec('BEGIN'); try { for (const s of statements) s.run(); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; } }
     },
     MEDIA: { put: async (key,value) => objects.set(key,value), delete: async key => objects.delete(key), get: async () => null }
   };
@@ -30,4 +30,21 @@ test('recovery checkpoint and imported history remain compatible with the deploy
  createInboxSync({engine,evaluate:async()=>{},onIncoming:async()=>{}});
  engine.importHistory({peer:'919876543210@c.us',id:'history',type:'text',body:'Hello',at:1000000});
  assert.equal((await call('/sync',{source,changes:engine.changes()})).status,200);
+});
+test('D1 write quota is typed with the next UTC reset and no database details',async()=>{
+ const now=Date.UTC(2026,9,18,4,55,10),error=new Error('D1_ERROR: Your account has exceeded D1\'s free tier daily row write limit. SQL and private record omitted.');
+ const response=backupFailure(error,now),data=await response.json();
+ assert.equal(response.status,503);assert.equal(data.code,'D1_WRITE_QUOTA');
+ assert.equal(data.retryAt,Date.UTC(2026,9,19));assert.equal(Number(response.headers.get('Retry-After')),Math.ceil((data.retryAt-now)/1000));
+ assert.deepEqual(Object.keys(data).sort(),['code','error','retryAt']);assert.ok(!JSON.stringify(data).includes('SQL'));
+});
+test('nested D1 quota errors are recognized but ordinary malformed requests stay generic',async()=>{
+ assert.equal(backupFailure(new Error('request',{cause:new Error("D1_ERROR: account has exceeded D1's free tier daily row write limit")})).status,503);
+ const invalid=backupFailure(new Error('Invalid record containing private text'));assert.equal(invalid.status,400);assert.deepEqual(await invalid.json(),{error:'Request failed'});
+});
+test('sync quota failure never acknowledges or partially writes the pending batch',async t=>{
+ const {call,db}=fixture(t,{batchError:new Error("D1_ERROR: Your account has exceeded D1's free tier daily row write limit")});
+ const response=await call('/sync',{source,changes:[change(1)]}),data=await response.json();
+ assert.equal(response.status,503);assert.equal(data.code,'D1_WRITE_QUOTA');assert.equal(data.acknowledged,undefined);
+ assert.equal(db.prepare('SELECT count(*) n FROM ow_backup').get().n,0);
 });

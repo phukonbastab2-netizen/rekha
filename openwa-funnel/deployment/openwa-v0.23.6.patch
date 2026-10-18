@@ -1,0 +1,1030 @@
+diff --git a/dashboard/src/components/Layout.tsx b/dashboard/src/components/Layout.tsx
+index 495e66c..63f7789 100644
+--- a/dashboard/src/components/Layout.tsx
++++ b/dashboard/src/components/Layout.tsx
+@@ -228,6 +228,12 @@ export function Layout({ onLogout, userRole }: LayoutProps) {
+               </NavLink>
+             );
+           })}
++          {userRole === 'admin' && import.meta.env.VITE_REKHA_FUNNEL_URL && (
++            <a className="nav-item" href={import.meta.env.VITE_REKHA_FUNNEL_URL} target="_blank" rel="noopener noreferrer" title="Funnel & capacity">
++              <Server size={20} />
++              {!isCollapsed && <span>Funnel &amp; capacity</span>}
++            </a>
++          )}
+         </nav>
+ 
+         <div className="sidebar-footer">
+diff --git a/dashboard/src/components/chats/ChatSidebar.test.ts b/dashboard/src/components/chats/ChatSidebar.test.ts
+new file mode 100644
+index 0000000..2e44d0a
+--- /dev/null
++++ b/dashboard/src/components/chats/ChatSidebar.test.ts
+@@ -0,0 +1,64 @@
++import '../../test-helpers/register-hooks.ts';
++import { test, before, afterEach } from 'node:test';
++import assert from 'node:assert/strict';
++import { createElement } from 'react';
++import type { UseQueryResult } from '@tanstack/react-query';
++import type { Channel, Chat } from '../../services/api.ts';
++
++let rtl: typeof import('@testing-library/react');
++let ChatSidebar: typeof import('./ChatSidebar.tsx').default;
++let RoleProvider: typeof import('../RoleProvider.tsx').RoleProvider;
++
++before(async () => {
++  const { installJsdomGlobals } = await import('../../test-helpers/jsdom.ts');
++  await installJsdomGlobals();
++  const { i18nReady } = await import('../../i18n/index.ts');
++  await i18nReady;
++  rtl = await import('@testing-library/react');
++  ({ RoleProvider } = await import('../RoleProvider.tsx'));
++  ({ default: ChatSidebar } = await import('./ChatSidebar.tsx'));
++});
++
++afterEach(() => rtl.cleanup());
++
++const BASE_CHAT: Chat = {
++  id: '15551234567@c.us', name: 'Saved customer', kind: 'individual', isGroup: false,
++  unreadCount: 0, timestamp: 1_700_000_000, archived: false, pinned: false, muted: false,
++};
++
++function renderChat(chat: Chat) {
++  const noop = () => {};
++  return rtl.render(createElement(RoleProvider, null, createElement(ChatSidebar, {
++    sessions: [], selectedSessionId: 's1', onSelectSession: noop, activeTab: 'chats',
++    onSwitchTab: noop, searchQuery: '', onSearchQueryChange: noop, onComposeStatus: noop,
++    formatChatTime: () => '10:00',
++    chatsTab: { loading: false, chats: [chat], onSelectChat: noop },
++    channelsTab: { engineLoading: false, supported: false, query: {} as UseQueryResult<Channel[], Error>, channels: [], onSelectChannel: noop },
++    statusTab: { loading: false, error: false, groups: [], activeContactId: null, onSelectContact: noop },
++  })));
++}
++
++test('stored-only chat shows saved-history label and actual preview, without claiming unread state', () => {
++  const { container } = renderChat({ ...BASE_CHAT, storageOnly: true, unreadCount: 8, lastMessage: 'The actual saved reply' });
++  assert.ok(rtl.screen.getByText('Saved history'));
++  assert.ok(rtl.screen.getByText('The actual saved reply'));
++  assert.equal(container.querySelector('.chat-unread-badge'), null);
++  assert.match(rtl.screen.getByText('Saved history').getAttribute('title') || '', /not in the currently linked WhatsApp history/);
++});
++
++test('stored media without a text preview says saved message, not no messages', () => {
++  renderChat({ ...BASE_CHAT, storageOnly: true });
++  assert.ok(rtl.screen.getByText('Saved message'));
++});
++
++test('offline saved history explains that WhatsApp is unavailable and makes no unread claim', () => {
++  const { container } = renderChat({ ...BASE_CHAT, storageOnly: true, nativeUnavailable: true, unreadCount: 9 });
++  assert.match(rtl.screen.getByText('Saved history').getAttribute('title') || '', /WhatsApp is temporarily unavailable/);
++  assert.equal(container.querySelector('.chat-unread-badge'), null);
++});
++
++test('native chat keeps its real unread badge and does not gain a saved-history badge', () => {
++  const { container } = renderChat({ ...BASE_CHAT, unreadCount: 3, lastMessage: 'Live reply' });
++  assert.equal(rtl.screen.queryByText('Saved history'), null);
++  assert.equal(container.querySelector('.chat-unread-badge')?.textContent, '3');
++});
+diff --git a/dashboard/src/components/chats/ChatSidebar.tsx b/dashboard/src/components/chats/ChatSidebar.tsx
+index 7da251e..73b3b11 100644
+--- a/dashboard/src/components/chats/ChatSidebar.tsx
++++ b/dashboard/src/components/chats/ChatSidebar.tsx
+@@ -90,6 +90,16 @@ function ChatSidebar({
+             <span className="chat-item-name" title={chat.name || chat.id}>
+               {chat.name || chat.id.split('@')[0]}
+             </span>
++            {chat.storageOnly && (
++              <span
++                className="chat-kind-badge kind-saved"
++                title={chat.nativeUnavailable
++                  ? 'Saved messages only. WhatsApp is temporarily unavailable.'
++                  : 'Saved messages only. This chat is not in the currently linked WhatsApp history.'}
++              >
++                Saved history
++              </span>
++            )}
+             {chat.kind !== 'individual' && chat.kind !== 'unknown' && (
+               <span className={`chat-kind-badge kind-${chat.kind}`}>{t(`chats.kind.${chat.kind}`)}</span>
+             )}
+@@ -100,9 +110,9 @@ function ChatSidebar({
+           </div>
+           <div className="chat-item-bottom">
+             <span className="chat-item-snippet" title={formatLastMessageSnippet(chat)}>
+-              {formatLastMessageSnippet(chat) || <span className="no-message">{t('chats.noMessageYet')}</span>}
++              {formatLastMessageSnippet(chat) || <span className="no-message">{chat.storageOnly ? 'Saved message' : t('chats.noMessageYet')}</span>}
+             </span>
+-            {chat.unreadCount > 0 && (
++            {!chat.storageOnly && chat.unreadCount > 0 && (
+               <span
+                 className="chat-unread-badge"
+                 title={t('chats.unreadBadge', { count: chat.unreadCount })}
+diff --git a/dashboard/src/components/chats/ChatThread.tsx b/dashboard/src/components/chats/ChatThread.tsx
+index fa00b52..0ae835b 100644
+--- a/dashboard/src/components/chats/ChatThread.tsx
++++ b/dashboard/src/components/chats/ChatThread.tsx
+@@ -65,7 +65,8 @@ function ChatThread({
+   const { t } = useTranslation();
+   // Reply, react, delete and prompt taps all need an operator key, like the composer; a viewer
+   // would only reach a 403.
+-  const { canWrite } = useRole();
++  const { canWrite: roleCanWrite } = useRole();
++  const canWrite = roleCanWrite && !activeChat.nativeUnavailable;
+ 
+   // Media the message list did not inline. The route serves the bytes as an attachment
+   // (Content-Disposition), and the list only carries payloads up to
+diff --git a/dashboard/src/pages/Chats.test.ts b/dashboard/src/pages/Chats.test.ts
+index 9738d8a..7697d22 100644
+--- a/dashboard/src/pages/Chats.test.ts
++++ b/dashboard/src/pages/Chats.test.ts
+@@ -36,6 +36,7 @@ const SESSION: Session = {
+ // session's fixtures (see installFetchStub), so a test can switch sessions without a second data set.
+ const SESSION_2: Session = { ...SESSION, id: 'session-2', name: 'Second', phone: '15559876543' };
+ let twoSessions = false;
++let offlineSession = false;
+ 
+ const CHAT: Chat = {
+   id: '15550001111@c.us',
+@@ -254,13 +255,13 @@ function installFetchStub(): void {
+     fetchCalls.push({ method, path, body });
+ 
+     if (method === 'GET' && path === '/api/sessions') {
+-      return Promise.resolve(jsonResponse(twoSessions ? [SESSION, SESSION_2] : [SESSION]));
++      return Promise.resolve(jsonResponse(offlineSession ? [{ ...SESSION, status: 'disconnected' }] : twoSessions ? [SESSION, SESSION_2] : [SESSION]));
+     }
+     if (method === 'GET' && path === '/api/infra/engines/current') {
+       return Promise.resolve(jsonResponse({ engineType: 'baileys' }));
+     }
+     if (method === 'GET' && path === `/api/sessions/${SESSION.id}/chats`) {
+-      return Promise.resolve(jsonResponse([CHAT, CHAT_2]));
++      return Promise.resolve(jsonResponse(offlineSession ? [{ ...CHAT, storageOnly: true, nativeUnavailable: true, unreadCount: 0 }] : [CHAT, CHAT_2]));
+     }
+     if (method === 'GET' && path.startsWith(`/api/sessions/${SESSION.id}/contacts/profile-pictures`)) {
+       return Promise.resolve(jsonResponse({ pictures: {} }));
+@@ -300,7 +301,7 @@ function installFetchStub(): void {
+       return gate ? gate.then(bytes) : Promise.resolve(bytes());
+     }
+     if (method === 'GET' && /\/messages\/[^/]+\/history/.test(path)) {
+-      return Promise.resolve(jsonResponse([]));
++      return Promise.resolve(offlineSession ? jsonResponse({ message: 'Session is not started' }, 409) : jsonResponse([]));
+     }
+     if (method === 'GET' && path === `/api/sessions/${SESSION.id}/status`) {
+       return Promise.resolve(jsonResponse({ statuses: [] }));
+@@ -369,6 +370,7 @@ afterEach(() => {
+   olderPageGate = null;
+   sendGate = null;
+   olderPageFails = false;
++  offlineSession = false;
+ });
+ 
+ function renderChats(): { container: HTMLElement } {
+@@ -385,6 +387,21 @@ function renderChats(): { container: HTMLElement } {
+ 
+ // ── Smoke tests ──────────────────────────────────────────────────────────────
+ 
++test('disconnected session opens actual saved messages even when native history is unavailable', async () => {
++  const { screen, fireEvent, within } = rtl;
++  offlineSession = true;
++  resetFetchCalls();
++  const { container } = renderChats();
++  const chatRow = await screen.findByText('Alice');
++  assert.ok(screen.getByText('Saved history'));
++  fireEvent.click(chatRow);
++  const thread = container.querySelector('.room-messages') as HTMLElement;
++  await within(thread).findByText('hello from alice');
++  assert.ok(screen.getByRole('status'));
++  assert.equal(screen.queryByPlaceholderText('Type a message...'), null);
++  assert.equal(findFetchCall('POST', `/api/sessions/${SESSION.id}/chats/read`), undefined);
++});
++
+ test('Chats renders: session/chat list loads, a chat opens, and a message sends', async () => {
+   const { screen, fireEvent, within, waitFor } = rtl;
+   resetFetchCalls();
+diff --git a/dashboard/src/pages/Chats.tsx b/dashboard/src/pages/Chats.tsx
+index eae65fe..8426aee 100644
+--- a/dashboard/src/pages/Chats.tsx
++++ b/dashboard/src/pages/Chats.tsx
+@@ -273,16 +273,16 @@ export function Chats() {
+   const activePhoneText =
+     activePhoneDisplay ?? (resolvedPhoneQ.data ? formatPhoneForDisplay(resolvedPhoneQ.data) : null);
+ 
+-  // 1. Fetch available connected sessions on mount
++  // 1. Keep saved history accessible for disconnected sessions too; prefer a live session.
+   useEffect(() => {
+     const loadSessions = async () => {
+       try {
+         setLoadingSessions(true);
+         const list = await sessionApi.list();
+-        const readySessions = list.filter(s => s.status === 'ready');
+-        setSessions(readySessions);
+-        if (readySessions.length > 0) {
+-          setSelectedSessionId(readySessions[0].id);
++        const availableSessions = [...list].sort((a, b) => Number(b.status === 'ready') - Number(a.status === 'ready'));
++        setSessions(availableSessions);
++        if (availableSessions.length > 0) {
++          setSelectedSessionId(availableSessions[0].id);
+         }
+       } catch (err) {
+         showErrorToast(t('chats.errors.loadSessions'), err instanceof Error ? err.message : undefined);
+@@ -676,7 +676,7 @@ export function Chats() {
+   // (not the whole object) so a sidebar reshuffle that mutates the activeChat instance doesn't re-fire
+   // the mark-as-read RPC for the same chat.
+   useEffect(() => {
+-    if (!activeChat) return;
++    if (!activeChat || activeChat.nativeUnavailable) return;
+     markChatRead(activeChat.id);
+     // A read-only key sends no mark-as-read, so the chat stays unread on the gateway; clearing the
+     // badge here would only have the next chat-list load bring it back.
+@@ -986,7 +986,9 @@ export function Chats() {
+ 
+                 {/* Composer: attachment preview, emoji panel, reply banner, input bar —
+                     components/chats/ChatComposer. */}
+-                <ChatComposer
++                {activeChat.nativeUnavailable ? (
++                  <div className="room-input-footer" role="status">Saved history — WhatsApp is temporarily unavailable. Reconnect WhatsApp to send messages.</div>
++                ) : <ChatComposer
+                   selectedSessionId={selectedSessionId}
+                   activeChat={activeChat}
+                   replyingTo={replyingTo}
+@@ -999,7 +1001,7 @@ export function Chats() {
+                   setAttachment={setAttachment}
+                   previewUrl={previewUrl}
+                   setPreviewUrl={setPreviewUrl}
+-                />
++                />}
+               </div>
+             ) : activeChannel ? (
+               // Read-only channel pane: no send footer, reactions, delete, reply, or markChatRead —
+diff --git a/dashboard/src/services/api.ts b/dashboard/src/services/api.ts
+index c314117..4dbe91d 100644
+--- a/dashboard/src/services/api.ts
++++ b/dashboard/src/services/api.ts
+@@ -231,6 +231,10 @@ export interface Chat {
+   unreadCount: number;
+   timestamp: number;
+   lastMessage?: string;
++  /** Saved messages exist, but this chat is absent from the current native chat list. */
++  storageOnly?: boolean;
++  /** The linked engine could not be read; these are saved messages, not a live chat snapshot. */
++  nativeUnavailable?: boolean;
+   archived: boolean;
+   pinned: boolean;
+   muted: boolean;
+diff --git a/src/common/errors/engine-not-ready.error.spec.ts b/src/common/errors/engine-not-ready.error.spec.ts
+new file mode 100644
+index 0000000..f2beb5a
+--- /dev/null
++++ b/src/common/errors/engine-not-ready.error.spec.ts
+@@ -0,0 +1,13 @@
++import { EngineNotReadyError } from './engine-not-ready.error';
++
++describe('EngineNotReadyError', () => {
++  it.each([
++    'Session is not connected. The WhatsApp client is not ready.',
++    'WhatsApp Web is reloading its page and the session is re-injecting. Retry in a few seconds.',
++  ])('retains Conflict semantics and a machine-readable readiness code: %s', message => {
++    const error = new EngineNotReadyError(message);
++    expect(error.getStatus()).toBe(409);
++    expect(error.message).toBe(message);
++    expect(error.getResponse()).toEqual({ statusCode: 409, error: 'Conflict', message, code: 'ENGINE_NOT_READY' });
++  });
++});
+diff --git a/src/common/errors/engine-not-ready.error.ts b/src/common/errors/engine-not-ready.error.ts
+index edf259d..e786693 100644
+--- a/src/common/errors/engine-not-ready.error.ts
++++ b/src/common/errors/engine-not-ready.error.ts
+@@ -12,6 +12,6 @@ import { ConflictException } from '@nestjs/common';
+  */
+ export class EngineNotReadyError extends ConflictException {
+   constructor(message = 'Session is not connected. The WhatsApp client is not ready.') {
+-    super(message);
++    super({ statusCode: 409, error: 'Conflict', message, code: 'ENGINE_NOT_READY' });
+   }
+ }
+diff --git a/src/common/media/public-send-media-cache.spec.ts b/src/common/media/public-send-media-cache.spec.ts
+new file mode 100644
+index 0000000..d5a56e5
+--- /dev/null
++++ b/src/common/media/public-send-media-cache.spec.ts
+@@ -0,0 +1,76 @@
++import { PublicSendMediaCache } from './public-send-media-cache';
++
++const A = 'https://public.example/video.mp4';
++const B = 'https://public.example/reviews.mp4';
++const C = 'https://public.example/image.png';
++const media = (text = '1234') => ({ data: Buffer.from(text), mimetype: 'video/mp4' });
++const env = (urls: string[]) => ({ MEDIA_SEND_CACHE_URLS: JSON.stringify(urls) });
++
++describe('PublicSendMediaCache', () => {
++  it('is disabled by default and uses exact URLs only', async () => {
++    const load = jest.fn().mockResolvedValue(media());
++    const cache = new PublicSendMediaCache(load, () => ({}));
++    await cache.get(A, undefined); await cache.get(A, undefined);
++    expect(load).toHaveBeenCalledTimes(2);
++    const selected = new PublicSendMediaCache(load, () => env([A]));
++    await selected.get(A + '?version=2', undefined); await selected.get(A + '?version=2', undefined);
++    expect(load).toHaveBeenCalledTimes(4);
++  });
++
++  it('reuses a parallel miss once and gives each caller independent bytes and metadata', async () => {
++    let resolve!: (value: ReturnType<typeof media>) => void;
++    const load = jest.fn(() => new Promise<ReturnType<typeof media>>(done => { resolve = done; }));
++    const cache = new PublicSendMediaCache(load, () => env([A]));
++    const first = cache.get(A, undefined), second = cache.get(A, undefined);
++    expect(load).toHaveBeenCalledTimes(1);
++    resolve(media()); const [a,b] = await Promise.all([first, second]);
++    a.data[0] = 0; a.mimetype = 'changed';
++    expect(b.data.toString()).toBe('1234');
++    const again = await cache.get(A, undefined);
++    expect(again.data.toString()).toBe('1234'); expect(again.mimetype).toBe('video/mp4');
++    expect(load).toHaveBeenCalledTimes(1);
++  });
++
++  it('expires after TTL and evicts the least recently used entry at the byte bound', async () => {
++    let now = 0;
++    const load = jest.fn().mockResolvedValue(media());
++    const cache = new PublicSendMediaCache(load, () => env([A,B,C]), () => now, 8, 100);
++    await cache.get(A, undefined); await cache.get(B, undefined); await cache.get(A, undefined);
++    await cache.get(C, undefined); expect(cache.stats().bytes).toBe(8);
++    await cache.get(B, undefined); expect(load).toHaveBeenCalledTimes(4);
++    now = 101; await cache.get(B, undefined); expect(load).toHaveBeenCalledTimes(5);
++    expect(cache.stats()).toMatchObject({bytes:4,entries:1});
++  });
++
++  it('never caches failures or items larger than the byte bound', async () => {
++    const load = jest.fn().mockRejectedValueOnce(Error('Fetch failed')).mockResolvedValue(media('123456'));
++    const cache = new PublicSendMediaCache(load, () => env([A]), Date.now, 4);
++    await expect(cache.get(A, undefined)).rejects.toThrow('Fetch failed');
++    await cache.get(A, undefined); await cache.get(A, undefined);
++    expect(load).toHaveBeenCalledTimes(3); expect(cache.stats().bytes).toBe(0);
++  });
++
++  it('does not mix proxy sessions with direct cached content', async () => {
++    const load = jest.fn().mockResolvedValue(media());
++    const cache = new PublicSendMediaCache(load, () => env([A]));
++    await cache.get(A, undefined); await cache.get(A, 'http://proxy:8080'); await cache.get(A, 'http://proxy:8080');
++    expect(load).toHaveBeenCalledTimes(3); expect(load).toHaveBeenLastCalledWith(A, 'http://proxy:8080');
++  });
++
++  it('invalidates cache when allowlist or download cap changes', async () => {
++    let configuration: NodeJS.ProcessEnv = env([A]);
++    const load = jest.fn().mockResolvedValue(media());
++    const cache = new PublicSendMediaCache(load, () => configuration);
++    await cache.get(A, undefined); configuration = {...configuration,MEDIA_DOWNLOAD_MAX_BYTES:'3'};
++    await cache.get(A, undefined); expect(load).toHaveBeenCalledTimes(2);
++    configuration = env([]); await cache.get(A, undefined); expect(load).toHaveBeenCalledTimes(3);
++    expect(cache.stats().entries).toBe(0);
++  });
++
++  it.each(['not-json', JSON.stringify(['http://public.example/video']), JSON.stringify(['https://127.0.0.1/file']), JSON.stringify(['https://user:password@public.example/file'])])('fails closed for invalid/private selection %s', async raw => {
++    const load = jest.fn().mockResolvedValue(media());
++    const cache = new PublicSendMediaCache(load, () => ({MEDIA_SEND_CACHE_URLS:raw}));
++    await cache.get(A, undefined); await cache.get(A, undefined);
++    expect(load).toHaveBeenCalledTimes(2); expect(cache.stats().enabledUrls).toBe(0);
++  });
++});
+diff --git a/src/common/media/public-send-media-cache.ts b/src/common/media/public-send-media-cache.ts
+new file mode 100644
+index 0000000..a205963
+--- /dev/null
++++ b/src/common/media/public-send-media-cache.ts
+@@ -0,0 +1,104 @@
++import { isIP } from 'node:net';
++import { isBlockedAddress } from '../security/ssrf-guard';
++import { loadRemoteMediaBuffer } from './load-remote-media';
++
++const MAX_BYTES = 64 * 1024 * 1024;
++const TTL_MS = 10 * 60 * 1000;
++const MAX_URLS = 32;
++type MediaBytes = { data: Buffer; mimetype: string };
++type Loader = (url: string, proxy: string | undefined) => Promise<MediaBytes>;
++
++/** Exact, operator-selected public URLs only. Never accepts credentials or private hosts. */
++function parseAllowlist(raw: string, ssrfAllowedHosts: string): Set<string> {
++  if (!raw || raw.length > 16384) return new Set();
++  const privateOverrides = new Set(ssrfAllowedHosts.split(',').map(value => value.trim().replace(/^\[|\]$/g, '').toLowerCase()));
++  try {
++    const values: unknown = JSON.parse(raw);
++    if (!Array.isArray(values) || values.length > MAX_URLS) return new Set();
++    const result = new Set<string>();
++    for (const value of values) {
++      if (typeof value !== 'string' || value.length > 2048) return new Set();
++      const url = new URL(value), host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
++      if (url.protocol !== 'https:' || url.username || url.password || url.hash || privateOverrides.has(host)
++        || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')
++        || (isIP(host) ? isBlockedAddress(host) : !host.includes('.'))) return new Set();
++      result.add(value);
++    }
++    return result;
++  } catch { return new Set(); }
++}
++
++/** Bounded optional cache. Misses always use the original pinned, capped SSRF-safe loader. */
++export class PublicSendMediaCache {
++  private entries = new Map<string, MediaBytes & { expiresAt: number }>();
++  private pending = new Map<string, Promise<MediaBytes>>();
++  private bytes = 0;
++  private fingerprint = '';
++  private generation = 0;
++  private allowed = new Set<string>();
++
++  constructor(
++    private readonly load: Loader = (url, proxy) => loadRemoteMediaBuffer(url, proxy),
++    private readonly environment: () => NodeJS.ProcessEnv = () => process.env,
++    private readonly now: () => number = Date.now,
++    private readonly maxBytes = MAX_BYTES,
++    private readonly ttlMs = TTL_MS,
++  ) {
++    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES || !Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > TTL_MS) throw Error('Invalid public media cache bounds');
++  }
++
++  private configure(): void {
++    const env = this.environment();
++    // A changed allowlist or fetch-policy cap invalidates previous content immediately.
++    const fingerprint = JSON.stringify([env.MEDIA_SEND_CACHE_URLS || '', env.SSRF_ALLOWED_HOSTS || '', env.MEDIA_DOWNLOAD_MAX_BYTES || '']);
++    if (fingerprint === this.fingerprint) return;
++    this.fingerprint = fingerprint; this.generation++;
++    this.allowed = parseAllowlist(env.MEDIA_SEND_CACHE_URLS || '', env.SSRF_ALLOWED_HOSTS || '');
++    this.entries.clear(); this.pending.clear(); this.bytes = 0;
++  }
++
++  private expire(): void {
++    for (const [url, entry] of this.entries) if (entry.expiresAt <= this.now()) { this.entries.delete(url); this.bytes -= entry.data.byteLength; }
++  }
++
++  async get(url: string, sessionProxyUrl: string | undefined): Promise<MediaBytes> {
++    this.configure(); this.expire();
++    // Even a public allowlisted asset must follow a session's configured egress route.
++    if (sessionProxyUrl !== undefined || !this.allowed.has(url)) return this.load(url, sessionProxyUrl);
++    const cached = this.entries.get(url);
++    if (cached) {
++      this.entries.delete(url); this.entries.set(url, cached);
++      return { data: Buffer.from(cached.data), mimetype: cached.mimetype };
++    }
++    let flight = this.pending.get(url);
++    if (!flight) {
++      const generation = this.generation;
++      flight = this.load(url, undefined).then(result => {
++        this.configure(); this.expire();
++        if (generation === this.generation && this.allowed.has(url) && result.data.byteLength <= this.maxBytes) {
++          while (this.entries.size && this.bytes + result.data.byteLength > this.maxBytes) {
++            const oldest = this.entries.keys().next().value!;
++            const evicted = this.entries.get(oldest)!;
++            this.entries.delete(oldest); this.bytes -= evicted.data.byteLength;
++          }
++          this.entries.set(url, { data: result.data, mimetype: result.mimetype, expiresAt: this.now() + this.ttlMs });
++          this.bytes += result.data.byteLength;
++        }
++        return result;
++      });
++      this.pending.set(url, flight);
++      const currentFlight = flight;
++      // A rejected download is never cached; a later request gets the original error/retry path.
++      void flight.finally(() => { if (this.pending.get(url) === currentFlight) this.pending.delete(url); }).catch(() => {});
++    }
++    const value = await flight;
++    return { data: Buffer.from(value.data), mimetype: value.mimetype };
++  }
++
++  stats(): { bytes: number; entries: number; pending: number; enabledUrls: number } {
++    this.configure(); this.expire();
++    return { bytes: this.bytes, entries: this.entries.size, pending: this.pending.size, enabledUrls: this.allowed.size };
++  }
++}
++
++export const publicSendMediaCache = new PublicSendMediaCache();
+diff --git a/src/config/env.validation.ts b/src/config/env.validation.ts
+index 3c47583..fdc0bae 100644
+--- a/src/config/env.validation.ts
++++ b/src/config/env.validation.ts
+@@ -430,6 +430,9 @@ export function validateEnv(config: EnvConfig): EnvConfig {
+     // `=== 'true'`; already refused outright in production, but a typo in development silently
+     // withholds the dev key the operator asked for.
+     'ALLOW_DEV_API_KEY',
++    // Owner deployment: an explicit false preserves imported WhatsApp credentials
++    // when startup stalls instead of deleting them for automatic re-pairing.
++    'ALLOW_AUTH_RESET',
+     // `!== 'false'`: a typo keeps SSRF protection on (safe) or contact enrichment off — either way
+     // the webhook payload an integrator receives is not the one the operator configured.
+     'WEBHOOK_SSRF_PROTECT',
+diff --git a/src/engine/adapters/message-mapper.spec.ts b/src/engine/adapters/message-mapper.spec.ts
+index 9d6ffb4..a00045b 100644
+--- a/src/engine/adapters/message-mapper.spec.ts
++++ b/src/engine/adapters/message-mapper.spec.ts
+@@ -168,6 +168,20 @@ describe('buildIncomingMessageBase', () => {
+     expect(r.product).toBeUndefined();
+     expect(r.order).toBeUndefined();
+   });
++
++  it('preserves a native payment message and direction without asserting payment verification', () => {
++    const incoming = buildIncomingMessageBase({ ...base, type: 'payment', body: '' });
++    expect(incoming).toMatchObject({ id: 'MSG1', chatId: '123@c.us', type: 'payment', fromMe: false });
++    expect(incoming).not.toHaveProperty('payment');
++    expect(incoming).not.toHaveProperty('verified');
++    const outgoing = buildIncomingMessageBase({
++      ...base, type: 'payment', body: '', fromMe: true, from: 'me@c.us', to: 'peer@c.us',
++    });
++    expect(outgoing).toMatchObject({ chatId: 'peer@c.us', type: 'payment', fromMe: true });
++    // Text claims and catalog orders cannot be promoted into payment events.
++    expect(buildIncomingMessageBase({ ...base, body: 'Payment sent successfully' }).type).toBe('text');
++    expect(buildIncomingMessageBase({ ...base, type: 'order', body: 'Paid', orderId: '1' }).type).toBe('order');
++  });
+ });
+ 
+ describe('mapWwebjsMessageType (engine type-token -> neutral MessageType boundary, #265)', () => {
+@@ -187,6 +201,7 @@ describe('mapWwebjsMessageType (engine type-token -> neutral MessageType boundar
+     ['poll_creation', 'poll'],
+     ['order', 'order'],
+     ['product', 'product'],
++    ['payment', 'payment'],
+     ['e2e_notification', 'unknown'], // any unmapped wwebjs type
+   ])('maps wwebjs type %s -> %s', (raw, expected) => {
+     expect(mapWwebjsMessageType(raw)).toBe(expected);
+diff --git a/src/engine/adapters/message-mapper.ts b/src/engine/adapters/message-mapper.ts
+index 101a6bf..89fabf8 100644
+--- a/src/engine/adapters/message-mapper.ts
++++ b/src/engine/adapters/message-mapper.ts
+@@ -39,6 +39,9 @@ export function mapWwebjsMessageType(raw: string): MessageType {
+       return 'order';
+     case 'product':
+       return 'product';
++    case 'payment':
++      // A native WhatsApp payment message is a message kind, not proof of settlement.
++      return 'payment';
+     default:
+       return 'unknown';
+   }
+diff --git a/src/engine/adapters/wwebjs-messaging.ts b/src/engine/adapters/wwebjs-messaging.ts
+index e0d75ea..00eaf50 100644
+--- a/src/engine/adapters/wwebjs-messaging.ts
++++ b/src/engine/adapters/wwebjs-messaging.ts
+@@ -16,7 +16,7 @@ import { MessageWithReactions, SerializedWid } from '../types/whatsapp-web-js.ty
+ import { BadRequestException } from '@nestjs/common';
+ import { MessageNotFoundError } from '../../common/errors/message-not-found.error';
+ import { EngineRefusedError } from '../../common/errors/engine-refused.error';
+-import { loadRemoteMediaBuffer } from '../../common/media/load-remote-media';
++import { publicSendMediaCache } from '../../common/media/public-send-media-cache';
+ import { chatKind, userPart } from '../identity/wa-id';
+ import { chatHistoryMediaBudgetBytes, coerceDeclaredSize, ingestMediaBudgetBytes } from './inbound-media-cap';
+ import { buildIncomingMessageBase, mapContactFields } from './message-mapper';
+@@ -90,7 +90,7 @@ export async function loadRemoteMedia(url: string, sessionProxyUrl: string | und
+   // MessageMedia.fromUrl, whose bundled node-fetch performs its own unpinned DNS re-resolution.
+   // `sessionProxyUrl` routes the fetch through this session's egress proxy (#1626); the browser's
+   // own requests already ride Chromium's --proxy-server, this one is made by the gateway itself.
+-  const { data, mimetype } = await loadRemoteMediaBuffer(url, sessionProxyUrl);
++  const { data, mimetype } = await publicSendMediaCache.get(url, sessionProxyUrl);
+   const filename = new URL(url).pathname.split('/').pop() || undefined;
+   return new MessageMedia(mimetype || 'application/octet-stream', data.toString('base64'), filename);
+ }
+diff --git a/src/engine/adapters/wwebjs-send-cache.spec.ts b/src/engine/adapters/wwebjs-send-cache.spec.ts
+new file mode 100644
+index 0000000..42bf926
+--- /dev/null
++++ b/src/engine/adapters/wwebjs-send-cache.spec.ts
+@@ -0,0 +1,21 @@
++import { loadRemoteMediaBuffer } from '../../common/media/load-remote-media';
++import { loadRemoteMedia, toMessageMedia } from './wwebjs-messaging';
++
++jest.mock('../../common/media/load-remote-media', () => ({ loadRemoteMediaBuffer: jest.fn() }));
++
++describe('wwebjs public send-media cache wrappers', () => {
++  afterEach(() => { delete process.env.MEDIA_SEND_CACHE_URLS; jest.resetAllMocks(); });
++  it('creates a fresh MessageMedia so a previous filename/mimetype override cannot leak', async () => {
++    const url = 'https://public.example/cache-wrapper-video.mp4';
++    process.env.MEDIA_SEND_CACHE_URLS = JSON.stringify([url]);
++    (loadRemoteMediaBuffer as jest.Mock).mockResolvedValue({data:Buffer.from('video'),mimetype:'video/mp4'});
++    const first = await toMessageMedia({data:url,mimetype:'application/custom',filename:'first-only.bin'},undefined);
++    const second = await loadRemoteMedia(url,undefined);
++    expect(loadRemoteMediaBuffer).toHaveBeenCalledTimes(1);
++    expect(first).not.toBe(second);
++    expect(first.filename).toBe('first-only.bin');
++    expect(second.filename).toBe('cache-wrapper-video.mp4');
++    expect(second.mimetype).toBe('video/mp4');
++    expect(second.data).toBe(Buffer.from('video').toString('base64'));
++  });
++});
+diff --git a/src/engine/adapters/wwebjs-stuck-auth.spec.ts b/src/engine/adapters/wwebjs-stuck-auth.spec.ts
+new file mode 100644
+index 0000000..3e3f7c7
+--- /dev/null
++++ b/src/engine/adapters/wwebjs-stuck-auth.spec.ts
+@@ -0,0 +1,53 @@
++import * as fs from 'fs';
++import { EngineStatus } from '../interfaces/whatsapp-engine.interface';
++import { WwebjsStuckAuth, type WwebjsStuckAuthHost } from './wwebjs-stuck-auth';
++
++describe('saved-login preservation during stuck authentication', () => {
++  const previous = process.env.ALLOW_AUTH_RESET;
++
++  afterEach(() => {
++    if (previous === undefined) delete process.env.ALLOW_AUTH_RESET;
++    else process.env.ALLOW_AUTH_RESET = previous;
++    jest.restoreAllMocks();
++  });
++
++  function fixture(claim = jest.fn(() => true)) {
++    const callbacks = { claimStuckAuthRecovery: claim, onError: jest.fn(), onDisconnected: jest.fn() };
++    const client = { destroy: jest.fn().mockResolvedValue(undefined) };
++    const host = {
++      logger: { warn: jest.fn() },
++      config: { sessionId: 'saved-login', sessionDataPath: './test-profiles' },
++      getClient: () => client,
++      setClient: jest.fn(),
++      setStatus: jest.fn(),
++      getCallbacks: () => callbacks,
++    } as unknown as WwebjsStuckAuthHost;
++    const remove = jest.spyOn(fs.promises, 'rm').mockResolvedValue(undefined);
++    return { recovery: new WwebjsStuckAuth(host), host, callbacks, client, remove };
++  }
++
++  it('does not delete credentials, consume recovery budget or trigger a re-pair when disabled', async () => {
++    process.env.ALLOW_AUTH_RESET = 'false';
++    const { recovery, host, callbacks, client, remove } = fixture();
++    await recovery.recoverFromStuckAuth();
++    await recovery.recoverFromStuckAuth();
++    expect(remove).not.toHaveBeenCalled();
++    expect(callbacks.claimStuckAuthRecovery).not.toHaveBeenCalled();
++    expect(callbacks.onDisconnected).not.toHaveBeenCalled();
++    expect(client.destroy).not.toHaveBeenCalled();
++    expect(host.setClient).not.toHaveBeenCalled();
++    expect(host.setStatus).toHaveBeenLastCalledWith(EngineStatus.FAILED);
++    expect(callbacks.onError).toHaveBeenCalledWith(expect.stringContaining('saved login was preserved'));
++  });
++
++  it('retains the existing recovery path when an operator explicitly enables it', async () => {
++    process.env.ALLOW_AUTH_RESET = 'true';
++    const { recovery, host, callbacks, client, remove } = fixture();
++    await recovery.recoverFromStuckAuth();
++    expect(remove).toHaveBeenCalledTimes(1);
++    expect(callbacks.claimStuckAuthRecovery).toHaveBeenCalledTimes(1);
++    expect(callbacks.onDisconnected).toHaveBeenCalledTimes(1);
++    expect(client.destroy).toHaveBeenCalledTimes(1);
++    expect(host.setStatus).toHaveBeenLastCalledWith(EngineStatus.DISCONNECTED);
++  });
++});
+diff --git a/src/engine/adapters/wwebjs-stuck-auth.ts b/src/engine/adapters/wwebjs-stuck-auth.ts
+index 9d1a22a..59e3c6e 100644
+--- a/src/engine/adapters/wwebjs-stuck-auth.ts
++++ b/src/engine/adapters/wwebjs-stuck-auth.ts
+@@ -41,6 +41,16 @@ export class WwebjsStuckAuth {
+    * back to its own instance-local boolean so standalone behavior stays one-shot.
+    */
+   async recoverFromStuckAuth(): Promise<void> {
++    // An imported, already-linked profile must survive readiness failures. The
++    // operator can still choose logout explicitly; automatic recovery must not
++    // silently replace the saved login with a QR prompt when this guard is set.
++    if (process.env.ALLOW_AUTH_RESET === 'false') {
++      this.host.setStatus(EngineStatus.FAILED);
++      this.host.getCallbacks().onError?.(
++        'WhatsApp Web did not reach readiness. The saved login was preserved; restart the session after checking the connection.',
++      );
++      return;
++    }
+     // The one-shot budget is decided SYNCHRONOUSLY before any destructive I/O. The session-owned
+     // callback is authoritative when present; the instance-local boolean is the standalone fallback.
+     // Fail-closed: a callback that throws (or already-spent budget) makes this terminal WITHOUT
+diff --git a/src/engine/interfaces/whatsapp-engine.interface.ts b/src/engine/interfaces/whatsapp-engine.interface.ts
+index 51a6fe8..d0f7f5b 100644
+--- a/src/engine/interfaces/whatsapp-engine.interface.ts
++++ b/src/engine/interfaces/whatsapp-engine.interface.ts
+@@ -88,6 +88,9 @@ export type MessageType =
+   // card shared into a chat. Both carry the ids the commerce APIs need — see `IncomingMessage`.
+   | 'order'
+   | 'product'
++  // Native WhatsApp payment message. This can represent a request or pending/failed payment;
++  // observing this kind must never be treated as bank-confirmed payment verification.
++  | 'payment'
+   // A message WhatsApp deliberately withheld from linked/companion devices (e.g. high-security
+   // business OTPs): the payload is absent by design, not unparseable. See `mapBaileysMessageType`.
+   | 'masked'
+diff --git a/src/main.ts b/src/main.ts
+index ecb1c62..507b237 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -201,7 +201,10 @@ async function bootstrap() {
+   );
+ 
+   const port = process.env.PORT || 2785;
+-  await app.listen(port);
++  // This owner-hosted deployment is reached through an SSH tunnel. Keep the
++  // administration API private unless the operator explicitly selects another interface.
++  const bindHost = process.env.BIND_HOST?.trim() || '127.0.0.1';
++  await app.listen(port, bindHost);
+ 
+   // Advertise the configured public URL, matching the AuthService banner (auth.service.ts). A bare
+   // `localhost` literal here contradicted that banner and read as "the UI is pinned to localhost",
+diff --git a/src/modules/message/dto/message-responses.dto.ts b/src/modules/message/dto/message-responses.dto.ts
+index 6ff557b..a5db555 100644
+--- a/src/modules/message/dto/message-responses.dto.ts
++++ b/src/modules/message/dto/message-responses.dto.ts
+@@ -24,6 +24,7 @@ const MESSAGE_TYPES: MessageType[] = [
+   'revoked',
+   'order',
+   'product',
++  'payment',
+   'masked',
+   'unknown',
+ ];
+diff --git a/src/modules/message/message-send.service.spec.ts b/src/modules/message/message-send.service.spec.ts
+index f076433..7d92a12 100644
+--- a/src/modules/message/message-send.service.spec.ts
++++ b/src/modules/message/message-send.service.spec.ts
+@@ -14,6 +14,7 @@ import { TemplateService } from '../template/template.service';
+ import { Template } from '../template/entities/template.entity';
+ import { SsrfBlockedError } from '../../common/security/ssrf-guard';
+ import { SendPacingService } from './send-pacing.service';
++import { EngineNotReadyError } from '../../common/errors/engine-not-ready.error';
+ 
+ /** Pacing is off by default in these tests; the governor's own spec covers its behaviour. */
+ const inertPacing = (): SendPacingService =>
+@@ -709,6 +710,20 @@ describe('MessageSendService', () => {
+       expect(media?.data).toBeUndefined();
+       expect(media?.mimetype).toBe('image/png');
+       expect(media?.filename).toBe('pic.png');
++      expect(saved.metadata.sendFailure).toBeUndefined();
++    });
++
++    it('persists typed readiness refusal evidence without retaining media bytes or verifying delivery', async () => {
++      const error = new EngineNotReadyError();
++      mockEngine.sendImageMessage.mockRejectedValueOnce(error);
++      await expect(service.sendImage('sess-1', {
++        chatId: '628123456789@c.us', base64: 'QUJD', mimetype: 'image/png', filename: 'pic.png',
++      })).rejects.toBe(error);
++      const saved = ((repository.save as jest.Mock).mock.calls as [Message][]).at(-1)![0];
++      expect(saved.status).toBe(MessageStatus.FAILED);
++      expect(saved.waMessageId).toBeUndefined();
++      expect(saved.metadata.sendFailure).toEqual({ code: 'ENGINE_NOT_READY', status: 409, preSend: true });
++      expect(saved.metadata.media).toEqual({ mimetype: 'image/png', filename: 'pic.png' });
+     });
+   });
+ 
+diff --git a/src/modules/message/message-send.service.ts b/src/modules/message/message-send.service.ts
+index 31b09a8..4f053b3 100644
+--- a/src/modules/message/message-send.service.ts
++++ b/src/modules/message/message-send.service.ts
+@@ -21,6 +21,7 @@ import { ChatMediaArchiveService } from '../chat-media/chat-media-archive.servic
+ import { LidMappingStoreService } from '../../engine/identity/lid-mapping-store.service';
+ import { resolveJidCandidates } from '../../engine/identity/jid-candidates';
+ import { isMediaUrl, MEDIA_URL_MESSAGE } from '../../common/media/media-url';
++import { EngineNotReadyError } from '../../common/errors/engine-not-ready.error';
+ 
+ /** Default cap on a rendered template's final text; overridable via TEMPLATE_RENDER_MAX_CHARS. */
+ export const DEFAULT_TEMPLATE_RENDER_MAX_CHARS = 64 * 1024;
+@@ -203,6 +204,15 @@ export class MessageSendService {
+         error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+       });
+     }
++    // The readiness guard refuses before handing a send to WhatsApp. Retain that narrow,
++    // typed evidence so an operator can distinguish a safe deferral from an uncertain send.
++    // Generic exceptions (including timeouts) deliberately carry no pre-send assertion.
++    if (error instanceof EngineNotReadyError) {
++      message.metadata = {
++        ...message.metadata,
++        sendFailure: { code: 'ENGINE_NOT_READY', status: 409, preSend: true },
++      };
++    }
+     await this.saveFailedMessage(message);
+     // Sanitize the hook payload: an SSRF block's raw .message names the resolved internal address
+     // (a recon/DNS-rebind oracle) — the client-facing throw below already maps it to a generic
+diff --git a/src/modules/session/session.service.spec.ts b/src/modules/session/session.service.spec.ts
+index 1a96a2c..5f829e8 100644
+--- a/src/modules/session/session.service.spec.ts
++++ b/src/modules/session/session.service.spec.ts
+@@ -144,6 +144,13 @@ describe('SessionService', () => {
+     };
+ 
+     dataSource = {
++      getRepository: jest.fn().mockReturnValue({
++        createQueryBuilder: jest.fn().mockImplementation(() => {
++          const query = { select: jest.fn(), addSelect: jest.fn(), where: jest.fn(), andWhere: jest.fn(), groupBy: jest.fn(), getRawMany: jest.fn().mockResolvedValue([]) };
++          for (const name of ['select', 'addSelect', 'where', 'andWhere', 'groupBy'] as const) query[name].mockReturnValue(query);
++          return query;
++        }),
++      }),
+       transaction: jest.fn().mockImplementation(async (cb: (manager: unknown) => Promise<unknown>) => {
+         const manager = {
+           save: jest.fn().mockImplementation((entity: unknown) => Promise.resolve(entity)),
+@@ -6291,6 +6298,39 @@ describe('SessionService', () => {
+   // ── getChats ──────────────────────────────────────────────────────
+ 
+   describe('getChats', () => {
++    function savedChatQuery() {
++      const query = { select: jest.fn(), addSelect: jest.fn(), where: jest.fn(), andWhere: jest.fn(), groupBy: jest.fn(), getRawMany: jest.fn().mockResolvedValue([
++        { id: '919999900002@c.us', name: 'Saved customer', timestamp: '1700000060', lastMessage: 'Actual saved message' },
++      ]) };
++      for (const name of ['select', 'addSelect', 'where', 'andWhere', 'groupBy'] as const) query[name].mockReturnValue(query);
++      (dataSource.getRepository as jest.Mock).mockReturnValue({ createQueryBuilder: jest.fn().mockReturnValue(query) });
++      return query;
++    }
++
++    it('includes stored-only private chats while keeping native metadata and PN/LID identities honest', async () => {
++      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession());
++      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
++      await service.start('sess-uuid-1');
++      const native = { id: '919999900001@c.us', name: 'Live name', isGroup: false, unreadCount: 2, timestamp: 1700000050 };
++      mockEngine.getChats.mockResolvedValue([native]);
++      const query = { select: jest.fn(), addSelect: jest.fn(), where: jest.fn(), andWhere: jest.fn(), groupBy: jest.fn(), getRawMany: jest.fn().mockResolvedValue([
++        { id: '919999900001@s.whatsapp.net', name: 'Stale archived name', timestamp: '1700001000' },
++        { id: '919999900002@c.us', name: 'Saved customer', timestamp: '1700000060', lastMessage: 'Actual saved message' },
++        { id: '987654321000@lid', name: null, timestamp: 1700000040 },
++        { id: '120363000000@g.us', name: 'Group must not be manufactured', timestamp: 1700000030 },
++      ]) };
++      for (const name of ['select', 'addSelect', 'where', 'andWhere', 'groupBy'] as const) query[name].mockReturnValue(query);
++      (dataSource.getRepository as jest.Mock).mockReturnValue({ createQueryBuilder: jest.fn().mockReturnValue(query) });
++      const result = await service.getChats('sess-uuid-1');
++      expect(result).toHaveLength(3);
++      expect(result[0]).toMatchObject({ id: '919999900002@c.us', name: 'Saved customer', timestamp: 1700000060, lastMessage: 'Actual saved message', storageOnly: true, unreadCount: 0 });
++      expect(result[1]).toBe(native);
++      expect(result[2]).toMatchObject({ id: '987654321000@lid', name: 'Saved conversation', storageOnly: true });
++      expect(query.where).toHaveBeenCalledWith('m.sessionId = :sessionId', { sessionId: 'sess-uuid-1' });
++      expect(query.andWhere).toHaveBeenCalledWith('m.waMessageId IS NOT NULL');
++      expect(query.andWhere).toHaveBeenCalledWith('m.type <> :maskedType', { maskedType: 'masked' });
++    });
++
+     it('should delegate to engine.getChats for a started session', async () => {
+       const session = createMockSession();
+       (repository.findOne as jest.Mock).mockResolvedValue(session);
+@@ -6348,11 +6388,62 @@ describe('SessionService', () => {
+       expect(result[0].timestamp).toBe(49); // most-recent first
+     });
+ 
+-    it('should throw BadRequestException when session is not started', async () => {
++    it('keeps verified saved messages readable when the session is not started', async () => {
+       const session = createMockSession();
+       (repository.findOne as jest.Mock).mockResolvedValue(session);
++      const query = savedChatQuery();
++
++      await expect(service.getChats('sess-uuid-1')).resolves.toEqual([
++        expect.objectContaining({ id: '919999900002@c.us', storageOnly: true, nativeUnavailable: true, unreadCount: 0, lastMessage: 'Actual saved message' }),
++      ]);
++      expect(mockEngine.getChats).not.toHaveBeenCalled();
++      expect(query.where).toHaveBeenCalledWith('m.sessionId = :sessionId', { sessionId: 'sess-uuid-1' });
++      expect(query.andWhere).toHaveBeenCalledWith('m.type <> :maskedType', { maskedType: 'masked' });
++    });
++
++    it.each([
++      new EngineTransportError('Browser transport is unavailable'),
++      new ConflictException('Engine is not ready'),
++      new Error('Detached browser page'),
++    ])('keeps saved history readable after native read failure: %s', async failure => {
++      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession());
++      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
++      await service.start('sess-uuid-1');
++      savedChatQuery();
++      mockEngine.getChats.mockRejectedValue(failure);
++
++      await expect(service.getChats('sess-uuid-1')).resolves.toEqual([
++        expect.objectContaining({ storageOnly: true, nativeUnavailable: true, unreadCount: 0 }),
++      ]);
++    });
++
++    it.each([401, 403, 404])('does not hide native authorization/client refusals (%s) with saved data', async status => {
++      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession());
++      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
++      await service.start('sess-uuid-1');
++      const query = savedChatQuery();
++      const failure = new HttpException('Access refused', status);
++      mockEngine.getChats.mockRejectedValue(failure);
++
++      await expect(service.getChats('sess-uuid-1')).rejects.toBe(failure);
++      expect(query.getRawMany).not.toHaveBeenCalled();
++    });
++
++    it('validates the session before reading saved history', async () => {
++      (repository.findOne as jest.Mock).mockResolvedValue(null);
++      const query = savedChatQuery();
++
++      await expect(service.getChats('missing-session')).rejects.toThrow(NotFoundException);
++      expect(query.getRawMany).not.toHaveBeenCalled();
++    });
++
++    it('does not conceal a failed saved-history query as an empty inbox', async () => {
++      (repository.findOne as jest.Mock).mockResolvedValue(createMockSession());
++      const query = savedChatQuery();
++      const failure = new Error('Database unavailable');
++      query.getRawMany.mockRejectedValue(failure);
+ 
+-      await expect(service.getChats('sess-uuid-1')).rejects.toThrow(BadRequestException);
++      await expect(service.getChats('sess-uuid-1')).rejects.toBe(failure);
+     });
+   });
+ 
+diff --git a/src/modules/session/session.service.ts b/src/modules/session/session.service.ts
+index 3446120..ec2be76 100644
+--- a/src/modules/session/session.service.ts
++++ b/src/modules/session/session.service.ts
+@@ -16,6 +16,7 @@ import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity
+ import { setTimeout } from 'node:timers/promises';
+ import { EngineTransportError } from '../../common/errors/engine-transport.error';
+ import { Session, SessionStatus } from './entities/session.entity';
++import { Message } from '../message/entities/message.entity';
+ import {
+   CreateSessionDto,
+   SessionConfigResponseDto,
+@@ -741,11 +742,90 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
+    */
+   async listChats(id: string): Promise<ChatSummary[]> {
+     await this.findOne(id); // Verify session exists
+-    const engine = this.requireEngine(id);
+-
+-    // Most-recent first. Sorting before the cap means a capped response is the N newest chats (what
+-    // clients show first) rather than an arbitrary slice.
+-    return [...(await engine.getChats())].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
++    const engine = this.getEngine(id);
++    let native: ChatSummary[] = [];
++    let nativeUnavailable = !engine;
++    if (engine) {
++      try {
++        native = await engine.getChats();
++      } catch (error) {
++        // Only the native read can fall back. Never turn an authorization or
++        // deliberate client refusal into an apparently successful archive read.
++        if (error instanceof HttpException && error.getStatus() < 500 && error.getStatus() !== 409) throw error;
++        nativeUnavailable = true;
++      }
++    }
++    // A linked device can have less history than the persisted message archive.
++    // Keep those actual stored private chats accessible without creating native
++    // WhatsApp chats or treating the archive as fresh incoming delivery.
++    const saved = await this.dataSource
++      .getRepository(Message)
++      .createQueryBuilder('m')
++      .select('m.chatId', 'id')
++      .addSelect('MAX(m.timestamp)', 'timestamp')
++      .addSelect(
++        query => query
++          .select('latest.chatName')
++          .from(Message, 'latest')
++          .where('latest.sessionId = :sessionId')
++          .andWhere('latest.chatId = m.chatId')
++          .andWhere('latest.chatName IS NOT NULL')
++          .andWhere("TRIM(latest.chatName) <> ''")
++          .andWhere('latest.waMessageId IS NOT NULL')
++          .andWhere("latest.waMessageId <> ''")
++          .andWhere('latest.type <> :maskedType')
++          .orderBy('latest.timestamp', 'DESC')
++          .addOrderBy('latest.createdAt', 'DESC')
++          .limit(1),
++        'name',
++      )
++      .addSelect(
++        query => query
++          .select("CASE WHEN preview.type = 'revoked' THEN '' WHEN preview.type = 'location' THEN '📍' ELSE SUBSTR(COALESCE(preview.body, ''), 1, 500) END")
++          .from(Message, 'preview')
++          .where('preview.sessionId = :sessionId')
++          .andWhere('preview.chatId = m.chatId')
++          .andWhere('preview.waMessageId IS NOT NULL')
++          .andWhere("preview.waMessageId <> ''")
++          .andWhere('preview.type <> :maskedType')
++          .orderBy('preview.timestamp', 'DESC')
++          .addOrderBy('preview.createdAt', 'DESC')
++          .limit(1),
++        'lastMessage',
++      )
++      .where('m.sessionId = :sessionId', { sessionId: id })
++      .andWhere('m.waMessageId IS NOT NULL')
++      .andWhere("m.waMessageId <> ''")
++      .andWhere('m.type <> :maskedType', { maskedType: 'masked' })
++      .groupBy('m.chatId')
++      .getRawMany<{ id: string; timestamp: string | number | null; name: string | null; lastMessage: string | null }>();
++    // Only equivalent PN dialects collapse. A numeric LID is never guessed to
++    // be a telephone number, and live native metadata always wins a duplicate.
++    const neutral = (chatId: string) => chatId.replace(/@s\.whatsapp\.net$/, '@c.us');
++    const merged = new Map(native.map(chat => [neutral(chat.id), chat]));
++    for (const row of saved) {
++      if (!/^\d{5,25}@(c\.us|s\.whatsapp\.net|lid)$/.test(row.id)) continue;
++      const chatId = neutral(row.id);
++      if (merged.has(chatId)) continue;
++      const timestamp = Number(row.timestamp);
++      const archived: ChatSummary & { storageOnly: true; nativeUnavailable?: true } = {
++        id: chatId,
++        name: row.name?.trim() || 'Saved conversation',
++        kind: 'individual',
++        isGroup: false,
++        unreadCount: 0,
++        timestamp: Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0,
++        lastMessage: row.lastMessage?.trim() || undefined,
++        archived: false,
++        pinned: false,
++        muted: false,
++        storageOnly: true,
++        ...(nativeUnavailable ? { nativeUnavailable: true as const } : {}),
++      };
++      merged.set(chatId, archived);
++    }
++    // Sort before the response cap so stored history cannot hide newer chats.
++    return [...merged.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+   }
+ 
+   async getChats(id: string, opts: ListOptions = {}): Promise<ChatSummary[]> {
+diff --git a/src/modules/webhook/filters/filter-types.ts b/src/modules/webhook/filters/filter-types.ts
+index 09d5c13..27a93d2 100644
+--- a/src/modules/webhook/filters/filter-types.ts
++++ b/src/modules/webhook/filters/filter-types.ts
+@@ -59,6 +59,7 @@ const MESSAGE_TYPE_FLAGS: Record<MessageType, true> = {
+   revoked: true,
+   order: true,
+   product: true,
++  payment: true,
+   masked: true,
+   unknown: true,
+ };

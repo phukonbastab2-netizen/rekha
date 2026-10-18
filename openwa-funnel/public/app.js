@@ -69,7 +69,7 @@ function messageContent(bubble,m){
 const statusLabels={queued:'Waiting for WhatsApp confirmation',accepted:'Accepted; delivery not yet confirmed',sent:'Sent',owner_confirmed_sent:'Owner confirmed sent',delivered:'Delivered',read:'Read',failed:'Failed',unknown:'Send outcome uncertain',retry_queued:'Retry queued',skipped:'Skipped'};
 function updateMeta(bubble,m){
   const meta=bubble.querySelector('.meta');meta.replaceChildren();const date=validDate(m.at),time=element('time',date?date.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'');if(date)time.dateTime=date.toISOString();time.title=date?date.toLocaleString():'Timestamp unavailable';meta.append(time);
-  if(m.editedAt&&!m.revoked){const edited=element('span','edited','edited-mark');edited.title='Edited '+mirrorTime(m.editedAt);meta.prepend(edited);}
+  if(m.editedAt&&!m.revoked){const edited=element('span','edited','edited-mark');edited.title=(m.editedAtSource==='observed'?'Edit received ':'Edited ')+mirrorTime(m.editedAt);meta.prepend(edited);}
   if(m.direction==='out'){const mark=element('span',['read','delivered'].includes(m.status)?'✓✓':['sent','owner_confirmed_sent'].includes(m.status)?'✓':['unknown','failed'].includes(m.status)?'!':m.status==='skipped'?'−':'◷','delivery-mark '+(Object.hasOwn(statusLabels,m.status)?m.status:'queued'));mark.title=statusLabels[m.status]||'Not yet confirmed';mark.setAttribute('aria-label',mark.title);meta.append(mark);}
   bubble.title=m.source==='owner_whatsapp'?'Sent from your business WhatsApp':m.source==='owner'?'Sent from this admin inbox':m.source==='funnel'?'Funnel message':'';
 }
@@ -103,7 +103,12 @@ async function loadMessages(older=false) {
   $('pause').hidden=$('payment').hidden=!!currentContact.isSelf;$('pause').textContent=currentContact.paused?'Resume automation':'Pause automation';$('payment').textContent=currentContact.payment==='verified_by_owner'?'Mark payment pending':'Verify payment';updateComposer();
   renderMessages(older);
   const jobs=result.jobs||[],jobSignature=JSON.stringify(jobs);$('uncertain').hidden=!jobs.length;
-  if($('uncertain').dataset.signature!==jobSignature){$('uncertain').dataset.signature=jobSignature;$('uncertain').replaceChildren();for(const job of jobs){$('uncertain').append(element('p','A send has an uncertain outcome. Check this chat in WhatsApp before deciding.'));for(const[action,label]of[['sent','I checked: it was sent'],['skip','Skip this message'],['retry','I checked: retry once']]){const button=element('button',label);button.onclick=async()=>{try{await api('resolve',{peer,key:job.key,action});await loadMessages();}catch(e){toast(e.message);}};$('uncertain').append(button);}}}
+  if($('uncertain').dataset.signature!==jobSignature){$('uncertain').dataset.signature=jobSignature;$('uncertain').replaceChildren();for(const job of jobs){
+    const blocked=job.state==='blocked';
+    $('uncertain').append(element('p',blocked?'This message was not sent: WhatsApp repeatedly refused before sending. Retry when the connection is ready.':'A send has an uncertain outcome. Check this chat in WhatsApp before deciding.'));
+    const actions=blocked?[['retry','Retry unsent message'],['skip','Skip this message']]:[['sent','I checked: it was sent'],['skip','Skip this message'],['retry','I checked: retry once']];
+    for(const[action,label]of actions){const button=element('button',label);button.onclick=async()=>{try{await api('resolve',{peer,key:job.key,action});await loadMessages();}catch(e){toast(e.message);}};$('uncertain').append(button);}
+  }}
 }
 function settings(open){$('settingsPanel').hidden=!open;$('settingsBackdrop').hidden=!open;$('settingsButton').setAttribute('aria-expanded',String(open));$('workspace').inert=open;document.querySelector('.app-header').inert=open;if(open)$('closeSettings').focus();else $('settingsButton').focus();}
 $('settingsButton').onclick=()=>settings(true);$('closeSettings').onclick=$('settingsBackdrop').onclick=()=>settings(false);
@@ -135,7 +140,8 @@ async function refresh() {
     $('linkOptions').hidden=!status.canPairWithPhone||!(['scan_qr','enter_code'].includes(status.connection)||(!status.linkedBefore&&['disconnected','error'].includes(status.connection)));
     $('generateCode').disabled=$('useQr').disabled=['starting','restarting','connected'].includes(status.connection);$('toggle').textContent=enabled?'Pause funnel':'Enable funnel';
     $('summary').textContent=`${status.contacts} saved chats · ${status.queued} queued · ${status.uncertain} need checking${status.inboxSync?.checkedAt?' · WhatsApp session: '+status.inboxSync.providerChats+' chats':''}${status.receiver?.healthy===false?' · '+status.receiver.error:''}${status.inboxSync?.error?' · '+status.inboxSync.error:''}`;
-    $('backup').textContent=`Cloud backup: ${status.cloud.replaceAll('_',' ')}${status.backupPending?' · '+status.backupPending+' changes pending':''}`;
+    $('mobileAccess').hidden=status.mobileAdminEnabled===false;
+    $('backup').textContent=`Cloud backup: ${status.cloud.replaceAll('_',' ')}${status.backupPending?' · '+status.backupPending+' changes pending':''}${status.cloud==='quota_paused'&&status.cloudRetryAt?' · retries '+new Date(status.cloudRetryAt).toLocaleString():''}`;
     $('pairing').hidden=!status.qr&&!status.pairingCode;$('codePanel').hidden=!status.pairingCode;$('pairCode').textContent=status.pairingCode||'';$('qr').hidden=!status.qr;
     if(status.qr&&$('qr').getAttribute('src')!==status.qr)$('qr').src=status.qr;if(!status.qr)$('qr').removeAttribute('src');if(status.error)$('summary').textContent=status.error;
     await loadContacts();await loadMessages();if(syncingInbox)updateMirror(status.mirror);
@@ -160,10 +166,15 @@ void refresh();setInterval(refresh,3000);
 const bytes=n=>Number.isFinite(n)?(n/1024**3>=1?(n/1024**3).toFixed(2)+' GB':(n/1024**2).toFixed(1)+' MB'):'Not measured';
 async function checkBackend(){
   try{
-    const m=await api('monitor'),cards=$('monitorCards');cards.replaceChildren();
+    const [m,capacity]=await Promise.all([api('monitor'),api('sender-capacity').catch(()=>null)]),cards=$('monitorCards');cards.replaceChildren();
     const rows=[['Server disk',bytes(m.disk.free)+' free / '+bytes(m.disk.total)],['Chat database',bytes(m.database.bytes)+' · '+bytes(m.database.reusableBytes)+' reusable'],['Customer attachments',bytes(m.folders.media.bytes)+(m.folders.media.partial?' (partial count)':'')],['WhatsApp profile',bytes(m.folders.profile.bytes)],['Server memory',bytes(m.memory.serverUsed)+' / '+bytes(m.memory.serverTotal)],['Gateway memory',bytes(m.memory.gatewayRss)],['Queue',m.counts.queued+' waiting · '+m.counts.uncertain+' uncertain'],['Cloud backup',m.cloud.state+' · '+m.counts.backupPending+' pending changes'],['D1 storage',bytes(m.cloud.databaseBytes)+' / '+bytes(m.cloud.d1MaxBytes)+' (shared database)'],['Retention','90 days · duplicate markers retained'],['Stored customer target','1,000,000 · delivery capacity is separate'],['Checked',new Date(m.checkedAt).toLocaleTimeString()+' · file sizes '+(m.folders.checkedAt?new Date(m.folders.checkedAt).toLocaleTimeString():'scanning')]];
+    if(capacity){
+      const measured=capacity.observed,queue=capacity.queue;
+      rows.unshift(['Daily lead target','10,000 · delivery capacity not yet verified'],['Opening funnel workload',capacity.target.initial.messagesPerDay.toLocaleString()+' messages/day · '+capacity.target.initial.requiredMessagesPerMinute+'/minute required'],['Observed API acceptance',measured.acceptedPerMinute+'/minute · '+measured.acceptedOperations+' accepted in this observation'],['Ready queue delay',Math.round(queue.oldestReadyWaitMs/1000)+' seconds'],['Send time',measured.meanServiceMs===null?'Waiting for measurements':(measured.meanServiceMs/1000).toFixed(2)+' seconds average · '+(measured.p95ServiceMs/1000).toFixed(2)+' seconds p95'],['Temporary refusals',(measured.deferredOperations||0)+' safely deferred · '+(measured.blockedOperations||0)+' need attention']);
+    }
+    if(m.cloud.state==='quota_paused')rows.push(['Backup allowance reset',m.cloud.retryAt?new Date(m.cloud.retryAt).toLocaleString():'Check Cloudflare allowance']);
     for(const[label,value]of rows){const card=element('div',undefined,'monitor-card');card.append(element('small',label),element('strong',String(value)));cards.append(card);}
-    $('monitorWarnings').textContent=[...m.warnings,m.capacityStatus,m.cloud.providerUsage].join('\n');
+    $('monitorWarnings').textContent=[...m.warnings,...(capacity?.warnings||[]),capacity?.capacityVerdict||m.capacityStatus,m.cloud.providerUsage].join('\n');
   }catch(e){$('monitorWarnings').textContent=e.message;}
 }
 async function deleteChat(){

@@ -15,7 +15,10 @@ import {createPhoneHistory} from './phone-history.mjs';
 import {createAttachmentQueue,canAttachMedia} from './attachment-queue.mjs';
 import {createProviderJournal} from './provider-journal.mjs';
 import {withDeadline} from './async-deadline.mjs';
-import {enrollNamaste,enrollStoredNamaste} from './lead-enrollment.mjs';
+import {enrollNamaste,enrollStoredNamaste,createMissedLeadRecovery} from './lead-enrollment.mjs';
+import {createOpenwaProvider,classifySendFailure} from './openwa-provider.mjs';
+import {createSenderCapacity} from './sender-capacity.mjs';
+import {createRetentionScheduler} from './retention.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -39,15 +42,39 @@ const engine = new Engine(path.join(data, 'funnel.sqlite'));
 const cookie = randomBytes(32).toString('hex');
 const port = Number(process.env.PORT || 4341);
 const origin = `http://127.0.0.1:${port}`;
+const ownerTunnelPort=process.env.OWNER_TUNNEL_PORT;
+if(ownerTunnelPort!==undefined&&ownerTunnelPort!==''&&(!/^[1-9]\d{0,4}$/.test(ownerTunnelPort)||Number(ownerTunnelPort)>65535))throw Error('OWNER_TUNNEL_PORT must be an integer from 1 to 65535');
+const ownerHosts=new Set([`127.0.0.1:${port}`,...(ownerTunnelPort?[`127.0.0.1:${Number(ownerTunnelPort)}`]:[])]);
 const cloud = process.env.CLOUD_BACKUP_URL || '', token = process.env.CLOUD_BACKUP_TOKEN || '';
+const mobileAdminEnabled=process.env.MOBILE_ADMIN_ENABLED!=='false';
 const pairingFile = path.join(data, 'pairing-phone');
-const canPairWithPhone = process.env.ALLOW_PAIRING_RESTART === 'true';
+const usesRestProvider=process.env.WHATSAPP_PROVIDER==='openwa-gateway';
+const canPairWithPhone = !usesRestProvider&&process.env.ALLOW_PAIRING_RESTART === 'true';
 let pairingPhone = fs.existsSync(pairingFile) ? fs.readFileSync(pairingFile, 'utf8').trim() : '';
 const linkedFile=path.join(data,'whatsapp-linked.json');
 const linkedBefore=()=>fs.existsSync(linkedFile);
-const state = { connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
+const state = { provider:usesRestProvider?'rmyndharis/OpenWA':'open-wa/wa-automate',connection: 'disconnected', error: '', qr: null, pairingCode: null, pairingMode: pairingPhone ? 'phone' : 'qr', canPairWithPhone, cloud: cloud ? 'waiting' : 'not_configured', lastBackup: null, connectedAt: null };
+const cloudQuotaFile=path.join(data,'cloud-quota.json');
+const cloudEndpointHash=createHash('sha256').update(cloud).digest('hex');
+const maxCloudQuotaPause=25*60*60*1000;
+let cloudQuota=null;
+Object.assign(state,{cloudRetryAt:null,cloudErrorCode:null,cloudPausePersisted:null,mobileAdminEnabled:!!(mobileAdminEnabled&&cloud&&token)});
+if(cloud&&token){
+ try{
+  const saved=JSON.parse(fs.readFileSync(cloudQuotaFile,'utf8'));
+  if(saved.version===1&&saved.endpointHash===cloudEndpointHash&&saved.code==='D1_WRITE_QUOTA'&&Number.isSafeInteger(saved.observedAt)&&Number.isSafeInteger(saved.retryAt)&&saved.retryAt>saved.observedAt&&saved.retryAt-saved.observedAt<=maxCloudQuotaPause&&saved.observedAt<=Date.now()+60000){
+   cloudQuota=saved;
+   Object.assign(state,{cloud:Date.now()<saved.retryAt?'quota_paused':'retrying',cloudRetryAt:saved.retryAt,cloudErrorCode:saved.code,cloudPausePersisted:true});
+  }
+ }catch{}
+}
 const ingress={events:0,accepted:0,duplicates:0,lastEventAt:null,lastAcceptedAt:null,lastShape:null,rejected:{}};
-const monitor=createMonitor({engine,data,profile:process.env.WHATSAPP_PROFILE_DIR||path.join(root,'.sessions','rekha-29'),cloudStatus:()=>({state:state.cloud,lastSynced:state.lastBackup,databaseBytes:state.cloudDatabaseBytes||null,databaseMeasuredAt:state.cloudDatabaseMeasuredAt||null})});
+const senderCapacity=createSenderCapacity({concurrency:2,pumpIntervalMs:1000});
+function senderCapacitySnapshot(){
+ const oldest=engine.db.prepare('SELECT min(due_at) AS at FROM dispatch_heads WHERE due_at<=?').get(Date.now())?.at;
+ return senderCapacity.snapshot({...engine.stats(),oldestReadyAt:oldest||null,enabled:engine.settings().enabled,connection:state.connection});
+}
+const monitor=createMonitor({engine,data,profile:process.env.WHATSAPP_PROFILE_DIR||path.join(root,'.sessions','rekha-29'),cloudStatus:()=>({state:state.cloud,lastSynced:state.lastBackup,retryAt:state.cloudRetryAt,errorCode:state.cloudErrorCode,pausePersisted:state.cloudPausePersisted,databaseBytes:state.cloudDatabaseBytes||null,databaseMeasuredAt:state.cloudDatabaseMeasuredAt||null})});
 let copyRestored=0;
 if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-20261018'").get()){
   copyRestored=engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('shop-qr-shahrukh-20261018')");
@@ -65,11 +92,13 @@ if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='namaste-lead-rule-20
 let client, runtime, connecting = false, stopping = false, busy = 0, syncing = false, connectedSince = 0, eventsInstalled = false;
 let fastBridge={ready:false},checkingBridge=false;
 let mirror={checkedAt:null,lastIncomingAt:null,lastOutgoingAt:null,lastProviderMessageAt:null},manualSyncing=false;
+let restProvider=null,restPolling=false;
 const mirrorCounters={outgoing:0,mutations:0,journalImports:0};
 const receiverProbe=createReceiverProbe();
 const phoneHistory=createPhoneHistory({evaluate:(fn,arg)=>client.evaluate(fn,arg),get:key=>engine.get(key),put:value=>engine.put(value)});
 let mediaActive=0;
 const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>withDeadline(()=>client.evaluate(fn,arg),40000,'Inbox scan'),onIncoming:message=>incoming(message,true),onOutgoing:message=>outgoing(message,true)});
+const missedLeadRecovery=usesRestProvider&&process.env.OPENWA_RECOVER_MISSED_LEADS==='true'?createMissedLeadRecovery({engine,since:inboxSync.since,before:Number(process.env.OPENWA_ACTIVE_SINCE)}):null;
 const providerJournal=createProviderJournal({engine,evaluate:(fn,arg)=>withDeadline(()=>client.evaluate(fn,arg),30000,'Stored message scan'),serializeNativeMessage,onMessage:mirrorStoredMessage});
 const attachmentQueue=createAttachmentQueue({run:saveIncomingMedia,eligible:key=>{
  const m=engine.get(key);return m?.kind==='message'&&!m.media&&!m.url&&!m.sensitive&&!m.revoked&&(m.attachmentAttempts||0)<3&&(m.attachmentRetryAt||0)<=Date.now();
@@ -88,30 +117,74 @@ function sameCookie(req) {
   const value = req.headers.cookie?.split(';').map(s => s.trim()).find(s => s.startsWith('rekha_owner='))?.slice(12) || '';
   return value.length === cookie.length && timingSafeEqual(Buffer.from(value), Buffer.from(cookie));
 }
+function cloudQuotaPaused(){
+ if(!cloudQuota)return false;
+ const paused=Date.now()<cloudQuota.retryAt;
+ state.cloud=paused?'quota_paused':'retrying';
+ return paused;
+}
+function quotaError(){return Object.assign(Error('Cloud backup write limit reached'),{code:'D1_WRITE_QUOTA',retryAt:cloudQuota?.retryAt});}
+function clearCloudQuota(){
+ // Only the pause marker is removed. Pending changes remain in the durable database.
+ cloudQuota=null;
+ try{fs.unlinkSync(cloudQuotaFile);}catch{}
+ Object.assign(state,{cloud:'retrying',cloudRetryAt:null,cloudErrorCode:null,cloudPausePersisted:null});
+}
+function pauseCloudQuota(payload,retryAfter){
+ const now=Date.now();
+ let advertised=Number.isSafeInteger(payload.retryAt)&&payload.retryAt>now?payload.retryAt:null;
+ if(advertised===null&&retryAfter){
+  const seconds=/^\d+$/.test(retryAfter)?Number(retryAfter):NaN;
+  const parsed=Number.isFinite(seconds)?now+seconds*1000:Date.parse(retryAfter);
+  if(Number.isFinite(parsed)&&parsed>now)advertised=parsed;
+ }
+ // A malformed reset cannot cause a tight retry loop or pause indefinitely.
+ const fallback=Math.floor(now/86400000)*86400000+86400000+5000;
+ const retryAt=Math.min(now+maxCloudQuotaPause,Math.max(now+60000,advertised??fallback));
+ cloudQuota={version:1,endpointHash:cloudEndpointHash,code:'D1_WRITE_QUOTA',observedAt:now,retryAt};
+ let persisted=false;
+ try{
+  fs.writeFileSync(cloudQuotaFile+'.tmp',JSON.stringify(cloudQuota),{mode:0o600});
+  fs.renameSync(cloudQuotaFile+'.tmp',cloudQuotaFile);persisted=true;
+ }catch{}
+ Object.assign(state,{cloud:'quota_paused',cloudRetryAt:retryAt,cloudErrorCode:'D1_WRITE_QUOTA',cloudPausePersisted:persisted});
+}
 async function backupRequest(route, options = {}) {
+  if(cloudQuotaPaused())throw quotaError();
+  const recoveryAttempt=cloudQuota;
   const response = await fetch(cloud + route, { ...options, headers: { Authorization: 'Bearer ' + token, ...(options.headers || {}) }, signal: AbortSignal.timeout(30000) });
-  if (!response.ok) throw Error('Cloud backup request failed (' + response.status + ')');
+  if (!response.ok) {
+   if(response.status===503){
+    const payload=await response.json().catch(()=>null);
+    if(payload?.code==='D1_WRITE_QUOTA'){
+     pauseCloudQuota(payload,response.headers.get('retry-after'));throw quotaError();
+    }
+   }
+   throw Error('Cloud backup request failed (' + response.status + ')');
+  }
+  // An older in-flight success must not clear a quota failure received in parallel.
+  if(recoveryAttempt&&cloudQuota===recoveryAttempt)clearCloudQuota();
   return response;
 }
 function removeMedia(ids){for(const id of ids)if(/^[a-f0-9]{64}$/.test(id))for(const suffix of['','.synced']){const file=path.join(data,'media',id+suffix);if(fs.existsSync(file))fs.unlinkSync(file);}}
 let mobileMonitor=null,mobileMonitorAt=0;
-const mobileBridge=cloud&&token?createMobileBridge({engine,source,request:backupRequest,removeMedia,status:()=>{
+const mobileBridge=mobileAdminEnabled&&cloud&&token?createMobileBridge({engine,source,request:backupRequest,removeMedia,status:()=>{
   if(Date.now()-mobileMonitorAt>30000){mobileMonitor=monitor.snapshot();mobileMonitorAt=Date.now();}
-  return{connection:state.connection,enabled:engine.settings().enabled,...engine.stats(),cloud:state.cloud,monitor:mobileMonitor};
+  return{connection:state.connection,enabled:engine.settings().enabled,...engine.stats(),cloud:state.cloud,cloudRetryAt:state.cloudRetryAt,cloudErrorCode:state.cloudErrorCode,monitor:mobileMonitor};
 }}):null;
 async function sync() {
-  if (syncing || !cloud || !token || stopping) return;
+  if (syncing || !cloud || !token || stopping || cloudQuotaPaused()) return;
   syncing = true;
   try {
     // Drain several bounded batches per cycle so a growing inbox does not outrun backup.
     for(let batch=0;batch<20&&!stopping;batch++){
     const changes = engine.changes();
     if (!changes.length) {
-      state.cloud = 'synced';
       if(!state.cloudDatabaseMeasuredAt||Date.now()-state.cloudDatabaseMeasuredAt>60000){
         const usage=await(await backupRequest('/usage')).json();
         if(Number.isFinite(usage.databaseBytes)){state.cloudDatabaseBytes=usage.databaseBytes;state.cloudDatabaseMeasuredAt=usage.checkedAt;}
       }
+      if(!cloudQuotaPaused())state.cloud=engine.changes().length?'catching_up':'synced';
       break;
     }
     // An attachment reaches the private bucket before a message references it.
@@ -124,10 +197,10 @@ async function sync() {
     }
     const result = await (await backupRequest('/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, changes }) })).json();
     if (result.acknowledged !== changes.at(-1).seq) throw Error('Unexpected backup acknowledgement');
-    engine.synced(result.acknowledged); state.cloud = 'synced'; state.lastBackup = Date.now();
+    engine.synced(result.acknowledged); if(!cloudQuotaPaused())state.cloud=engine.changes().length?'catching_up':'synced'; state.lastBackup = Date.now();
     if(Number.isFinite(result.databaseBytes)){state.cloudDatabaseBytes=result.databaseBytes;state.cloudDatabaseMeasuredAt=Date.now();}
     }
-  } catch { state.cloud = 'retrying'; } finally { syncing = false; }
+  } catch { if(!cloudQuotaPaused())state.cloud = 'retrying'; } finally { syncing = false; }
 }
 async function saveIncomingMedia(message, recordKey) {
   const original=engine.get(recordKey);
@@ -204,7 +277,58 @@ async function mirrorStoredMessage(message){
  if(['image','video','audio','ptt','document','sticker'].includes(input.type))attachmentQueue.offer(message,'in:'+input.id);
  if(imported){mirrorCounters.journalImports++;void sync();}return imported;
 }
+async function restMutation(event,value,{observedAt=Date.now(),eventId,source='rest'}={}){
+ const id=safeId(event==='message.revoked'?(value.revokedId||value.id):value.messageId);
+ const row=engine.get('in:'+id)||(()=>{const row=engine.db.prepare("SELECT json FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=? LIMIT 1").get(id);return row?JSON.parse(row.json):null;})();
+ if(row?.kind!=='message'||row.revoked||value.chatId&&value.chatId.replace(/@s\.whatsapp\.net$/,'@c.us')!==row.peer)return;
+ const revoked=event==='message.revoked';
+ if(!revoked&&source!=='webhook'&&row.body===value.body)return;
+ // An occurrence time or snapshot observation is an ordering watermark, not a
+ // fabricated claim about when the person actually edited on their phone.
+ if(!Number.isFinite(observedAt)||observedAt<row.at||observedAt>Date.now()+300000)return;
+ const editedAt=observedAt;
+ const result=engine.captureMutation({peer:row.peer,id,at:row.at,type:row.type,direction:row.direction,fromMe:row.direction==='out',body:revoked?'':String(value.body||''),mutation:revoked?'revoke':'edit',editedAt,observedAt,...(revoked?{targetKey:id}:{})});
+ if(result.mutated){if(!revoked){const current=engine.get(result.key);engine.put({...current,editedAtSource:'observed',editObservedFrom:source,...(source==='webhook'?{providerLastExplicitEditAt:observedAt}:{}),...(eventId?{providerEditEventId:eventId.slice(0,300)}:{})});}mirrorCounters.mutations++;removeMedia(result.removedMedia||[]);void sync();}
+}
+async function mirrorRestMessage(message,{historical=false,source='webhook',observedAt=Date.now()}={}){
+ const saved=message.fromMe?(()=>{const r=engine.db.prepare("SELECT json FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=? LIMIT 1").get(message.id);return r?JSON.parse(r.json):null;})():engine.get('in:'+message.id);
+ if(saved?.kind==='message'&&message.type==='revoked')return restMutation('message.revoked',{id:message.id,revokedId:message.id,chatId:message.chatId},{source,observedAt});
+ // Retried original create/receive events are immutable past occurrences and
+ // must not restore old text after an edit. Current stored/native snapshots are
+ // authoritative, ordered by when their request began against explicit edits.
+ const visibleBody=isSensitive(message.body)?'[Sensitive message omitted]':message.body;
+ // The provider dispatches edits even when its DB write fails. Its unversioned
+ // REST body cannot overrule an explicit edit; only current native history can.
+ const authoritativeSnapshot=source==='history'||source==='rest'&&!saved?.providerLastExplicitEditAt;
+ if(authoritativeSnapshot&&saved?.kind==='message'&&!saved.revoked&&(saved.body||saved.editedAt)&&typeof message.body==='string'&&saved.body!==visibleBody)await restMutation('message.edited',{messageId:message.id,chatId:message.chatId,body:message.body},{source,observedAt});
+ if(message.fromMe)return outgoing(message,true);
+ if(!historical)return incoming(message,true);
+ const normalized=normalizeIncoming(message,0);if(normalized.reason)return false;
+ noteProviderMessage(normalized.input,'in');
+ const imported=engine.importHistory(normalized.input);
+ if(imported){mirrorCounters.journalImports++;void sync();}
+ enrollNamaste(engine,'in:'+message.id);
+ if(['image','video','audio','ptt','document','sticker'].includes(normalized.input.type))attachmentQueue.offer(message,'in:'+message.id);
+ return imported;
+}
+async function pollRestProvider(){
+ if(!restProvider||restPolling||stopping)return;
+ restPolling=true;
+ try{
+  await restProvider.scan();
+  const ready=restProvider.getReadiness().ready;
+  state.connection=ready?'connected':restProvider.getState()==='qr_ready'?'scan_qr':'disconnected';
+  state.error=ready?'':'Open the OpenWA dashboard to check the linked session.';
+  mirror.checkedAt=restProvider.status.checkedAt;
+  fastBridge={ready,transport:'OpenWA REST and signed webhook',lastWebhookAt:restProvider.status.lastWebhookAt};
+  if(ready&&!state.connectedAt){state.connectedAt=Date.now();fs.writeFileSync(linkedFile,JSON.stringify({lastConnectedAt:state.connectedAt}),{mode:0o600});}
+  if(ready)missedLeadRecovery?.scan();
+  void sync();void pump();
+ }catch(error){saveConnectionDiagnostic(error,'openwa_rest');state.connection='disconnected';state.error=restProvider.status.error||'OpenWA is temporarily unavailable; saved messages and queued replies are retained.';}
+ finally{restPolling=false;}
+}
 async function checkFastBridge(){
+  if(usesRestProvider){if(!restProvider)return{ready:false};await restProvider.checkSession(true);return{ready:restProvider.getReadiness().ready,transport:'OpenWA REST'};}
   if(checkingBridge||stopping||!client||state.connection!=='connected')return;
   checkingBridge=true;
   let timeout;
@@ -223,6 +347,12 @@ async function connect() {
   if (connecting || (client && state.connection === 'connected') || stopping) return;
   connecting = true; state.connection = 'starting'; state.error = '';
   try {
+    if(usesRestProvider){
+      if(restProvider)await restProvider.stop();
+      restProvider=null;client=null;runtime=null;
+      restProvider=createOpenwaProvider({baseUrl:process.env.OPENWA_API_URL||'http://127.0.0.1:2785/api',apiKey:process.env.OPENWA_API_KEY,sessionId:process.env.OPENWA_SESSION_ID,webhookSecret:process.env.OPENWA_WEBHOOK_SECRET||'',activatedAt:process.env.OPENWA_ACTIVE_SINCE,get:key=>engine.get(key),put:value=>engine.put(value),onMessage:mirrorRestMessage,onMutation:restMutation,onAck:(id,ack)=>{if(!engine.ack(id,ack)){pendingAcks.set(id,{ack,at:Date.now()});if(pendingAcks.size>1000)pendingAcks.delete(pendingAcks.keys().next().value);}}});
+      client=restProvider;runtime=restProvider;connectedSince=Date.now();await pollRestProvider();return;
+    }
     ensurePairingCompatibility();
     const [{ Client, createClient, ev }, { PuppeteerDriver }, QRCode] = await Promise.all([import('@open-wa/wa-automate'), import('@open-wa/driver-puppeteer'), import('qrcode')]);
     if(stopping)return;
@@ -271,14 +401,16 @@ function saveConnectionDiagnostic(error, phase) {
   let detail = String(error?.message || 'Unknown connection failure');
   if (/bearer|secret|access.?token|session.?data/i.test(detail)) detail = 'Private provider error';
   else detail = detail.replace(/https?:\/\/\S+/g, '[url]').replace(/(?:\+?\d[\s()-]*){6,}/g, '[number]').replace(/\b(?=[A-Z0-9-]{8,10}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]{4}-?[A-Z0-9]{4}\b/g, '[code]').replace(/[A-Za-z0-9+/_=-]{32,}/g, '[private]');
-  fs.writeFileSync(path.join(data,'connection-error.json'),JSON.stringify({at:Date.now(),phase,name:/^[A-Za-z]{1,30}$/.test(error?.name || '')?error.name:'Error',detail:detail.slice(0,1500)}),{mode:0o600});
+  fs.writeFileSync(path.join(data,phase==='outbound'?'outbound-error.json':'connection-error.json'),JSON.stringify({at:Date.now(),phase,name:/^[A-Za-z]{1,30}$/.test(error?.name || '')?error.name:'Error',detail:detail.slice(0,1500),...classifySendFailure(error)}),{mode:0o600});
 }
 async function pump() {
   if (busy>=2 || !client || state.connection !== 'connected' || !runtime?.getReadiness().ready || stopping) return;
   const disk=fs.statfsSync(data);if(disk.bavail*disk.bsize<500*1024**2){state.error='Storage nearly full. Outgoing sends are paused until space is available.';return;}
-  busy++;
+  busy++;let hadReserved=false;
   try {
     const j = engine.reserve(); if (!j) return;
+    hadReserved=true;
+    const measurement=senderCapacity.started({type:j.payload.type,dueAt:j.dueAt});let measuredOutcome={};
     try {
       let providerId;
       const timed = async promise => { let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('Send timed out')), 60000); })]); } finally { clearTimeout(timer); } };
@@ -286,27 +418,50 @@ async function pump() {
       else {
         // Media URLs come only from the checked-in allowlist, never arbitrary customer input.
         const filename = decodeURIComponent(new URL(j.payload.url).pathname.split('/').at(-1));
-        providerId = await timed(client.sendFile(j.peer, j.payload.url, filename, { caption: j.payload.body }));
+        providerId = await timed(client.sendFile(j.peer, j.payload.url, filename, { caption: j.payload.body,...(usesRestProvider?{type:j.payload.type}:{}) }));
       }
       engine.finish(j.key, typeof providerId === 'string' ? providerId : null, 'Provider returned no trackable message ID; check WhatsApp before retrying.');
+      measuredOutcome={accepted:typeof providerId==='string'&&providerId.length>0};
       for (const [id, pending] of pendingAcks) if (engine.ack(id, pending.ack) || Date.now() - pending.at > 60000) pendingAcks.delete(id);
-    } catch { engine.finish(j.key, null, 'Send outcome uncertain; check WhatsApp before resolving. Automatic replies paused for this customer.'); }
+    } catch(error) {
+      const failure=classifySendFailure(error);
+      try{saveConnectionDiagnostic(error,'outbound');}catch{}
+      if(failure.outcome==='not_sent'){const result=engine.deferReserved(j.key,failure);measuredOutcome={deferred:result.deferred,blocked:result.blocked||result.cancelled};}
+      else{
+        const cause=failure.status?'OpenWA returned HTTP '+failure.status+'. ':failure.category==='request_timeout'?'The send request timed out. ':failure.category==='missing_message_id'?'OpenWA returned no message ID. ':'';
+        engine.finish(j.key,null,cause+'Send outcome uncertain; check WhatsApp before resolving. Automatic replies paused for this customer.',failure);
+      }
+    }finally{senderCapacity.finished(measurement,measuredOutcome);}
     void sync();
-  } finally { busy--; }
+  } finally {
+    busy--;
+    // Refill only after real work settled. An empty reserve never schedules
+    // itself; Engine still enforces the peer lock and actual-send spacing.
+    if(hadReserved&&!stopping)setImmediate(()=>void pump());
+  }
 }
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.headers.host !== `127.0.0.1:${port}` || ['cross-site','same-site'].includes(req.headers['sec-fetch-site'])) return json(res, { error: 'Forbidden' }, 403);
-    const url = new URL(req.url, origin);
+    if (!ownerHosts.has(req.headers.host) || ['cross-site','same-site'].includes(req.headers['sec-fetch-site'])) return json(res, { error: 'Forbidden' }, 403);
+    const requestOrigin='http://'+req.headers.host;
+    const url = new URL(req.url, requestOrigin);
+    if(url.origin!==requestOrigin)return json(res,{error:'Forbidden'},403);
+    if(req.method==='POST'&&url.pathname==='/api/provider/openwa'&&usesRestProvider){
+      if(!restProvider)return json(res,{error:'Provider adapter starting'},503);
+      let raw=Buffer.alloc(0);for await(const chunk of req){if(raw.length+chunk.length>1024*1024)return json(res,{error:'Webhook too large'},413);raw=Buffer.concat([raw,chunk]);}
+      try{const result=await restProvider.webhook(raw,req.headers['x-openwa-signature']);return json(res,{ok:result.status===200},result.status);}catch{return json(res,{error:'Webhook persistence failed; retry delivery'},503);}
+    }
     if (req.method === 'GET' && url.pathname === '/') {
       res.writeHead(200, { ...privateHeaders, 'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': `rekha_owner=${cookie}; HttpOnly; SameSite=Strict; Path=/` }); return res.end(fs.readFileSync(path.join(root, 'public', 'index.html')));
     }
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
     if (['/app.js','/api.js','/message-state.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
-    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, linkedBefore:linkedBefore(), enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:inboxSync.status,receiver:receiverWatchdog.status,mirror,journal:providerJournal.status });
+    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, linkedBefore:linkedBefore(), enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:restProvider?.status||inboxSync.status,receiver:usesRestProvider?{health:state.connection==='connected'?'healthy':'waiting',transport:'OpenWA REST'}:receiverWatchdog.status,mirror,journal:restProvider?.status||providerJournal.status,missedLeadRecovery:missedLeadRecovery?.status||{enabled:false},capacity:senderCapacitySnapshot() });
+    if(req.method==='GET'&&url.pathname==='/api/sender-capacity')return json(res,senderCapacitySnapshot());
     if (req.method === 'GET' && url.pathname === '/api/monitor') return json(res,monitor.snapshot());
     if(req.method==='GET'&&url.pathname==='/api/runtime-status'){
+      if(usesRestProvider)return json(res,{state:restProvider?.getState()||null,ready:restProvider?.getReadiness().ready||false,provider:{name:'rmyndharis/OpenWA',transport:'REST and signed webhook',...(restProvider?.status||{})},ingress,inboxSync:restProvider?.status,fastBridge,mirror,missedLeadRecovery:missedLeadRecovery?.status||{enabled:false},attachments:{active:attachmentQueue.active,pending:attachmentQueue.pending}});
       const ready=runtime?.getReadiness?.();
       const timed=promise=>Promise.race([promise,new Promise(resolve=>{const t=setTimeout(()=>resolve(null),8000);t.unref();})]);
       // The pinned client declares getConnectionState unsupported. Probe only safe
@@ -315,12 +470,13 @@ const server = http.createServer(async (req, res) => {
       return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status,fastBridge,receiver:receiverWatchdog.status,mirror,journal:providerJournal.status,attachments:{active:attachmentQueue.active,pending:attachmentQueue.pending}});
     }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
+      if(usesRestProvider)return json(res,{provider:'rmyndharis/OpenWA',saved:linkedBefore(),ready:restProvider?.getReadiness().ready||false,managedBy:'OpenWA dashboard'});
       const portable = runtime?.getTransport?.()?.portable;
       const browser = runtime ? await runtime.evaluateScript('(() => { const p=globalThis.OpenWA_PortableSession; return {present:!!p,methods:p?Object.keys(p):[],startupFailure:p?.startupFailure?.()??null}; })()').catch(()=>null) : null;
       return json(res,{saved:fs.existsSync(path.join(root,'.sessions','rekha-29.data.json')),checkpoint:!!portable?.hasCheckpoint,revision:portable?.revision,documentBound:!!portable?.documentId,browser});
     }
     if (req.method === 'GET' && url.pathname === '/api/contacts') return json(res, engine.list('contact', '', url.searchParams.get('before') || '', 50));
-    if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); const rows=url.searchParams.get('order')==='timeline'?engine.listMessagesTimeline(peer,url.searchParams.get('before')||'',50):{messages:engine.list('message',peer,url.searchParams.get('before')||'',50)};return json(res, { ...rows,jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='unknown' LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }
+    if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); const rows=url.searchParams.get('order')==='timeline'?engine.listMessagesTimeline(peer,url.searchParams.get('before')||'',50):{messages:engine.list('message',peer,url.searchParams.get('before')||'',50)};return json(res, { ...rows,jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state IN ('unknown','blocked') LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }
     if (req.method === 'GET' && /^\/media\/[a-f0-9]{64}$/.test(url.pathname)) {
       const file = path.join(data, 'media', url.pathname.slice(7)); if (!fs.existsSync(file)) return json(res, { error: 'Not found' }, 404);
       const saved=engine.db.prepare("SELECT json_extract(json,'$.media.mime') AS mime FROM records WHERE kind='message' AND json_extract(json,'$.media.id')=? LIMIT 1").get(url.pathname.slice(7));
@@ -329,11 +485,16 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { ...privateHeaders, 'Content-Type': mime, 'Content-Disposition': (inline?'inline':'attachment')+'; filename="whatsapp-attachment"' }); return fs.createReadStream(file).pipe(res);
     }
     if (req.method === 'POST') {
-      if (req.headers.origin !== origin || !String(req.headers['content-type']).startsWith('application/json')) return json(res, { error: 'Forbidden' }, 403);
+      if (req.headers.origin !== requestOrigin || !String(req.headers['content-type']).startsWith('application/json')) return json(res, { error: 'Forbidden' }, 403);
       const input = await body(req);
       if(url.pathname==='/api/sync-inbox'){
         if(state.connection!=='connected'||!client)return json(res,{error:'WhatsApp is not connected. The saved login will be reused.'},409);
         if(input.peer!==undefined&&(!validPeer(input.peer)||!engine.contact(input.peer)))return json(res,{error:'Choose a saved chat first.'},400);
+        if(usesRestProvider){
+          if(manualSyncing||restPolling)return json(res,{busy:true,checkedAt:mirror.checkedAt},202);
+          manualSyncing=true;
+          try{const history=input.peer?await restProvider.readHistory(input.peer,{deep:true}):{requested:false};await pollRestProvider();return json(res,{checkedAt:restProvider.status.checkedAt,mirror,history,journal:restProvider.status});}finally{manualSyncing=false;}
+        }
         if(manualSyncing||inboxSync.status.running||providerJournal.status.running)return json(res,{busy:true,recovered:0,outgoingMirrored:0,checkedAt:mirror.checkedAt,mirror,history:{requested:false,reason:'An inbox check is already running.'}},202);
         manualSyncing=true;
         const before={incoming:ingress.accepted,imported:inboxSync.status.imported,...mirrorCounters};
@@ -344,8 +505,12 @@ const server = http.createServer(async (req, res) => {
         }finally{manualSyncing=false;}
       }
       if(url.pathname==='/api/mobile-link'){
-        if(!mobileBridge)return json(res,{error:'Cloud backup is not configured'},409);
+        if(!mobileBridge)return json(res,{error:mobileAdminEnabled?'Cloud backup is not configured':'Mobile admin is disabled'},409);
         return json(res,{...await mobileBridge.issueCode(),url:cloud+'/admin',apk:cloud+'/downloads/rekha-whatsapp-admin.apk'});
+      }
+      if(url.pathname==='/api/cloud-retry'){
+        if(!cloud||!token)return json(res,{error:'Cloud backup is not configured'},409);
+        clearCloudQuota();void sync();return json(res,{retrying:true});
       }
       if(url.pathname==='/api/mobile-revoke'){
         if(mobileBridge)await mobileBridge.revoke();return json(res,{ok:true});
@@ -381,7 +546,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/pause') engine.pauseContact(input.peer, !!input.paused);
       else if (url.pathname === '/api/payment') engine.verifyPayment(input.peer, !!input.verified);
       else if (url.pathname === '/api/seen') { engine.markSeen(input.peer); if (client && state.connection === 'connected'&&!engine.contact(input.peer)?.isSelf) void client.sendSeen(input.peer).catch(() => { state.error = 'WhatsApp read receipt could not be confirmed.'; }); }
-      else if (url.pathname === '/api/resolve') { if (engine.get(input.key)?.peer !== input.peer) throw Error('Invalid job'); engine.resolveUnknown(input.key, input.action); }
+      else if (url.pathname === '/api/resolve') { const job=engine.get(input.key);if (job?.peer !== input.peer) throw Error('Invalid job');if(job.state==='blocked'&&input.action==='retry'&&!runtime?.getReadiness?.().ready)throw Error('Wait until WhatsApp is connected before retrying this unsent message.');engine.resolveUnknown(input.key, input.action); }
       else return json(res, { error: 'Not found' }, 404);
       return json(res, { ok: true });
     }
@@ -390,16 +555,18 @@ const server = http.createServer(async (req, res) => {
 });
 server.listen(port, '127.0.0.1', () => console.log(`Private WhatsApp controls: ${origin}`));
 const pumping = setInterval(() => void pump(), 1000), backing = setInterval(() => void sync(), 15000);
-const inboxPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void inboxSync.scan().then(()=>sync());},15000);
-const journalPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void providerJournal.scan().then(()=>sync());},15000);
-const bridgeChecking=setInterval(()=>{if(!stopping)void receiverWatchdog.tick();},3000);
+const inboxPolling=setInterval(()=>{if(!usesRestProvider&&!stopping&&client&&state.connection==='connected')void inboxSync.scan().then(()=>sync());},15000);
+const journalPolling=setInterval(()=>{if(!usesRestProvider&&!stopping&&client&&state.connection==='connected')void providerJournal.scan().then(()=>sync());},15000);
+const bridgeChecking=setInterval(()=>{if(!stopping){if(usesRestProvider){if((!restProvider||restProvider.getState()==='stopped')&&process.env.AUTO_CONNECT==='true')void connect();else void pollRestProvider();}else void receiverWatchdog.tick();}},5000);
 const mobilePolling=setInterval(()=>void mobileBridge?.poll(),5000);
-const housekeeping = setInterval(() => {
-  engine.prune();
-  const expiry = Date.now() - 90 * 86400000;
-  for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
-}, 3600000);
-async function shutdown(exitCode = 0) { if (stopping) return; stopping = true;receiverProbe.cancel();attachmentQueue.close(); mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(journalPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); if(connecting)try{await runtime?.stop?.('Gateway stopping');}catch{} while (busy||syncing||mediaActive||attachmentQueue.active||mobileBridge?.busy||inboxSync.status.running||providerJournal.status.running||checkingBridge||connecting||receiverWatchdog.busy||manualSyncing||phoneHistory.busy) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
+const retention=createRetentionScheduler({prune:options=>{
+  const result=engine.prune(options);
+  // Delete only attachments whose saved content actually expired. The local
+  // durable deletion queue survives a filesystem failure or process restart.
+  for(const id of result.mediaIds){removeMedia([id]);engine.retentionMediaRemoved(id);}
+  return result;
+}});
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true;retention.close();receiverProbe.cancel();attachmentQueue.close(); mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(journalPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); server.close(); if(connecting||usesRestProvider)try{await runtime?.stop?.('Gateway stopping');}catch{} while (busy||syncing||mediaActive||attachmentQueue.active||mobileBridge?.busy||inboxSync.status.running||providerJournal.status.running||checkingBridge||connecting||receiverWatchdog.busy||manualSyncing||phoneHistory.busy||restPolling) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
 void mobileBridge?.poll();

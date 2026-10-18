@@ -1,5 +1,17 @@
 import {mobile,bridge} from './mobile-worker.mjs';
-const reply = (data, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
+const reply = (data, status = 200, extraHeaders = {}) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extraHeaders } });
+export function backupFailure(error, now = Date.now()) {
+  let current = error, quota = false;
+  for (let depth = 0; current && depth < 4; depth++, current = current.cause) {
+    const message = String(current.message || '').toLowerCase();
+    if (message.includes('d1') && message.includes('exceeded') && message.includes('daily row write limit')) quota = true;
+  }
+  if (quota) {
+    const retryAt = (Math.floor(now / 86400000) + 1) * 86400000;
+    return reply({ error: 'Cloud backup write limit reached', code: 'D1_WRITE_QUOTA', retryAt }, 503, { 'Retry-After': String(Math.max(1, Math.ceil((retryAt - now) / 1000))) });
+  }
+  return reply({ error: 'Request failed' }, 400);
+}
 const validSource = value => /^[a-f0-9-]{36}$/.test(value || '');
 async function authorized(request, secret) {
   const provided = request.headers.get('Authorization') || '';
@@ -64,6 +76,6 @@ export default {
         return new Response(object.body, { headers: { 'Content-Type': object.httpMetadata?.contentType || 'application/octet-stream', 'Content-Disposition': 'attachment', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
       }
       return reply({ error: 'Not found' }, 404);
-    } catch { return reply({ error: 'Request failed' }, 400); }
+    } catch (error) { return backupFailure(error); }
   }
 };

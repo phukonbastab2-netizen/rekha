@@ -3,6 +3,7 @@ import { firstSequence, mediaSequence, reminder, GAP, REMINDER_DELAY, MEDIA_DELA
 
 export const validPeer = peer => typeof peer === 'string' && /^[0-9]{5,25}@(c\.us|lid|s\.whatsapp\.net)$/.test(peer);
 export const isSensitive = text => /\b(?:otp|one.time (?:password|code)|verification code|confirmation code|security code|cvv|password|pin)\b.{0,35}\b\d{3,8}\b|\b\d{3,8}\b.{0,35}\b(?:otp|verification code|confirmation code)\b/i.test(text);
+export const consentCommand = body => ['stop','unsubscribe','बंद','बंद करें'].includes(String(body||'').trim().toLowerCase())?'stop':String(body||'').trim().toLowerCase()==='start'?'start':null;
 export class Engine {
   constructor(path, now = () => Date.now()) {
     this.now = now;
@@ -26,6 +27,8 @@ export class Engine {
       CREATE INDEX IF NOT EXISTS records_peer_page ON records(peer,kind,stamp DESC,key DESC);
       CREATE INDEX IF NOT EXISTS records_peer_timeline ON records(peer,kind,coalesce(json_extract(json,'$.at'),stamp) DESC,key DESC);
       CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS maintenance_cursors(name TEXT PRIMARY KEY,phase TEXT NOT NULL,stamp INTEGER NOT NULL,key TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS maintenance_media(id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS counters(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS dispatch_heads(peer TEXT NOT NULL,lane TEXT NOT NULL,key TEXT NOT NULL,due_at INTEGER NOT NULL,PRIMARY KEY(peer,lane));
       CREATE INDEX IF NOT EXISTS dispatch_ready ON dispatch_heads(lane,due_at,peer);`);
@@ -54,6 +57,9 @@ export class Engine {
       CREATE TRIGGER IF NOT EXISTS changes_count_insert AFTER INSERT ON changes BEGIN INSERT INTO counters VALUES('changes',1) ON CONFLICT(key) DO UPDATE SET value=value+1; END;
       CREATE TRIGGER IF NOT EXISTS changes_count_delete AFTER DELETE ON changes BEGIN UPDATE counters SET value=value-1 WHERE key='changes'; END;`);
     this.db.exec('CREATE INDEX IF NOT EXISTS jobs_peer_ready ON due_jobs(peer,state,due_at,ordinal)');
+    this.db.exec(`CREATE INDEX IF NOT EXISTS records_consent ON records(peer,coalesce(json_extract(json,'$.at'),stamp) DESC,key DESC)
+      WHERE kind='message' AND json_extract(json,'$.direction')='in'
+      AND lower(trim(json_extract(json,'$.body'))) IN ('stop','unsubscribe','बंद','बंद करें','start');`);
     if (!this.db.prepare("SELECT 1 FROM migrations WHERE name='heads-v1'").get()) {
       this.transaction(() => {
         for (const {peer} of this.db.prepare("SELECT DISTINCT peer FROM due_jobs WHERE state IN ('queued','sending','unknown')").iterate()) this.refreshHead(peer);
@@ -115,7 +121,28 @@ export class Engine {
   settings() { return this.get('settings') || { key: 'settings', kind: 'settings', enabled: false }; }
   enable(enabled) { this.put({ ...this.settings(), enabled: !!enabled }); }
   contact(peer) { return this.get('contact:' + peer); }
-  pauseContact(peer, paused) { const c = this.contact(peer); if (c) this.put({ ...c, paused }); }
+  withStoredConsent(contact) {
+    // Provider pages and linked-device history can arrive in either order. The
+    // newest real command controls consent; a late older START cannot undo STOP.
+    const row=this.db.prepare(`SELECT key,json,coalesce(json_extract(json,'$.at'),stamp) AS at
+      FROM records INDEXED BY records_consent WHERE peer=? AND kind='message' AND json_extract(json,'$.direction')='in'
+      AND lower(trim(json_extract(json,'$.body'))) IN ('stop','unsubscribe','बंद','बंद करें','start')
+      AND coalesce(json_extract(json,'$.revoked'),0)=0 AND coalesce(json_extract(json,'$.sensitive'),0)=0
+      AND coalesce(json_extract(json,'$.at'),stamp)<=?
+      ORDER BY at DESC,CASE WHEN lower(trim(json_extract(json,'$.body')))='start' THEN 0 ELSE 1 END DESC,key DESC LIMIT 1`).get(contact.peer,this.now()+300000);
+    if(!row)return contact;
+    const command=consentCommand(JSON.parse(row.json).body),previousAt=Number(contact.consentAt)||0;
+    // WhatsApp timestamps can have only second resolution. Prefer STOP when
+    // two contradictory commands have indistinguishable occurrence times.
+    if(row.at<previousAt||row.at===previousAt&&(contact.consentCommand==='stop'||command===contact.consentCommand))return contact;
+    const next={...contact,optedOut:command==='stop',consentAt:row.at,consentCommand:command,consentMessageKey:row.key};
+    if(next.optedOut)for(const job of this.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='queued'").all(contact.peer))this.put({...this.get(job.key),state:'cancelled',error:'Customer opted out'});
+    return next;
+  }
+  reconcileConsent(peer) {
+    return this.transaction(()=>{const current=this.contact(peer);if(!current)return null;const next=this.withStoredConsent(current);if(next!==current)this.put(next);return next;});
+  }
+  pauseContact(peer, paused) { const c = this.contact(peer); if (c) this.put({ ...c, paused,pauseReason:paused?'owner':null }); }
   verifyPayment(peer, verified) { const c = this.contact(peer); if (!c) throw Error('Unknown customer'); this.put({ ...c, payment: verified ? 'verified_by_owner' : 'pending', paymentCheckedAt: this.now() }); }
   job(peer, phase, step, dueAt, payload) {
     const key = `job:${peer}:${phase}:${step}`;
@@ -143,11 +170,7 @@ export class Engine {
       if (!c) c = { key: 'contact:' + input.peer, kind: 'contact', peer: input.peer, name: String(input.name || '').slice(0, 100), firstAt: this.now(), stage: input.passive?'history_only':'new', optedOut: false, paused: false, payment: 'not_received', unread: 0, firstStarted: false, reminderScheduled: false, mediaScheduled: false, lastSentAt: 0 };
       c = { ...c, lastAt: this.now(), lastInboundAt: this.now(), unread: c.unread + 1, lastMessageKey:'in:'+input.id, preview: sensitive ? '[Sensitive message omitted]' : (body || '[' + input.type + ']').slice(0, 150) };
       this.put({ key: 'in:' + input.id, kind: 'message', peer: input.peer, id: input.id, direction: 'in', type: input.type || 'text', body: sensitive ? '[Sensitive message omitted]' : body, at: input.at || this.now(), receivedAt: this.now(), sensitive, status: 'received', media: sensitive ? null : input.media || null, ...this.mirrorMetadata(input,sensitive) });
-      const command = body.trim().toLowerCase();
-      if (['stop', 'unsubscribe', 'बंद', 'बंद करें'].includes(command)) {
-        c.optedOut = true;
-        for (const row of this.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='queued'").all(c.peer)) this.put({ ...this.get(row.key), state: 'cancelled', error: 'Customer opted out' });
-      } else if (command === 'start') c.optedOut = false;
+      c = this.withStoredConsent(c);
       if (!input.passive && !sensitive && !c.optedOut && !c.firstStarted) {
         c.firstStarted = true; c.stage = 'first_sequence';
         firstSequence.forEach((p, i) => this.job(c.peer, 'first', i, scheduleAt + i * GAP, p));
@@ -173,12 +196,8 @@ export class Engine {
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id,input.peer,this.now());
       const body=String(input.body||'').slice(0,8000),sensitive=isSensitive(body),at=input.at||this.now();
       this.put({key:'in:'+input.id,kind:'message',peer:input.peer,id:input.id,direction:'in',type:input.type||'text',body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),sensitive,status:'received',historical:true,...this.mirrorMetadata(input,sensitive)});
-      const c=current||{key:'contact:'+input.peer,kind:'contact',peer:input.peer,name:String(input.name||'').slice(0,100),firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
-      const command=body.trim().toLowerCase();
-      if(!current||at>(c.lastInboundAt||0)){
-        if(['stop','unsubscribe','बंद','बंद करें'].includes(command))c.optedOut=true;
-        else if(command==='start')c.optedOut=false;
-      }
+      let c=current||{key:'contact:'+input.peer,kind:'contact',peer:input.peer,name:String(input.name||'').slice(0,100),firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
+      c=this.withStoredConsent(c);
       if(!current||at>(c.lastAt||0)){c.lastAt=at;c.lastInboundAt=at;c.lastMessageKey='in:'+input.id;c.preview=sensitive?'[Sensitive message omitted]':(body||'['+input.type+']').slice(0,150);}
       this.put(c);return true;
     });
@@ -305,12 +324,31 @@ export class Engine {
       return this.put({ ...this.get(heads[0].key), state: 'sending', startedAt: this.now() });
     });
   }
-  finish(key, providerId, error = '') {
+  deferReserved(key,failure) {
+    const verified=failure?.outcome==='not_sent'&&(failure.status===409&&failure.providerCode==='ENGINE_NOT_READY'&&['not_connected','reinjecting'].includes(failure.providerReason)||failure.status===429&&failure.providerCode==='SEND_PACING_LIMITED');
+    if(!verified)throw Error('Only a verified pre-send refusal can be deferred');
+    return this.transaction(()=>{
+      const j=this.get(key);if(j?.kind!=='job'||j.state!=='sending')return{ignored:true};
+      const c=this.contact(j.peer);if(!c)return{ignored:true};
+      const attempt=(Number(j.deferAttempts)||0)+1,blocked=attempt>=12;
+      const serverDelay=Number.isFinite(failure.retryAfterSeconds)?Math.max(0,Math.min(86400,failure.retryAfterSeconds))*1000:0;
+      const delay=Math.max(Math.min(300000,5000*2**Math.min(attempt-1,6)),serverDelay),at=this.now();
+      const cancelled=c.deleted||c.optedOut;
+      const state=cancelled?'cancelled':blocked?'blocked':'queued';
+      const reason=failure.providerCode==='ENGINE_NOT_READY'?'WhatsApp is temporarily not ready.':'The provider send-pacing limit refused this request.';
+      this.put({...j,state,dueAt:at+delay,startedAt:null,deferAttempts:attempt,lastDeferredAt:at,providerId:null,failure:{...failure,automaticRetry:state==='queued'},error:cancelled?'Customer opted out or was deleted.':reason+(blocked?' Not sent; automatic retries stopped after 12 refusals. Review the connection or provider limit before retrying.':' Not sent; waiting before retrying the same step.')});
+      if(blocked&&!cancelled)this.put({...c,paused:true,...(!c.paused?{pauseReason:'pre_send_refusal_limit'}:{})});
+      // No outgoing message or lastSentAt update: the verified guard rejected
+      // this request before sending, and the original job key remains intact.
+      return{deferred:state==='queued',blocked:state==='blocked',cancelled:state==='cancelled',attempt,retryAt:at+delay};
+    });
+  }
+  finish(key, providerId, error = '', failure = null) {
     this.transaction(() => {
       const j = this.get(key);
       if (!j || !['sending', 'unknown'].includes(j.state)) return;
       const accepted = typeof providerId === 'string' && providerId.length > 0, at=this.now(), messageKey='out:'+key;
-      this.put({ ...j, state: accepted ? 'accepted' : 'unknown', providerId: providerId || null, error: accepted ? '' : error || 'Outcome unknown. Check WhatsApp before resolving.', completedAt: at });
+      this.put({ ...j, state: accepted ? 'accepted' : 'unknown', providerId: providerId || null, error: accepted ? '' : error || 'Outcome unknown. Check WhatsApp before resolving.', failure:accepted?null:failure,completedAt: at });
       const c = this.contact(j.peer);
       const latest=at>=(c.lastAt||0)?{lastAt:at,lastMessageKey:messageKey,preview:(isSensitive(String(j.payload.body||''))?'[Sensitive message omitted]':String(j.payload.body||'['+j.payload.type+']')).slice(0,150)}:{};
       this.put({ ...c, ...latest, lastSentAt: at, paused: accepted ? c.paused : true, stage: accepted && j.phase === 'first' && j.step === firstSequence.length - 1 ? 'waiting_for_details' : c.stage });
@@ -320,8 +358,9 @@ export class Engine {
   resolveUnknown(key, action) {
     this.transaction(() => {
       const j = this.get(key);
-      if (!j || j.state !== 'unknown' || !['sent', 'skip', 'retry'].includes(action)) throw Error('Invalid resolution');
-      this.put({ ...j, state: action === 'retry' ? 'queued' : 'accepted', dueAt: this.now(), error: action === 'skip' ? 'Skipped by owner' : 'Resolved by owner', ownerResolution: action });
+      if (!j || !['unknown','blocked'].includes(j.state) || !['sent', 'skip', 'retry'].includes(action)||j.state==='blocked'&&action==='sent') throw Error('Invalid resolution');
+      this.put({ ...j, state: action === 'retry' ? 'queued' : 'accepted', dueAt: this.now(), error: action === 'skip' ? 'Skipped by owner' : 'Resolved by owner', ownerResolution: action,...(j.state==='blocked'&&action==='retry'?{deferAttempts:0,failure:null}:{}) });
+      const c=this.contact(j.peer);if(j.state==='blocked'&&action==='retry'&&c?.pauseReason==='pre_send_refusal_limit')this.put({...c,paused:false,pauseReason:null});
       const m = this.get('out:' + key); if (m) this.put({ ...m, status: action === 'sent' ? 'owner_confirmed_sent' : action === 'retry' ? 'retry_queued' : 'skipped' });
     });
   }
@@ -332,24 +371,56 @@ export class Engine {
     const row = this.db.prepare("SELECT json FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=? LIMIT 1").get(providerId);
     if (!row) return false;
     const m = JSON.parse(row.json), rank = { accepted: 0, sent: 1, delivered: 2, read: 3, failed: 4 };
-    if ((rank[status] || 0) >= (rank[m.status] || 0)) this.put({ ...m, status });
+    // Linked-device callbacks may repeat. Only a real status advancement needs
+    // a new local revision and cloud backup write.
+    if ((rank[status] || 0) > (rank[m.status] || 0)) this.put({ ...m, status });
     return true;
   }
   changes(limit = 50) { let bytes=500;const batch=[];for(const row of this.db.prepare('SELECT * FROM changes ORDER BY seq LIMIT ?').all(Math.min(50,limit))){const size=Buffer.byteLength(JSON.stringify(row));if(batch.length&&bytes+size>850000)break;bytes+=size;batch.push(row);}return batch; }
   synced(seq) { this.db.prepare('DELETE FROM changes WHERE seq<=?').run(seq); }
-  stats() { const n=Object.fromEntries(this.db.prepare('SELECT key,value FROM counters').all().map(r=>[r.key,r.value])); return { contacts:n['record:contact']||0,messages:n['record:message']||0,queued:n['job:queued']||0,sending:n['job:sending']||0,uncertain:n['job:unknown']||0,backupPending:n.changes||0 }; }
-  prune() {
-    const cutoff = this.now() - 90 * 86400000;
-    for (const row of this.db.prepare("SELECT json FROM records WHERE kind='contact' AND stamp<? LIMIT 200").all(cutoff)) {
-      const contact = JSON.parse(row.json);
-      this.put({ ...contact, preview: '[Older message content expired]', unread: 0 });
-    }
-    // Preserve small once-only contact/receipt records to avoid replay after content expiry.
-    for (const row of this.db.prepare("SELECT key,json FROM records WHERE kind IN ('message','job') AND stamp<? AND NOT EXISTS(SELECT 1 FROM due_jobs WHERE due_jobs.key=records.key AND state IN ('queued','sending','unknown')) ORDER BY stamp LIMIT 200").all(cutoff)) {
-      const record = JSON.parse(row.json);
-      if (record.kind === 'job' && ['queued', 'sending', 'unknown'].includes(record.state)) continue;
-      const tombstone = { key: row.key, kind: 'deleted', peer: record.peer, mediaId: record.media?.id || null, deletedAt: this.now() };
-      this.put(tombstone); this.db.prepare('DELETE FROM due_jobs WHERE key=?').run(row.key);
-    }
+  stats() { const n=Object.fromEntries(this.db.prepare('SELECT key,value FROM counters').all().map(r=>[r.key,r.value])); return { contacts:n['record:contact']||0,messages:n['record:message']||0,queued:n['job:queued']||0,sending:n['job:sending']||0,uncertain:n['job:unknown']||0,blocked:n['job:blocked']||0,backupPending:n.changes||0 }; }
+  prune({limit=200,budgetMs=75,clock=()=>performance.now()}={}) {
+    if(!Number.isSafeInteger(limit)||limit<1||limit>500||!Number.isFinite(budgetMs)||budgetMs<1||budgetMs>250||typeof clock!=='function')throw Error('Invalid retention budget');
+    const cutoff=this.now()-90*86400000,started=clock(),phases=['contact','message','job'];
+    const saved=this.db.prepare("SELECT phase,stamp,key FROM maintenance_cursors WHERE name='content-retention'").get();
+    let phase=saved&&phases.includes(saved.phase)?saved.phase:'contact',stamp=saved?.stamp||0,key=saved?.key||'';
+    let scanned=0,expired=0,previewsCleared=0,completedPhases=0;
+    const held=new Set(['queued','sending','unknown','blocked']);
+    const nextPhase=()=>{phase=phases[(phases.indexOf(phase)+1)%phases.length];stamp=0;key='';completedPhases++;};
+    this.transaction(()=>{
+      while(scanned<limit&&clock()-started<budgetMs&&completedPhases<phases.length){
+        const pageSize=Math.min(50,limit-scanned);
+        // Keyset pages scan a bounded number of rows even when many old jobs
+        // must be retained. A held job cannot strand all later expired content.
+        const rows=this.db.prepare('SELECT key,stamp,json FROM records WHERE kind=? AND (stamp,key)>(?,?) AND stamp<? ORDER BY stamp,key LIMIT ?').all(phase,stamp,key,cutoff,pageSize);
+        if(!rows.length){nextPhase();continue;}
+        let processed=0;
+        for(const row of rows){
+          if(scanned>=limit||clock()-started>=budgetMs)break;
+          const record=JSON.parse(row.json);stamp=row.stamp;key=row.key;scanned++;processed++;
+          if(record.kind==='contact'){
+            // Keep consent, deletion and once-only sequence markers permanently.
+            this.put({...record,preview:'[Older message content expired]',unread:0});previewsCleared++;
+          }else{
+            if(record.kind==='job'&&held.has(record.state))continue;
+            // An uncertain/blocked send still needs its actual outgoing evidence
+            // for owner review; do not expire that message while retaining its job.
+            if(record.kind==='message'&&row.key.startsWith('out:job:')&&held.has(this.get(row.key.slice(4))?.state))continue;
+            this.put({key:row.key,kind:'deleted',peer:record.peer,mediaId:record.media?.id||null,deletedAt:this.now()});
+            if(/^[a-f0-9]{64}$/.test(record.media?.id||''))this.db.prepare('INSERT OR IGNORE INTO maintenance_media(id) VALUES(?)').run(record.media.id);
+            if(record.kind==='job')this.db.prepare('DELETE FROM due_jobs WHERE key=?').run(row.key);
+            expired++;
+          }
+        }
+        if(processed<rows.length)break;
+        if(rows.length<pageSize)nextPhase();
+      }
+      // Local maintenance progress is not customer data and must not generate
+      // a Cloudflare backup revision on every paced pass.
+      this.db.prepare("INSERT INTO maintenance_cursors VALUES('content-retention',?,?,?) ON CONFLICT(name) DO UPDATE SET phase=excluded.phase,stamp=excluded.stamp,key=excluded.key").run(phase,stamp,key);
+    });
+    const mediaIds=this.db.prepare('SELECT id FROM maintenance_media ORDER BY id LIMIT ?').all(limit).map(row=>row.id);
+    return{scanned,expired,previewsCleared,mediaIds,more:completedPhases<phases.length||mediaIds.length===limit,elapsedMs:Math.max(0,clock()-started)};
   }
+  retentionMediaRemoved(id){this.db.prepare('DELETE FROM maintenance_media WHERE id=?').run(id);}
 }

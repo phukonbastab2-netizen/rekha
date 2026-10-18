@@ -43,6 +43,24 @@ test('ACK zero stays queued and repeated snapshots only advance changed acknowle
   e.captureOutgoing({...input,ack:3});assert.equal(e.get(key).status,'read');assert.equal(e.stats().messages,1);
 });
 
+test('repeated provider ACK callbacks do not rewrite messages or refill an acknowledged backup queue',t=>{
+ const {engine:e}=setup(t),input=outgoing({ack:1}),{key}=e.captureOutgoing(input);
+ e.synced(e.changes().at(-1).seq);
+ const revision=()=>e.db.prepare('SELECT stamp FROM records WHERE key=?').get(key).stamp;
+ const initial=revision();
+ for(let i=0;i<1000;i++)assert.equal(e.ack(input.id,1),true);
+ assert.equal(revision(),initial);assert.equal(e.stats().backupPending,0);
+ assert.equal(e.ack(input.id,2),true);assert.equal(e.get(key).status,'delivered');assert.equal(e.stats().backupPending,1);
+ const delivered=revision(),pending=e.changes();
+ for(const ack of[2,2,1,0])e.ack(input.id,ack);
+ assert.equal(revision(),delivered);assert.deepEqual(e.changes(),pending);
+ e.synced(pending.at(-1).seq);e.ack(input.id,3);
+ assert.equal(e.get(key).status,'read');assert.equal(e.stats().backupPending,1);
+ const read=revision();e.ack(input.id,3);e.ack(input.id,2);assert.equal(revision(),read);
+ e.ack(input.id,-1);const failed=revision();e.ack(input.id,-1);assert.equal(revision(),failed);
+ assert.equal(e.ack('missing-provider-message',3),false);
+});
+
 test('existing gateway sends are deduplicated by provider ID while ACKs can advance',t=>{
   const {engine:e}=setup(t);e.enable(true);e.inbound({peer,id:'customer-first',at:900000,type:'text',body:'Hi'});
   const job=e.reserve();e.finish(job.key,'gateway-provider');

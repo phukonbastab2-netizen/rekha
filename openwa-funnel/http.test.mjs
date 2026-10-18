@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn,spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,7 +12,7 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   const mediaId='a'.repeat(64),fixture=new Engine(path.join(temp,'funnel.sqlite'));
   fixture.put({key:'out:provider:media-test',kind:'message',peer:'919876543210@c.us',direction:'out',media:{id:mediaId,mime:'audio/ogg',size:3}});fixture.close();
   fs.mkdirSync(path.join(temp,'media'));fs.writeFileSync(path.join(temp,'media',mediaId),'ogg');
-  const child = spawn(process.execPath, ['gateway.mjs'], { cwd: path.dirname(fileURLToPath(import.meta.url)), windowsHide: true, env: { ...process.env, PORT:'14341', REKHA_DATA_DIR:temp, AUTO_CONNECT:'false', ALLOW_PAIRING_RESTART:'true', CLOUD_BACKUP_URL:'', CLOUD_BACKUP_TOKEN:'' }, stdio:['ignore','pipe','pipe'] });
+  const child = spawn(process.execPath, ['gateway.mjs'], { cwd: path.dirname(fileURLToPath(import.meta.url)), windowsHide: true, env: { ...process.env, PORT:'14341', OWNER_TUNNEL_PORT:'14342', REKHA_DATA_DIR:temp, AUTO_CONNECT:'false', ALLOW_PAIRING_RESTART:'true', CLOUD_BACKUP_URL:'', CLOUD_BACKUP_TOKEN:'' }, stdio:['ignore','pipe','pipe'] });
   t.after(async () => { if (child.exitCode === null) { const done = new Promise(resolve => child.once('exit',resolve)); child.kill(); await done; } fs.rmSync(temp,{ recursive:true,force:true }); });
   await new Promise((resolve,reject) => { const timeout=setTimeout(()=>reject(Error('Gateway startup timed out')),10000); child.stdout.once('data',()=>{clearTimeout(timeout);resolve();});child.once('exit',code=>{clearTimeout(timeout);reject(Error('Gateway stopped '+code));}); });
   const base = 'http://127.0.0.1:14341';
@@ -37,6 +37,18 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   const rawStatus = headers => new Promise((resolve,reject) => { const req = http.request(base+'/api/status',{headers},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end(); });
   assert.equal(await rawStatus({Cookie:cookie,Host:'evil.test'}),403);
   assert.equal(await rawStatus({Cookie:cookie,'Sec-Fetch-Site':'cross-site'}),403);
+  const tunnelHost='127.0.0.1:14342',tunnelOrigin='http://'+tunnelHost;
+  assert.equal(await rawStatus({Host:tunnelHost}),401);
+  assert.equal(await rawStatus({Cookie:cookie,Host:tunnelHost}),200);
+  for(const host of ['127.0.0.1:14343','localhost:14342','127.0.0.1:014342','evil.test:14342'])assert.equal(await rawStatus({Cookie:cookie,Host:host}),403);
+  for(const site of ['cross-site','same-site'])assert.equal(await rawStatus({Cookie:cookie,Host:tunnelHost,'Sec-Fetch-Site':site}),403);
+  const rawPost=(host,origin,headers={})=>new Promise((resolve,reject)=>{const req=http.request(base+'/api/enabled',{method:'POST',headers:{Host:host,Origin:origin,Cookie:cookie,'Content-Type':'application/json',...headers}},res=>{res.resume();resolve(res.statusCode);});req.on('error',reject);req.end('{"enabled":true}');});
+  assert.equal(await rawPost(tunnelHost,tunnelOrigin),200);
+  assert.equal(await rawPost(tunnelHost,base),403);
+  assert.equal(await rawPost('127.0.0.1:14341',tunnelOrigin),403);
+  assert.equal(await rawPost(tunnelHost,'https://foreign.test'),403);
+  assert.equal(await rawPost(tunnelHost,tunnelOrigin,{Cookie:''}),401);
+  for(const site of ['cross-site','same-site'])assert.equal(await rawPost(tunnelHost,tunnelOrigin,{'Sec-Fetch-Site':site}),403);
   assert.equal((await fetch(base+'/media/../../.env',{headers:{Cookie:cookie}})).status,404);
   assert.equal((await fetch(base+'/api/send',{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({peer:'12345678@g.us',body:'hello',requestId:'request-0001'})})).status,400);
   const pair = (data, origin=base) => fetch(base+'/api/pairing',{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(data)});
@@ -55,4 +67,14 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   assert.equal((await pair({mode:'phone',phone:'+1 5551234567'})).status,409);
   assert.equal((await(await fetch(base+'/api/status',{headers:{Cookie:cookie}})).json()).enabled,true);
   assert.equal(await exited,75);
+});
+
+test('owner tunnel configuration accepts only a numeric loopback port, never a host or loose port expression',()=>{
+  for(const value of ['0','65536','4342.5','4342,evil.test','http://127.0.0.1:4342',' 4342']){
+    const temp=fs.mkdtempSync(path.join(os.tmpdir(),'rekha-tunnel-invalid-'));
+    try{
+      const child=spawnSync(process.execPath,['gateway.mjs'],{cwd:path.dirname(fileURLToPath(import.meta.url)),windowsHide:true,encoding:'utf8',timeout:10000,env:{...process.env,PORT:'14341',OWNER_TUNNEL_PORT:value,REKHA_DATA_DIR:temp,AUTO_CONNECT:'false',CLOUD_BACKUP_URL:'',CLOUD_BACKUP_TOKEN:''}});
+      assert.notEqual(child.status,0);assert.match(child.stderr,/OWNER_TUNNEL_PORT must be an integer from 1 to 65535/);
+    }finally{fs.rmSync(temp,{recursive:true,force:true});}
+  }
 });

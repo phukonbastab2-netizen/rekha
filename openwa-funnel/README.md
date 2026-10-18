@@ -1,16 +1,16 @@
 # Standalone Rekha WhatsApp ₹29 funnel
 
-Independent of the customer app and existing Meta API Workers. Uses `open-wa/wa-automate-nodejs` 5.6.6, an unofficial WhatsApp Web integration. It cannot reinstate a restricted account or guarantee throughput/account approval.
+Independent of the customer app and existing Meta API Workers. Production uses the private rmyndharis/OpenWA v0.23.6 dashboard through the REST adapter; the older `open-wa/wa-automate-nodejs` 5.6.6 provider remains available for local fallback. See [the current deployment and recovery guide](deployment/README.md). These are unofficial WhatsApp Web integrations and cannot reinstate a restricted account or guarantee throughput/account approval.
 
 ## Owner use
 
-1. Start with `Start-Rekha-WhatsApp.cmd` on this Windows PC (or run `npm start`).
-2. Open `http://127.0.0.1:4341/` **on this PC**.
-3. Choose **Connect WhatsApp**. On your phone, use WhatsApp Business → Settings → Linked devices → Link a device to scan the private QR.
-4. Choose **Enable funnel** when ready. Only new private incoming messages are eligible. Existing chat history, groups and status updates are not imported or messaged.
-5. Select a customer to read and reply. Manual messages work while the automatic funnel is paused. Opening a customer chat requests a real WhatsApp read receipt; customer settings and provider support determine the visible ticks.
+1. With the owner's private SSH tunnel running, open `http://127.0.0.1:4341/chats` on this PC.
+2. Use the connected session to read and reply. A normal restart reuses its saved login; scan a new QR only when WhatsApp actually requires a fresh link.
+3. Open **Funnel & capacity** for the original controls at `http://127.0.0.1:4342/`, including pause, queue checks and remote-admin sign-in codes.
+4. Existing private history is mirrored. Actual Namaste messages in either direction and owner-authorized missed incoming leads can enroll once; group/status traffic is not eligible for this funnel.
+5. Opening an online customer chat requests a real WhatsApp read receipt; customer settings and provider support determine the visible ticks. Offline saved history is explicitly labeled and cannot send.
 
-The PC must stay on and online. Cloudflare stores a private backup; it does not run the WhatsApp browser. There is no new AI/API credit usage. No bulk campaigns, contact imports or automatic retries of uncertain sends are provided.
+The Oracle server runs the WhatsApp browser and funnel independently of this PC. Cloudflare stores the private funnel backup. The old `Start-Rekha-WhatsApp.cmd`/`npm start` path is a separate local fallback and requires that machine to stay online; do not start it alongside the production browser for the same session. There is no new AI/API credit usage. Uncertain sends are never retried automatically.
 
 ## Sequence and verification
 

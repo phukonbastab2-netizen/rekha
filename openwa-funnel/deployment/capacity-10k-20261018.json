@@ -1,0 +1,106 @@
+{
+  "syntheticOnly": true,
+  "requestedLeads": 10000,
+  "seededLeads": 10000,
+  "simulatedAcceptances": 18594,
+  "expectedInitialAcceptances": 50000,
+  "completedInitialWorkload": false,
+  "duplicateReceiptsSuppressed": 1000,
+  "customerMessagesSent": 0,
+  "networkRequests": 0,
+  "workload": {
+    "leadsPerDay": 10000,
+    "initial": {
+      "messagesPerLead": 5,
+      "messagesPerDay": 50000,
+      "requiredMessagesPerMinute": 34.72,
+      "maximumMeanServiceMsAtFullUtilization": 3456
+    },
+    "withOneReminder": {
+      "messagesPerLead": 6,
+      "messagesPerDay": 60000,
+      "requiredMessagesPerMinute": 41.67,
+      "maximumMeanServiceMsAtFullUtilization": 2880
+    },
+    "withReminderAndAllFollowUps": {
+      "messagesPerLead": 10,
+      "messagesPerDay": 100000,
+      "requiredMessagesPerMinute": 69.44,
+      "maximumMeanServiceMsAtFullUtilization": 1728
+    },
+    "concurrency": 2,
+    "timerDrivenStartsPerDay": 86400,
+    "note": "Arithmetic requirements only. Assumes all-day operation. Extra incoming-event triggers are not counted; WhatsApp permission, account limits, media upload time, failures and delivery are not validated."
+  },
+  "byType": {
+    "text": 10000,
+    "video": 8594
+  },
+  "seedElapsedMs": 63250.476650000004,
+  "totalElapsedMs": 240073.06383799997,
+  "budgetExceeded": true,
+  "queries": {
+    "inbound": {
+      "samples": 10000,
+      "p50Ms": 5.53718200000003,
+      "p95Ms": 12.375489000000016,
+      "maxMs": 42.94945000000007
+    },
+    "reserveAndFinish": {
+      "samples": 18594,
+      "p50Ms": 8.26151199999731,
+      "p95Ms": 17.058027999999467,
+      "maxMs": 95.69417899999826
+    },
+    "duplicate": {
+      "samples": 1000,
+      "p50Ms": 0.11136000000260537,
+      "p95Ms": 0.1647210000000996,
+      "maxMs": 32.58672899999874
+    },
+    "contactsPage": {
+      "samples": 100,
+      "p50Ms": 0.4410820000048261,
+      "p95Ms": 0.6387629999953788,
+      "maxMs": 6.765626999986125
+    },
+    "counters": {
+      "samples": 100,
+      "p50Ms": 0.04772000000230037,
+      "p95Ms": 0.08103999999002554,
+      "maxMs": 0.1394399999990128
+    },
+    "backupBatchRead": {
+      "samples": 0,
+      "p50Ms": null,
+      "p95Ms": null,
+      "maxMs": null
+    }
+  },
+  "afterIngress": {
+    "contacts": 10000,
+    "messages": 10000,
+    "queued": 50000,
+    "sending": 0,
+    "uncertain": 0,
+    "backupPending": 70000
+  },
+  "afterQueue": {
+    "contacts": 10000,
+    "messages": 28594,
+    "queued": 31406,
+    "sending": 0,
+    "uncertain": 0,
+    "backupPending": 88595
+  },
+  "backupBatchesSimulated": 0,
+  "remainingSyntheticBackup": 88595,
+  "databaseBytes": 240713728,
+  "processRssBytes": 133124096,
+  "machine": {
+    "arch": "arm64",
+    "cpuCount": 2,
+    "totalMemoryBytes": 12506693632
+  },
+  "limits": "Disposable SQLite benchmark on this host. Provider acceptance is simulated instantly. This does not validate WhatsApp throughput, account eligibility, delivery, browser CPU/media uploads, network bandwidth, real backup costs or 24-hour reliability."
+}

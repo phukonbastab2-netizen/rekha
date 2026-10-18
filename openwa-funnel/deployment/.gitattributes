@@ -1,0 +1,2 @@
+# Preserve unified-diff context bytes, including blank lines with a space prefix.
+*.patch -text -whitespace
