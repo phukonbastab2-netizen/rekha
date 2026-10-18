@@ -75,6 +75,45 @@ test('webhook rejects oversized payload before parsing or sending', async (t) =>
   assert.equal(response.status, 413); assert.equal(h.requests.length, 0);
 });
 
+test('private status proves a persisted inbound webhook without disclosing the customer', async (t) => {
+  const h = harness(t, { SEND_ENABLED: 'false' });
+  assert.equal((await worker.fetch(signedRequest(payload()), h.env)).status, 200);
+  const response = await worker.fetch(new Request('https://x.test/admin/status', { headers: { authorization: 'Bearer private_admin' } }), h.env);
+  const raw = await response.text(), status = JSON.parse(raw);
+  assert.equal(status.account.ingestion.lastInboundAt, h.now());
+  assert.equal(status.sendEnabled, false);
+  assert.equal(raw.includes(waId), false);
+  assert.equal(raw.includes('wamid.webhook1'), false);
+  assert.equal(h.requests.length, 0);
+});
+
+test('a receipt-recording failure requests redelivery without duplicating the saved funnel', async (t) => {
+  const h = harness(t, { SEND_ENABLED: 'false' });
+  const original = h.env.CONTROL.get.bind(h.env.CONTROL);
+  h.env.CONTROL.get = name => ({ fetch: async (url, init) => new URL(url).pathname === '/receipt'
+    ? new Response('unavailable', { status: 503 }) : original(name).fetch(url, init) });
+  assert.equal((await worker.fetch(signedRequest(payload()), h.env)).status, 503);
+  h.env.CONTROL.get = original;
+  assert.equal((await worker.fetch(signedRequest(payload()), h.env)).status, 200);
+  assert.equal((await h.state()).jobs.length, firstSequence.length);
+  assert.equal(h.requests.length, 0);
+});
+
+test('owner-only receipt inspection is read-only and excludes customer text and number', async (t) => {
+  const h = harness(t, { SEND_ENABLED: 'false' });
+  await h.incoming('private customer text');
+  const objectId = 'a'.repeat(64);
+  h.env.CONVERSATIONS.idFromString = id => { assert.equal(id, objectId); return `${phoneId}:${waId}`; };
+  const url = 'https://x.test/admin/conversation-status?id='+objectId;
+  assert.equal((await worker.fetch(new Request(url), h.env)).status, 401);
+  const before = await h.state();
+  const response = await worker.fetch(new Request(url, { headers: { authorization: 'Bearer private_admin' } }), h.env);
+  const raw = await response.text(), value = JSON.parse(raw);
+  assert.equal(value.found, true); assert.equal(value.lastInboundAt, h.now());
+  assert.equal(raw.includes(waId), false); assert.equal(raw.includes('private customer text'), false);
+  assert.deepEqual(await h.state(), before); assert.equal(h.requests.length, 0);
+});
+
 test('Meta verification uses its separate token; private preflight requires owner token', async (t) => {
   const h = harness(t);
   assert.equal((await worker.fetch(new Request('https://x.test/webhook?hub.mode=subscribe&hub.verify_token=no&hub.challenge=abc'), h.env)).status, 403);

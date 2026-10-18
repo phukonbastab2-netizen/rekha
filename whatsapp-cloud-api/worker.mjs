@@ -71,9 +71,19 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') return json({ ok: true, service: 'rekha-whatsapp-cloud-api' });
-    if (['/admin/preflight', '/admin/status', '/admin/pause'].includes(url.pathname)) {
+    if (['/admin/preflight', '/admin/status', '/admin/pause', '/admin/conversation-status'].includes(url.pathname)) {
       const auth = request.headers.get('authorization') || '';
       if (!env.ADMIN_TOKEN || !auth.startsWith('Bearer ') || !await equalSecret(auth.slice(7), env.ADMIN_TOKEN)) return json({ error: 'unauthorized' }, 401);
+      if (url.pathname === '/admin/conversation-status') {
+        if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+        const objectId = url.searchParams.get('id') || '';
+        if (!/^[a-f0-9]{64}$/i.test(objectId)) return json({ error: 'invalid_object_id' }, 400);
+        try {
+          const stub = env.CONVERSATIONS.get(env.CONVERSATIONS.idFromString(objectId));
+          const result = await stub.fetch('https://conversation.internal/summary');
+          return json(await result.json(), result.status);
+        } catch { return json({ error: 'storage_unavailable' }, 503); }
+      }
       if (url.pathname === '/admin/pause' && request.method === 'POST') {
         try { return json(await control(env, 'pause', { reason: 'owner_pause', at: Date.now() })); } catch { return json({ error: 'control_unavailable' }, 503); }
       }
@@ -123,6 +133,10 @@ export default {
         const response = await env.CONVERSATIONS.get(id).fetch('https://conversation.internal/ingest', { method: 'POST', body: JSON.stringify(event) });
         if (!response.ok) throw new Error('persistence_failed');
       }
+      if (events.length) await control(env, 'receipt', {
+        inbound: events.some(event => event.kind === 'inbound'),
+        status: events.some(event => event.kind === 'status'),
+      });
     } catch { return json({ error: 'persistence_unavailable' }, 503); }
     return json({ received: true });
   },
@@ -156,6 +170,14 @@ export class FunnelConversation {
     return false;
   }
   async fetch(request) {
+    if (request.method === 'GET' && new URL(request.url).pathname === '/summary') return this.exclusive(async () => {
+      const state = await this.storage.get('state');
+      if (!state || state.phoneNumberId !== this.env.WA_PHONE_NUMBER_ID) return json({ found: false });
+      return json({ found: true, lastInboundAt: state.lastInboundAt, firstStarted: state.firstStarted,
+        optedOut: state.optedOut, restricted: state.restricted,
+        jobs: state.jobs.map(({ stage, state: status, delivery, reason }) => ({ stage, status, delivery, reason })),
+      });
+    });
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/ingest') return json({ error: 'not_found' }, 404);
     let event; try { event = await request.json(); } catch { return json({ error: 'invalid_event' }, 400); }
     return this.exclusive(() => this.ingest(event));
@@ -301,7 +323,22 @@ export class CloudApiControl {
   async fetch(request) {
     const run = async () => {
       const path = new URL(request.url).pathname;
-      if (path === '/state' && request.method === 'GET') return json(await this.storage.get('account') || { paused: false });
+      if (path === '/state' && request.method === 'GET') {
+        const account = await this.storage.get('account') || { paused: false };
+        const ingestion = await this.storage.get('ingestion');
+        return json({ ...account, ...(ingestion ? { ingestion } : {}) });
+      }
+      if (path === '/receipt' && request.method === 'POST') {
+        const value = await request.json();
+        const previous = await this.storage.get('ingestion') || {};
+        const now = Date.now();
+        const ingestion = { ...previous, lastWebhookAt: now,
+          ...(value.inbound === true ? { lastInboundAt: now } : {}),
+          ...(value.status === true ? { lastStatusAt: now } : {}),
+        };
+        await this.storage.put('ingestion', ingestion);
+        return json({ stored: true });
+      }
       if (path === '/pause' && request.method === 'POST') {
         const value = await request.json();
         const previous = await this.storage.get('account');

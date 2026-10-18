@@ -4,21 +4,29 @@ This service has its own Worker, callback, credentials and Durable Object storag
 
 ## Current state
 
-Sending and read receipts are disabled. No Meta access token, app secret or phone-number ID is configured. The existing `rekha` WhatsApp Business account was shown as **Banned** in Meta on 18 October 2026. A working endpoint does not restore that account or prove message delivery.
+The separate connection was configured on 18 October 2026 under the **rekha** portfolio, using its existing **rekha astrology** app and the approved WABA `1618188039845611`. A dedicated Employee system user has access to only that app and WABA. Its 60-day token has WhatsApp messaging and management scopes. Credentials remain private Worker secrets.
+
+Sending and read receipts remain disabled. The verification challenge and signature checks pass. Both the selected WABA and its phone have explicit webhook overrides pointing to this service; the app-wide callback is unchanged. A real owner-controlled inbound test was received and stored at **2026-10-18 16:28:36 UTC**, with all five original funnel jobs held and no outgoing send. Outgoing delivery has not been verified.
+
+The latest Meta health check reports the portfolio and app as available, the display name as pending review, and a payment-method error blocking business-initiated conversations. This is not evidence that incoming messages or customer-service replies are blocked. Do not interpret `readyForConnection` as permission or readiness to send; it checks local configuration only.
 
 The original owner-supplied ₹29 funnel text, media and five-second spacing are kept as a disabled draft. An image or explicit payment report after enrollment schedules the original one-hour followup once; this records **pending review**, never verified payment. Validate the business identity, testimonial claims, offers and chart descriptions before activation. No personalized chart calculation is implemented here.
 
 ## Setup
 
-1. Resolve the existing restriction through WhatsApp/Meta's available review process. Do not create replacement accounts to evade it.
+1. Check the selected business, app, WABA and phone's current Meta eligibility. Resolve restrictions through Meta's available review process; configuration cannot override enforcement.
 2. Connect an eligible, authorized Meta app/WABA/phone number. Use that app's actual Graph API version and phone-number ID.
 3. Store `META_ACCESS_TOKEN`, `META_APP_SECRET`, `META_VERIFY_TOKEN` and `ADMIN_TOKEN` as Worker secrets. Never commit them or send them in chat.
-4. Set the Meta webhook callback to `https://rekha-whatsapp-cloud-api.phukonbastab2.workers.dev/webhook`, verify it with the private verification token, and subscribe the app to the WABA's `messages` events. Do not replace another integration's callback without reviewing its impact.
+4. Use `https://rekha-whatsapp-cloud-api.phukonbastab2.workers.dev/webhook`, verify it with the private verification token, and subscribe the app to the WABA's `messages` events. This installation uses both WABA-specific and phone-specific overrides, preserving the app-wide callback and other accounts. Inspect any existing phone-level override before changing routing.
 5. Keep `SEND_ENABLED=false` while checking the authenticated `/admin/preflight` endpoint and signed incoming events.
 6. Before each approved activation, rotate `SEND_EPOCH` to a fresh value and then set `SEND_ENABLED=true`. A fresh customer message is required to release held work. Old queues never release just because configuration changes. Persisted conversation state is bound to its original sender ID.
 7. Test one owner-controlled conversation end to end: incoming webhook, exact funnel, accepted message IDs, and actual signed sent/delivered/read or failed receipts. Check real device delivery before expanding traffic.
 
 `POST /admin/pause` with `Authorization: Bearer <ADMIN_TOKEN>` durably pauses the account. `/admin/status` and `/admin/preflight` require the same token. There is deliberately no public send or resume route. A provider restriction also pauses all contacts. A restriction pause requires a reviewed maintenance change after Meta restores eligibility; changing the enable flag cannot bypass it.
+
+Private status includes timestamps for successfully stored inbound/status webhooks. `/admin/conversation-status?id=<durable-object-id>` lets the owner verify stored receipt times and held job states without exposing customer text, phone numbers or message IDs. It is read-only, requires the same owner token and never releases queued messages.
+
+Separate credentials and storage limit accidental cross-account changes. They cannot guarantee that a WhatsApp restriction will leave its Meta portfolio unaffected. Meta controls account and organization enforcement; there is no ban-proof portfolio setting. Respect opt-outs, service windows and approved limits, and retain a direct support route before activating automation.
 
 ## Delivery behavior and limits
 
