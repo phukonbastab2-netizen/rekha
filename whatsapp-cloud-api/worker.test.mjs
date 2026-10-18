@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import worker, { FunnelConversation, CloudApiControl, isOptOut, isPaymentConfirmation } from './worker.mjs';
-import { firstSequence, mediaSequence, GAP, MEDIA_DELAY } from './funnel.mjs';
+import { firstSequence, reminder, mediaSequence, GAP, REMINDER_DELAY, MEDIA_DELAY } from './funnel.mjs';
 
 class Storage {
   data = new Map(); alarmAt = null;
@@ -189,9 +189,11 @@ test('five first steps send one at a time with stable IDs and five second spacin
   await h.incoming('Hi again', 'wamid.incoming2'); await h.object().alarm();
   const state = await h.state();
   assert.equal(h.requests.length, firstSequence.length);
-  assert.equal(state.jobs.length, firstSequence.length);
-  assert.ok(state.jobs.every((j) => j.state === 'accepted' && j.messageId));
-  assert.equal(new Set(state.jobs.map((j) => j.id)).size, firstSequence.length);
+  const first = state.jobs.filter(j => j.stage === 'first');
+  assert.equal(first.length, firstSequence.length);
+  assert.ok(first.every((j) => j.state === 'accepted' && j.messageId));
+  assert.equal(new Set(first.map((j) => j.id)).size, firstSequence.length);
+  assert.equal(state.jobs.filter(j => j.stage === 'reminder').length, 1);
 });
 
 test('disabled sends persist held work; an enable requires a fresh inbound to release it', async (t) => {
@@ -248,14 +250,26 @@ test('explicit payment report schedules original one hour followup once without 
   assert.equal(state.jobs.filter((j) => j.stage === 'payment_followup').length, mediaSequence.length);
   assert.equal(state.jobs.find((j) => j.stage === 'payment_followup').dueAt, reportAt + MEDIA_DELAY);
   await h.object().alarm(); assert.equal(h.requests.length, firstSequence.length);
-  h.advance(MEDIA_DELAY); await h.object().alarm(); assert.equal(h.requests.length, firstSequence.length + 1);
+  h.advance(REMINDER_DELAY); await h.object().alarm(); assert.equal(h.requests.length, firstSequence.length + 1);
+  assert.equal(h.requests.at(-1).text.body, reminder.body);
+  h.advance(MEDIA_DELAY - REMINDER_DELAY); await h.object().alarm(); assert.equal(h.requests.length, firstSequence.length + 2);
+  assert.equal(h.requests.at(-1).image.link, mediaSequence[0].url);
 });
 
-test('reminder requires a later relevant question and is queued only once', async (t) => {
+test('any later customer reply queues the original reminder once, never automatically', async (t) => {
   const h = harness(t); await h.incoming(); await drain(h);
-  await h.incoming('Thank you', 'wamid.thanks'); assert.equal((await h.state()).reminderScheduled, false);
-  await h.incoming('How to send details?', 'wamid.question'); await h.incoming('What details?', 'wamid.question2');
+  h.advance(REMINDER_DELAY); await h.object().alarm();
+  assert.equal((await h.state()).reminderScheduled, false);
+  assert.equal(h.requests.length, 5);
+  await h.incoming('Namaste', 'wamid.namaste');
+  const due = (await h.state()).jobs.find(j => j.stage === 'reminder').dueAt;
+  await h.incoming('01/01/1990', 'wamid.dob'); await h.incoming('Thank you', 'wamid.thanks');
   assert.equal((await h.state()).jobs.filter((j) => j.stage === 'reminder').length, 1);
+  assert.equal((await h.state()).jobs.find(j => j.stage === 'reminder').dueAt, due);
+  h.advance(REMINDER_DELAY - 1); await h.object().alarm(); assert.equal(h.requests.length, 5);
+  h.advance(1); await h.object().alarm(); assert.equal(h.requests.at(-1).text.body, reminder.body);
+  await h.incoming('Hi again', 'wamid.afterreminder'); h.advance(REMINDER_DELAY); await h.object().alarm();
+  assert.equal(h.requests.length, 6);
 });
 
 test('ambiguous network outcome blocks the contact; redelivery and new inbound never resend it', async (t) => {
@@ -379,4 +393,107 @@ test('an image schedules the original one-hour followup once, pending manual pay
   const followup = state.jobs.filter(job => job.stage === 'payment_followup');
   assert.equal(followup.length, mediaSequence.length);
   assert.equal(followup[0].dueAt, at + MEDIA_DELAY);
+});
+
+test('media-only new leads enroll once; a first image also schedules its delayed followup', async (t) => {
+  const h = harness(t);
+  for (const [index, type] of ['image', 'audio', 'video', 'document', 'sticker', 'location', 'contacts'].entries()) {
+    const number = `91900000000${index}`;
+    await h.incoming('', `wamid.first-${type}`, { type }, number);
+    await h.incoming('', `wamid.first-${type}`, { type }, number);
+    const state = await h.state(number);
+    assert.equal(state.firstStarted, true, type);
+    assert.equal(state.jobs.filter(j => j.stage === 'first').length, 5, type);
+    assert.equal(state.mediaScheduled, type === 'image', type);
+    assert.equal(state.reminderScheduled, false, type);
+    await h.object(number).alarm();
+    assert.equal(h.requests.at(-1).text.body, firstSequence[0].body);
+  }
+  await h.incoming('', 'wamid.reaction', { type: 'reaction' });
+  await h.incoming('', 'wamid.system', { type: 'system' });
+  assert.equal((await h.state()).firstStarted, false);
+});
+
+test('an initial payment report enrolls the lead and schedules followup without claiming verification', async (t) => {
+  const h = harness(t); await h.incoming('payment done');
+  const state = await h.state();
+  assert.equal(state.jobs.filter(j => j.stage === 'first').length, 5);
+  assert.equal(state.jobs.filter(j => j.stage === 'payment_followup').length, 4);
+  assert.equal(state.paymentState, 'customer_reported_pending_review');
+  assert.equal(state.reminderScheduled, false);
+});
+
+test('an early image cannot block the later one-minute reminder behind the one-hour media jobs', async (t) => {
+  const h = harness(t); const photoAt = h.now();
+  await h.incoming('', 'wamid.firstphoto', { type: 'image' });
+  await drain(h);
+  await h.incoming('My name', 'wamid.name');
+  assert.equal(h.object().storage.alarmAt, h.now() + REMINDER_DELAY);
+  h.advance(REMINDER_DELAY); await h.object().alarm();
+  assert.equal(h.requests.length, 6); assert.equal(h.requests.at(-1).text.body, reminder.body);
+  assert.equal(h.object().storage.alarmAt, photoAt + MEDIA_DELAY);
+  h.advance(photoAt + MEDIA_DELAY - h.now()); await h.object().alarm();
+  assert.equal(h.requests.at(-1).image.link, mediaSequence[0].url);
+});
+
+test('the complete ten-message flow survives concurrent duplicates, restarts and repeated replies', async (t) => {
+  const h = harness(t);
+  const restart = () => {
+    const name = `${phoneId}:${waId}`, storage = h.object().storage;
+    h.env.CONVERSATIONS.objects.set(name, new FunnelConversation({ storage, waitUntil() {} }, h.env));
+  };
+  await Promise.all(Array.from({ length: 8 }, () => h.incoming('Hi', 'wamid.start')));
+  await drain(h);
+  assert.deepEqual(h.requests.map(p => p.type), ['text', 'video', 'video', 'image', 'text']);
+  restart();
+  await Promise.all(Array.from({ length: 6 }, (_, i) => h.incoming('Namaste', `wamid.reply${i}`)));
+  h.advance(REMINDER_DELAY); await h.object().alarm(); await h.object().alarm();
+  assert.equal(h.requests.length, 6); assert.equal(h.requests[5].text.body, reminder.body);
+  const photoAt = h.now();
+  await Promise.all(Array.from({ length: 6 }, () => h.incoming('', 'wamid.proof', { type: 'image' })));
+  await h.incoming('payment done', 'wamid.payment-again');
+  restart();
+  h.advance(MEDIA_DELAY - 1); await h.object().alarm(); assert.equal(h.requests.length, 6);
+  h.advance(1);
+  for (const step of mediaSequence) {
+    await h.object().alarm(); await h.object().alarm();
+    assert.equal(h.requests.at(-1)[step.type].link, step.url);
+    h.advance(GAP); restart();
+  }
+  for (let i = 0; i < 5; i++) { await h.incoming('Namaste', `wamid.after${i}`); await h.object().alarm(); }
+  const state = await h.state();
+  assert.equal(h.requests.length, 10);
+  assert.equal(state.jobs.length, 10); assert.equal(new Set(state.jobs.map(j => j.id)).size, 10);
+  assert.ok(state.jobs.every(j => j.state === 'accepted' && j.attempts === 1));
+  assert.equal(state.jobs.find(j => j.stage === 'payment_followup').acceptedAt, photoAt + MEDIA_DELAY);
+  for (let i = 1; i < state.jobs.length; i++) assert.ok(state.jobs[i].acceptedAt - state.jobs[i - 1].acceptedAt >= GAP);
+  for (const job of state.jobs) {
+    await h.object().fetch(new Request('https://conversation.internal/ingest', { method: 'POST', body: JSON.stringify({ kind: 'status', waId, id: job.messageId, status: 'read' }) }));
+    await h.object().fetch(new Request('https://conversation.internal/ingest', { method: 'POST', body: JSON.stringify({ kind: 'status', waId, id: job.messageId, status: 'sent' }) }));
+  }
+  assert.ok((await h.state()).jobs.every(j => j.delivery === 'read'));
+  assert.equal(h.object().storage.alarmAt, null);
+});
+
+test('opting out after the first five cancels both the reminder and delayed media', async (t) => {
+  const h = harness(t); await h.incoming(); await drain(h);
+  await h.incoming('', 'wamid.proof', { type: 'image' });
+  await h.incoming('STOP', 'wamid.stop'); h.advance(MEDIA_DELAY); await h.object().alarm();
+  assert.equal(h.requests.length, 5);
+  assert.ok((await h.state()).jobs.filter(j => j.stage !== 'first').every(j => j.state === 'cancelled'));
+});
+
+test('late confirmed delivery resolves a failure without replaying its accepted step', async (t) => {
+  const h = harness(t); await h.incoming(); await h.object().alarm();
+  const messageId = (await h.state()).jobs[0].messageId;
+  const receipt = status => h.object().fetch(new Request('https://conversation.internal/ingest', {
+    method: 'POST', body: JSON.stringify({ kind: 'status', waId, id: messageId, status, errors: [{ code: 131026 }] }),
+  }));
+  await receipt('failed'); h.advance(GAP); await h.object().alarm(); assert.equal(h.requests.length, 1);
+  await receipt('sent'); await h.object().alarm(); assert.equal(h.requests.length, 1);
+  assert.equal((await h.state()).deliveryBlocked, true);
+  await receipt('delivered'); await h.object().alarm(); assert.equal(h.requests.length, 2);
+  const state = await h.state();
+  assert.equal(state.deliveryBlocked, false); assert.equal(state.jobs[0].delivery, 'delivered');
+  assert.equal(state.jobs[0].attempts, 1); assert.equal(h.requests[1].type, 'video');
 });

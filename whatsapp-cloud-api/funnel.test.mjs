@@ -22,6 +22,20 @@ test('separate QR asset exactly matches its committed source image',()=>{
   assert.deepEqual(Buffer.from(qr,'base64'),bytes);
   assert.match(firstSequence[3].url,/rekha-whatsapp-cloud-api\.phukonbastab2\.workers\.dev/);
 });
+
+test('the original wording and greeting paragraphs reach WhatsApp unchanged', () => {
+  const copy = JSON.parse(fs.readFileSync(new URL('./funnel-copy.json', import.meta.url), 'utf8'));
+  const original = JSON.parse(fs.readFileSync(new URL('../openwa-funnel/funnel-copy.json', import.meta.url), 'utf8'));
+  assert.deepEqual(copy, original);
+  const expected = [copy.greeting, copy.firstCaption, copy.testimonialsCaption, copy.qrCaption, copy.final,
+    copy.reminder, copy.kundliCaption, copy.solutionCaption, copy.pujaCaption, ''];
+  const steps = [...firstSequence, reminder, ...mediaSequence];
+  assert.deepEqual(steps.map(step => step.body), expected);
+  const greeting = makeCloudPayload('919000000000', firstSequence[0]).text.body;
+  assert.equal(greeting.split('\n\n').length, 8);
+  assert.ok(greeting.includes('client आते हैं।\nइसलिए'));
+  assert.ok(!greeting.includes('\\n'), 'Newlines must be actual paragraph breaks');
+});
 test('committed deployment cannot accidentally enable production sends',()=>{
   const config=JSON.parse(fs.readFileSync(new URL('./wrangler.jsonc',import.meta.url),'utf8'));
   assert.equal(config.vars.SEND_ENABLED,'false');

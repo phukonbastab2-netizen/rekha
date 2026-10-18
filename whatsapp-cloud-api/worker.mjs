@@ -63,8 +63,17 @@ export function isPaymentConfirmation(text) {
     || /(पेमेंट (कर दिया|कर दी|हो गया|हो गई)|भुगतान (कर दिया|कर दी|हो गया)|पैसे भेज दिए|पैसे भेज दिये|₹\s*29\s*(भेज|दे दिए))/u.test(t);
 }
 
-function isRelevantQuestion(text) {
-  return /[?？]|\b(help|how|what|details|detail|payment|pay|kundli|reading|video|kaise|kya|bataye|bataiye|samajh|29)\b|कैसे|क्या|बताइए|बताएं|विवरण|कुंडली|पेमेंट|भुगतान/iu.test(text);
+function isCustomerMessage(event, text) {
+  if (event.type === 'text') return Boolean(text.trim());
+  return ['button', 'interactive', 'image', 'video', 'audio', 'document', 'sticker', 'location', 'contacts', 'order'].includes(event.type);
+}
+
+// The old Worker ran first messages, then the one-time reminder, then media.
+// A one-hour media job inserted before a later reminder must not block it.
+const stageOrder = { first: 0, reminder: 1, payment_followup: 2 };
+function nextJob(state) {
+  return state.jobs.filter((job) => ['pending', 'retry'].includes(job.state))
+    .sort((a, b) => (stageOrder[a.stage] ?? 3) - (stageOrder[b.stage] ?? 3) || a.order - b.order)[0];
 }
 
 export default {
@@ -236,8 +245,9 @@ export class FunnelConversation {
       const state = await this.load();
       if (!state || state.phoneNumberId !== this.env.WA_PHONE_NUMBER_ID) return json({ found: false });
       return json({ found: true, lastInboundAt: state.lastInboundAt, firstStarted: state.firstStarted,
+        reminderScheduled: state.reminderScheduled, mediaScheduled: state.mediaScheduled, paymentState: state.paymentState,
         optedOut: state.optedOut, restricted: state.restricted,
-        jobs: state.jobs.map(({ stage, state: status, delivery, reason, lastError, deliveryFailure }) => ({ stage, status, delivery, reason,
+        jobs: state.jobs.map(({ id, stage, state: status, dueAt, acceptedAt, delivery, reason, lastError, deliveryFailure }) => ({ id, stage, status, dueAt, acceptedAt, delivery, reason,
           ...(lastError ? { errorCode: lastError.code, httpStatus: lastError.status } : {}),
           ...(deliveryFailure?.length ? { deliveryErrorCodes: deliveryFailure.map(e => e.code) } : {}),
         })),
@@ -257,8 +267,12 @@ export class FunnelConversation {
       const job = state.jobs.find((j) => j.messageId === event.id);
       if (job) {
         const ranks = { sent: 1, delivered: 2, read: 3 };
-        if ((ranks[event.status] || 0) > (ranks[job.delivery] || 0)) job.delivery = event.status;
-        if (event.status === 'failed' && !['delivered', 'read'].includes(job.delivery)) { job.delivery = 'failed'; job.deliveryFailure = event.errors || []; state.deliveryBlocked = true; }
+        if ((ranks[event.status] || 0) > (ranks[job.delivery] || 0)
+          && (job.delivery !== 'failed' || ranks[event.status] >= ranks.delivered)) job.delivery = event.status;
+        if (event.status === 'failed' && !['delivered', 'read'].includes(job.delivery)) { job.delivery = 'failed'; job.deliveryFailure = event.errors || []; }
+        // Only a signed delivered/read receipt can clear a previous delivery
+        // failure. Continue with the next step; never replay the accepted one.
+        state.deliveryBlocked = state.jobs.some(j => j.delivery === 'failed');
       }
       const restriction = event.status === 'failed' && event.errors?.find((e) => restrictedCodes.has(Number(e.code)));
       if (restriction) { state.restricted = true; state.pendingRestrictionFlag = { reason: 'provider_restriction', code: restriction.code, at: Date.now() }; }
@@ -287,14 +301,19 @@ export class FunnelConversation {
     } else if (fresh && !state.optedOut && !state.restricted) {
       const active = enabled(this.env) && ready(this.env);
       if (active) for (const job of state.jobs) if (['held', 'pending', 'retry'].includes(job.state)) { job.state = 'pending'; job.epoch = this.env.SEND_EPOCH; job.authorizedAt = eventAt; }
-      if (text && !state.firstStarted) {
+      const customerMessage = isCustomerMessage(event, text);
+      if (customerMessage && !state.firstStarted) {
         state.firstStarted = true;
         this.addSequence(state, 'first', firstSequence, now, active, eventAt);
-      } else if (state.firstStarted) {
+      }
+      if (state.firstStarted && customerMessage) {
         if ((event.type === 'image' || isPaymentConfirmation(text)) && !state.mediaScheduled) {
           state.paymentState = 'customer_reported_pending_review'; state.paymentReportedAt = eventAt; state.mediaScheduled = true;
           this.addSequence(state, 'payment_followup', mediaSequence, now + MEDIA_DELAY, active, eventAt);
-        } else if (!state.reminderScheduled && !state.mediaScheduled && state.jobs.filter((j) => j.stage === 'first').every((j) => j.state === 'accepted') && isRelevantQuestion(text)) {
+        }
+        // Any later customer message while waiting triggers the original
+        // reminder once. Image/payment followup scheduling is independent.
+        if (!state.reminderScheduled && state.jobs.filter((j) => j.stage === 'first').every((j) => j.state === 'accepted')) {
           state.reminderScheduled = true;
           this.addSequence(state, 'reminder', [reminder], now + REMINDER_DELAY, active, eventAt);
         }
@@ -323,7 +342,10 @@ export class FunnelConversation {
     return json({ stored: true });
   }
   addSequence(state, stage, steps, dueAt, active, authorizedAt) {
-    for (let index = 0; index < steps.length; index++) state.jobs.push({ id: `${stage}:${index}`, stage, step: steps[index], order: state.nextOrder++, state: active ? 'pending' : 'held', dueAt, epoch: active ? this.env.SEND_EPOCH : null, authorizedAt, attempts: 0 });
+    for (let index = 0; index < steps.length; index++) {
+      const id = `${stage}:${index}`;
+      if (!state.jobs.some(job => job.id === id)) state.jobs.push({ id, stage, step: steps[index], order: state.nextOrder++, state: active ? 'pending' : 'held', dueAt, epoch: active ? this.env.SEND_EPOCH : null, authorizedAt, attempts: 0 });
+    }
   }
   blocked(state) { return state.optedOut || state.restricted || state.deliveryBlocked || state.jobs.some((j) => ['uncertain', 'failed', 'sending'].includes(j.state)); }
   async propagateRestriction(state) {
@@ -333,7 +355,7 @@ export class FunnelConversation {
   async schedule(state) {
     if (state.pendingRestrictionFlag) { await this.storage.setAlarm(Date.now() + 5000); return; }
     if (this.blocked(state)) { await this.storage.deleteAlarm(); return; }
-    const next = state.jobs.filter((j) => ['pending', 'retry'].includes(j.state)).sort((a, b) => a.order - b.order)[0];
+    const next = nextJob(state);
     if (!next) { await this.storage.deleteAlarm(); return; }
     await this.storage.setAlarm(Math.max(Date.now() + 1, next.dueAt, (state.lastAcceptedAt || 0) + GAP));
   }
@@ -343,7 +365,7 @@ export class FunnelConversation {
     if (!await this.checkSender(state)) return;
     if (state.pendingRestrictionFlag) { await this.propagateRestriction(state); await this.schedule(state); return; }
     if (this.blocked(state)) { await this.storage.deleteAlarm(); return; }
-    const job = state.jobs.filter((j) => ['pending', 'retry'].includes(j.state)).sort((a, b) => a.order - b.order)[0];
+    const job = nextJob(state);
     if (!job) { await this.storage.deleteAlarm(); return; }
     const now = Date.now();
     if (!enabled(this.env) || !ready(this.env) || job.epoch !== this.env.SEND_EPOCH || now - state.lastInboundAt >= DAY) {
