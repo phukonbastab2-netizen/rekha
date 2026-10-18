@@ -203,6 +203,12 @@ export class Engine {
         if(isSelf&&c&&!c.isSelf){c={...c,isSelf:true,name:selfName(c.name||name)};this.put(c);}
         if(input.editedAt){const mutation=this.captureMutation({...input,mutation:'edit',direction:'out'});if(mutation.mutated)return mutation;}
         else if(!existing.revoked&&!existing.body&&input.body&&existing.type===type){const mutation=this.captureMutation({...input,mutation:'hydrate',direction:'out'});if(mutation.mutated)return mutation;}
+        // Older gateway versions saved the outgoing row without advancing its
+        // chat preview. Repair only from that saved row, never snapshot text.
+        const existingAt=Number(existing.at),preview=existing.revoked?'[Message deleted on WhatsApp]':existing.sensitive||isSensitive(String(existing.body||''))?'[Sensitive message omitted]':String(existing.body||'['+existing.type+']').slice(0,150);
+        if(c&&Number.isFinite(existingAt)&&(existingAt>(c.lastAt||0)||existingAt===c.lastAt&&c.lastMessageKey===existing.key&&c.preview!==preview)){
+          c={...c,lastAt:existingAt,lastMessageKey:existing.key,preview};this.put(c);
+        }
         const ack=Number(input.ack),status=ack>=3?'read':ack===2?'delivered':ack===1?'sent':ack===-1?'failed':null;
         const rank={queued:0,accepted:0,sent:1,delivered:2,read:3,failed:4};
         // Repeated snapshots must not rewrite unchanged ACKs into cloud backup.
@@ -303,11 +309,12 @@ export class Engine {
     this.transaction(() => {
       const j = this.get(key);
       if (!j || !['sending', 'unknown'].includes(j.state)) return;
-      const accepted = typeof providerId === 'string' && providerId.length > 0;
-      this.put({ ...j, state: accepted ? 'accepted' : 'unknown', providerId: providerId || null, error: accepted ? '' : error || 'Outcome unknown. Check WhatsApp before resolving.', completedAt: this.now() });
+      const accepted = typeof providerId === 'string' && providerId.length > 0, at=this.now(), messageKey='out:'+key;
+      this.put({ ...j, state: accepted ? 'accepted' : 'unknown', providerId: providerId || null, error: accepted ? '' : error || 'Outcome unknown. Check WhatsApp before resolving.', completedAt: at });
       const c = this.contact(j.peer);
-      this.put({ ...c, lastSentAt: this.now(), paused: accepted ? c.paused : true, stage: accepted && j.phase === 'first' && j.step === firstSequence.length - 1 ? 'waiting_for_details' : c.stage });
-      this.put({ key: 'out:' + key, kind: 'message', peer: j.peer, direction: 'out', id: key, type: j.payload.type, body: j.payload.body, url: j.payload.url, at: this.now(), source: j.phase.startsWith('manual-') ? 'owner' : 'funnel', status: accepted ? 'accepted' : 'unknown', providerId: providerId || null });
+      const latest=at>=(c.lastAt||0)?{lastAt:at,lastMessageKey:messageKey,preview:(isSensitive(String(j.payload.body||''))?'[Sensitive message omitted]':String(j.payload.body||'['+j.payload.type+']')).slice(0,150)}:{};
+      this.put({ ...c, ...latest, lastSentAt: at, paused: accepted ? c.paused : true, stage: accepted && j.phase === 'first' && j.step === firstSequence.length - 1 ? 'waiting_for_details' : c.stage });
+      this.put({ key: messageKey, kind: 'message', peer: j.peer, direction: 'out', id: key, type: j.payload.type, body: j.payload.body, url: j.payload.url, at, source: j.phase.startsWith('manual-') ? 'owner' : 'funnel', status: accepted ? 'accepted' : 'unknown', providerId: providerId || null });
     });
   }
   resolveUnknown(key, action) {

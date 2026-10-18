@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Engine} from './engine.mjs';
+import {firstSequence,GAP} from './funnel.mjs';
 
 const peer='919876543210@c.us';
 const outgoing=(extra={})=>({peer,id:'true_phone-message',at:1000000,since:900000,type:'text',body:'Hello from the business phone',ack:1,fromMe:true,...extra});
@@ -49,6 +50,43 @@ test('existing gateway sends are deduplicated by provider ID while ACKs can adva
   assert.equal(e.captureOutgoing(outgoing({id:'gateway-provider',ack:3})).duplicate,true);
   assert.equal(e.stats().messages,before);assert.equal(e.get('out:'+job.key).status,'read');
   assert.equal(e.get('out:provider:gateway-provider'),null);
+});
+
+test('duplicate native echoes repair stale gateway previews once using the saved outgoing record',t=>{
+  const {engine:e,setTime}=setup(t);e.enable(true);e.inbound({peer,id:'customer-first',at:900000,type:'text',body:'Namaste'});const old=e.contact(peer),job=e.reserve();setTime(1120000);e.finish(job.key,'preview-repair-provider');
+  e.put({...e.contact(peer),lastAt:old.lastAt,lastMessageKey:old.lastMessageKey,preview:'Namaste',unread:7,payment:'verified_by_owner'});const before=e.contact(peer),stored=e.get('out:'+job.key);
+  const echo=outgoing({id:'preview-repair-provider',at:1120000,ack:0,body:'Untrusted stale snapshot text'});assert.equal(e.captureOutgoing(echo).duplicate,true);
+  const repaired=e.contact(peer);assert.equal(repaired.preview,stored.body.slice(0,150));assert.equal(repaired.lastAt,stored.at);assert.equal(repaired.lastMessageKey,stored.key);
+  for(const key of ['lastInboundAt','lastSentAt','unread','paused','optedOut','payment','firstStarted','reminderScheduled','mediaScheduled','stage'])assert.equal(repaired[key],before[key],key);
+  const seq=e.db.prepare('SELECT max(seq) AS n FROM changes').get().n;e.captureOutgoing(echo);assert.equal(e.db.prepare('SELECT max(seq) AS n FROM changes').get().n,seq);
+  setTime(1130000);e.inbound({peer,id:'newer-customer-text',at:1130000,type:'text',body:'Newer customer reply'});e.captureOutgoing(echo);assert.equal(e.contact(peer).preview,'Newer customer reply');assert.equal(e.contact(peer).lastMessageKey,'in:newer-customer-text');
+});
+
+test('preview repair keeps deleted and sensitive text hidden and labels captionless media',t=>{
+  const {engine:e,setTime}=setup(t);e.enable(true);e.inbound({peer,id:'customer-first',at:900000,type:'text',body:'Namaste'});const job=e.reserve();setTime(1120000);e.finish(job.key,'guarded-preview-provider');const original=e.get('out:'+job.key);
+  for(const [changes,expected]of [[{type:'image',body:''},'[image]'],[{body:'Your verification code is 123456',sensitive:true},'[Sensitive message omitted]'],[{body:'Previously private text',revoked:true},'[Message deleted on WhatsApp]']]){
+    const stored={...original,...changes};e.put(stored);e.put({...e.contact(peer),lastAt:1100000,lastMessageKey:'in:customer-first',preview:'Namaste'});
+    e.captureOutgoing(outgoing({id:'guarded-preview-provider',at:1120000,type:'image',body:'',ack:0}));assert.equal(e.contact(peer).preview,expected);assert.equal(e.contact(peer).lastMessageKey,stored.key);
+  }
+});
+
+test('every completed funnel step advances the chat preview to its actual message without changing unread or inbound time',t=>{
+  const {engine:e,setTime}=setup(t);e.enable(true);e.inbound({peer,id:'customer-first',at:900000,type:'text',body:'Namaste'});
+  e.put({...e.contact(peer),unread:4,payment:'verified_by_owner'});const inboundAt=e.contact(peer).lastInboundAt;
+  for(let index=0;index<firstSequence.length;index++){
+    const at=1100000+(index+1)*GAP;setTime(at);const job=e.reserve();assert.equal(job.step,index);e.finish(job.key,'funnel-'+index);
+    const c=e.contact(peer),m=e.get('out:'+job.key);assert.equal(c.lastAt,at);assert.equal(c.lastSentAt,at);assert.equal(c.lastMessageKey,m.key);assert.equal(c.preview,(m.body||'['+m.type+']').slice(0,150));assert.equal(c.lastInboundAt,inboundAt);assert.equal(c.unread,4);assert.equal(c.payment,'verified_by_owner');assert.equal(c.paused,false);assert.equal(c.optedOut,false);
+  }
+  assert.equal(e.contact(peer).stage,'waiting_for_details');
+});
+
+test('manual send completion updates preview and uncertain sends retain honest status and pause handling',t=>{
+  const {engine:e,setTime}=setup(t);e.inbound({peer,id:'customer-first',at:900000,type:'text',body:'Namaste'});e.put({...e.contact(peer),paused:true,unread:3,payment:'verified_by_owner'});const before=e.contact(peer);
+  e.manual(peer,'My latest admin reply','preview-request-12345');const job=e.reserve();setTime(1110000);e.finish(job.key,'manual-preview-provider');
+  let c=e.contact(peer);assert.equal(c.preview,'My latest admin reply');assert.equal(c.lastAt,1110000);assert.equal(c.lastMessageKey,'out:'+job.key);assert.equal(c.lastSentAt,1110000);assert.equal(e.get(c.lastMessageKey).status,'accepted');
+  for(const key of ['paused','unread','lastInboundAt','payment','firstStarted','reminderScheduled','mediaScheduled','optedOut','stage'])assert.equal(c[key],before[key],key);
+  setTime(1120000);e.manual(peer,'An uncertain reply','preview-request-12346');const uncertain=e.reserve();setTime(1130000);e.finish(uncertain.key,null);
+  c=e.contact(peer);assert.equal(c.preview,'An uncertain reply');assert.equal(c.lastAt,1130000);assert.equal(c.lastMessageKey,'out:'+uncertain.key);assert.equal(e.get(c.lastMessageKey).status,'unknown');assert.equal(c.paused,true);assert.equal(c.unread,3);assert.equal(c.lastInboundAt,before.lastInboundAt);
 });
 
 test('early gateway echoes defer until finish and cannot create duplicate outgoing rows',t=>{
