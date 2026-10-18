@@ -4,7 +4,7 @@ This service has its own Worker, callback, credentials and Durable Object storag
 
 ## Current state
 
-The separate connection was configured on 18 October 2026 under the **rekha** portfolio, using its existing **rekha astrology** app and the approved WABA `1618188039845611`. A dedicated Employee system user has access to only that app and WABA. Its 60-day token has WhatsApp messaging and management scopes. Credentials remain private Worker secrets.
+The separate connection was configured on 18 October 2026 under the **rekha** portfolio, using its existing **rekha astrology** app and the approved WABA `1618188039845611`. A dedicated Employee system user has access to only that app and WABA. Its non-expiring system-user token has WhatsApp messaging and management scopes. Credentials remain private Worker secrets.
 
 Sending and read receipts are now enabled for fresh customer messages. The verification challenge and signature checks pass. Both the selected WABA and its phone have explicit webhook overrides pointing to this service; the app-wide callback is unchanged. The first live inbound test was stored on **18 October 2026 at 9:58:36 pm IST**. The completed outgoing test received at **10:10:37 pm IST** produced all five original messages, with signed Meta receipts confirming each as delivered or read. Previous held work was not automatically released: a fresh customer message authorized the tested sequence.
 
@@ -30,7 +30,7 @@ Private status includes timestamps for successfully stored inbound/status webhoo
 
 Authenticated `POST /admin/read-latest` accepts an opaque conversation object ID to mark its most recent stored inbound as read. This covers a message received before read receipts were enabled, without sending a chat reply or replaying the funnel. It checks the service window, opt-out and global pause, and repeated marking of the same message is idempotent. A successful current-test acknowledgment was confirmed by Meta after activation.
 
-`/admin/transport-check` performs only authenticated read-only Meta requests to check edge-to-Meta connectivity. It sends no WhatsApp message. The current access token uses a 60-day expiry and needs renewal around **17 December 2026**; there is no automatic token renewal or account recovery process.
+`/admin/transport-check` performs only authenticated read-only Meta requests to check edge-to-Meta connectivity. It sends no WhatsApp message. The current system-user token was replaced with Meta's **Never** expiry option on 18 October 2026. Meta's debugger confirmed `expires_at: 0` and `data_access_expires_at: 0`, the same app-scoped principal and unchanged permissions. Cloudflare authenticated with the replacement after installation. No calendar renewal is scheduled; tokens can still be revoked or invalidated when account access changes. There is no automatic account recovery process.
 
 Separate credentials and storage limit accidental cross-account changes. They cannot guarantee that a WhatsApp restriction will leave its Meta portfolio unaffected. Meta controls account and organization enforcement; there is no ban-proof portfolio setting. Respect opt-outs, service windows and approved limits, and retain a direct support route before activating automation.
 
