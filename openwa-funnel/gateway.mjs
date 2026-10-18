@@ -15,6 +15,7 @@ import {createPhoneHistory} from './phone-history.mjs';
 import {createAttachmentQueue,canAttachMedia} from './attachment-queue.mjs';
 import {createProviderJournal} from './provider-journal.mjs';
 import {withDeadline} from './async-deadline.mjs';
+import {enrollNamaste,enrollStoredNamaste} from './lead-enrollment.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -52,6 +53,15 @@ if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-202
   copyRestored=engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('shop-qr-shahrukh-20261018')");
 }
 if(copyRestored)console.log('Updated pending automatic messages to current owner-approved content.');
+if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='remove-shop-caption-20261018'").get()){
+ engine.restoreQueuedCopy();engine.db.exec("INSERT INTO migrations VALUES('remove-shop-caption-20261018')");
+}
+if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='namaste-lead-rule-20261018'").get()){
+ engine.put({...engine.settings(),namasteLeads:true});
+ const result=await enrollStoredNamaste(engine);
+ engine.put({key:'namaste-lead-backfill-20261018',kind:'settings',...result,at:Date.now()});
+ engine.db.exec("INSERT INTO migrations VALUES('namaste-lead-rule-20261018')");
+}
 let client, runtime, connecting = false, stopping = false, busy = 0, syncing = false, connectedSince = 0, eventsInstalled = false;
 let fastBridge={ready:false},checkingBridge=false;
 let mirror={checkedAt:null,lastIncomingAt:null,lastOutgoingAt:null,lastProviderMessageAt:null},manualSyncing=false;
@@ -154,6 +164,7 @@ async function incoming(message,recovered=false) {
   const result = engine.inbound({...normalized.input,recovered});
   if(result.mutated){mirrorCounters.mutations++;removeMedia(result.removedMedia||[]);void sync();return false;}
   if(result.duplicate)ingress.duplicates++;
+  if(result.accepted||result.duplicate)enrollNamaste(engine,'in:'+id);
   if ((result.accepted||result.duplicate)&&['image','video','audio','ptt','document','sticker'].includes(type) && !isSensitive(message.caption || message.body || '')) attachmentQueue.offer(message,'in:'+id);
   if (!result.accepted) return;
   ingress.accepted++;ingress.lastAcceptedAt=Date.now();
@@ -166,12 +177,17 @@ async function outgoing(message,historical=false){
   noteProviderMessage(normalized.input,'out');
   const result=engine.captureOutgoing(normalized.input);
   if(result.mutated){mirrorCounters.mutations++;removeMedia(result.removedMedia||[]);void sync();return false;}
+  if(result.accepted||result.duplicate){
+    const row=engine.db.prepare("SELECT key FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=?").get(normalized.input.id);
+    if(row&&enrollNamaste(engine,row.key).started){void sync();void pump();}
+  }
   if((result.accepted||result.duplicate)&&['image','video','audio','ptt','document','sticker'].includes(normalized.input.type)&&!isSensitive(normalized.input.body))attachmentQueue.offer(message,result.key||'out:provider:'+normalized.input.id);
   if(!result.accepted)return false;
   mirrorCounters.outgoing++;
   void sync();return true;
 }
 function noteProviderMessage(input,direction){
+ const c=engine.contact(input.peer);if(c&&!c.deleted&&!c.name?.trim()&&input.name?.trim())engine.put({...c,name:input.name.slice(0,100)});
  const field=direction==='out'?'lastOutgoingAt':'lastIncomingAt';
  mirror[field]=Math.max(mirror[field]||0,input.at)||null;
  mirror.lastProviderMessageAt=Math.max(mirror.lastIncomingAt||0,mirror.lastOutgoingAt||0)||null;
@@ -184,6 +200,7 @@ async function mirrorStoredMessage(message){
  if(input.mutation||input.editedAt&&engine.get('in:'+input.id)?.kind==='message')return incoming({...message,...(input.mutation?{}:{mutation:'edit'})},true);
  if(input.at>=inboxSync.since)return incoming(message,true);
  const imported=engine.importHistory(input);
+ enrollNamaste(engine,'in:'+input.id);
  if(['image','video','audio','ptt','document','sticker'].includes(input.type))attachmentQueue.offer(message,'in:'+input.id);
  if(imported){mirrorCounters.journalImports++;void sync();}return imported;
 }

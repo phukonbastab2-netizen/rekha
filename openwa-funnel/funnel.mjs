@@ -10,7 +10,7 @@ export const firstSequence = [
   {type: "text", body: copy.greeting},
   media("video", "wp%20video%201.mp4", copy.firstCaption),
   media("video", "testimonials.mp4", copy.testimonialsCaption),
-  {type:"image",url:payment.qrUrl,body:copy.qrCaption+'\n\n'+payment.shopNote},
+  {type:"image",url:payment.qrUrl,body:copy.qrCaption},
   {type: "text", body: copy.final}
 ];
 export const reminder = {type: "text", body: copy.reminder};

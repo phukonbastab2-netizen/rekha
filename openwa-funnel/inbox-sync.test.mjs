@@ -174,6 +174,29 @@ test('the shared standalone native serializer preserves the live snapshot contra
  assert.equal(plain.fromMe,true);assert.equal(plain.to,peer);assert.equal(plain.timestamp,1000);
 });
 
+test('blank native contact names use only verified phone-number identifiers across all mirror paths',async()=>{
+ const lid='12345678901234@lid';
+ for(const [phoneNumber,wanted]of [[{_serialized:'919876543210@c.us'},'+919876543210'],['919876543210@s.whatsapp.net','+919876543210'],[{_serialized:lid},''],['9198765432101234@c.us',''],['+919876543210@c.us',''],[undefined,'']]){
+  const collection=new EventEmitter(),received=[],contact={pushname:'',formattedName:' ',phoneNumber},model={id:{_serialized:'phone-fallback',fromMe:true,remote:{_serialized:lid}},t:1000,type:'chat',body:'Namaste'};
+  const chat={id:{_serialized:lid},t:1000,contact,msgs:{_models:[model,model]}};
+  collection._models=[model];const context={Store:{Msg:collection,Chat:{_models:[chat],get:()=>chat},Contact:{get:key=>key===lid?contact:undefined}},OpenWA_RuntimeMessageReceived:m=>received.push(m),OpenWA_RuntimeAnyMessage:m=>received.push(m),setTimeout,clearTimeout};
+  const serialize=vm.runInNewContext('('+serializeNativeMessage.toString()+')',context),install=vm.runInNewContext('('+installFastInboxBridge.toString()+')',context),read=vm.runInNewContext('('+readProviderInbox.toString()+')',context);
+  assert.equal(serialize(model).sender.pushname,wanted);install({since:0});collection.emit('add',model);assert.equal(received[0].sender.pushname,wanted);
+  const snapshot=await read({after:0,recentAfter:0});assert.equal(snapshot.chats[0].name,wanted);assert.equal(snapshot.chats[0].messages[0].sender.pushname,wanted);assert.equal(snapshot.recentMessages[0].sender.pushname,wanted);
+  contact.pushname='Existing customer';assert.equal(serialize(model).sender.pushname,'Existing customer');assert.equal(serialize(model,{name:'Chosen name'}).sender.pushname,'Chosen name');collection.emit('add',model);assert.equal(received.at(-1).sender.pushname,'Existing customer');
+  const named=await read({after:0,recentAfter:0});assert.equal(named.chats[0].name,'Existing customer');assert.equal(named.recentMessages[0].sender.pushname,'Existing customer');
+ }
+});
+
+test('phone-name bridge upgrade replaces version-five listeners in the same saved session',()=>{
+ const collection=new EventEmitter(),oldHandler=()=>{},oldAck=()=>{},oldEdit=()=>{};
+ for(const event of ['add','change:type'])collection.on(event,oldHandler);for(const event of ['change:body','change:caption','change:latestEditMsgKey','change:latestEditSenderTimestampMs'])collection.on(event,oldEdit);collection.on('change:ack',oldAck);
+ const context={Store:{Msg:collection},OpenWA_RuntimeMessageReceived:()=>{},__REKHA_INBOX_BRIDGE__:{collection,version:5,failed:0,handler:oldHandler,editHandler:oldEdit,ackHandler:oldAck}};
+ const install=vm.runInNewContext('('+installFastInboxBridge.toString()+')',context);assert.equal(install({since:0}).ready,true);assert.equal(context.__REKHA_INBOX_BRIDGE__.version,6);
+ for(const event of ['add','change:type','change:body','change:caption','change:latestEditMsgKey','change:latestEditSenderTimestampMs','change:ack'])assert.equal(collection.listenerCount(event),1);
+ install({since:0});assert.equal(collection.listenerCount('add'),1);
+});
+
 test('recovery applies a known old edit through the mutation callback without replaying its historical funnel',async t=>{
  const e=new Engine(':memory:',()=>1200000);t.after(()=>e.close());e.put({key:'inbox-recovery',kind:'settings',since:1000000});
  e.importHistory({peer,id:'old-edit',at:900000,type:'text',body:'Old text'});
