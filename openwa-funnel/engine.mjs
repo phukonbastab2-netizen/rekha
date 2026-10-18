@@ -1,9 +1,11 @@
 import { DatabaseSync } from 'node:sqlite';
+import {createHash} from 'node:crypto';
 import { firstSequence, mediaSequence, reminder, GAP, REMINDER_DELAY, MEDIA_DELAY } from './funnel.mjs';
 
 export const validPeer = peer => typeof peer === 'string' && /^[0-9]{5,25}@(c\.us|lid|s\.whatsapp\.net)$/.test(peer);
 export const isSensitive = text => /\b(?:otp|one.time (?:password|code)|verification code|confirmation code|security code|cvv|password|pin)\b.{0,35}\b\d{3,8}\b|\b\d{3,8}\b.{0,35}\b(?:otp|verification code|confirmation code)\b/i.test(text);
 export const consentCommand = body => ['stop','unsubscribe','बंद','बंद करें'].includes(String(body||'').trim().toLowerCase())?'stop':String(body||'').trim().toLowerCase()==='start'?'start':null;
+const payloadFingerprint=payload=>createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 export class Engine {
   constructor(path, now = () => Date.now()) {
     this.now = now;
@@ -362,6 +364,83 @@ export class Engine {
       this.put({ ...j, state: action === 'retry' ? 'queued' : 'accepted', dueAt: this.now(), error: action === 'skip' ? 'Skipped by owner' : 'Resolved by owner', ownerResolution: action,...(j.state==='blocked'&&action==='retry'?{deferAttempts:0,failure:null}:{}) });
       const c=this.contact(j.peer);if(j.state==='blocked'&&action==='retry'&&c?.pauseReason==='pre_send_refusal_limit')this.put({...c,paused:false,pauseReason:null});
       const m = this.get('out:' + key); if (m) this.put({ ...m, status: action === 'sent' ? 'owner_confirmed_sent' : action === 'retry' ? 'retry_queued' : 'skipped' });
+    });
+  }
+  unknownSnapshot(key){
+    const row=this.db.prepare("SELECT stamp,json FROM records WHERE key=? AND kind='job'").get(key);
+    if(!row)return null;
+    const j=JSON.parse(row.json);if(j.state!=='unknown')return null;
+    const contact=this.db.prepare("SELECT stamp,json FROM records WHERE key=? AND kind='contact'").get('contact:'+j.peer);
+    if(!contact)return null;const c=JSON.parse(contact.json);
+    return{key:j.key,peer:j.peer,revision:row.stamp,startedAt:j.startedAt??null,completedAt:j.completedAt??null,payloadHash:payloadFingerprint(j.payload),contactRevision:contact.stamp,paused:!!c.paused,pauseReason:c.pauseReason??null};
+  }
+  // Private operational repair only: a fresh audited snapshot is required and
+  // no customer message is sent by this method. An absent history row is never proof.
+  reconcileUnknown({expected,action,evidence,resume=false}={}){
+    return this.transaction(()=>{
+      if(!expected||!['adopt','retry'].includes(action)||typeof resume!=='boolean')throw Error('Invalid reconciliation');
+      const current=this.unknownSnapshot(expected.key);
+      if(!current||['key','peer','revision','startedAt','completedAt','payloadHash'].some(k=>current[k]!==expected[k]))throw Error('Unknown job changed; review it again');
+      if(resume&&['contactRevision','paused','pauseReason'].some(k=>current[k]!==expected[k]))throw Error('Customer controls changed; review them again');
+      const j=this.get(expected.key),original=this.contact(j.peer),c=this.withStoredConsent(original),at=this.now();
+      if(c.deleted||c.isSelf)throw Error('Customer cannot be resumed');
+      if(!Number.isFinite(j.startedAt)||j.startedAt<=0)throw Error('Missing original send attempt');
+      const end=Number.isFinite(j.completedAt)?j.completedAt:j.startedAt+55000;
+      if(!evidence||!Number.isFinite(evidence.observedAt)||evidence.observedAt<end||evidence.observedAt>at+5000||evidence.observedAt<at-600000)throw Error('Fresh reconciliation evidence is required');
+      const candidates=this.db.prepare("SELECT json FROM records WHERE kind='message' AND peer=? AND json_extract(json,'$.direction')='out' AND json_extract(json,'$.providerId') IS NOT NULL AND coalesce(json_extract(json,'$.at'),stamp) BETWEEN ? AND ?").all(j.peer,j.startedAt-2000,end+55000)
+        .map(row=>JSON.parse(row.json)).filter(m=>m.providerId&&!m.revoked&&!m.sensitive&&m.type===j.payload.type&&String(m.body||'')===String(j.payload.body||''));
+      let canonical=null,proof;
+      if(action==='adopt'){
+        if(evidence.source!=='native_history'||typeof evidence.providerId!=='string'||!evidence.providerId||evidence.providerId.length>300)throw Error('Native message evidence is required');
+        const rows=this.db.prepare("SELECT json FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=?").all(evidence.providerId);
+        if(rows.length!==1)throw Error('Native message identity is not unique');
+        canonical=JSON.parse(rows[0].json);
+        if(canonical.key!==evidence.messageKey||canonical.peer!==j.peer||canonical.direction!=='out'||canonical.revoked||canonical.sensitive||canonical.status==='failed'||canonical.type!==j.payload.type||canonical.at<j.startedAt-2000||canonical.at>end+55000||String(canonical.body||'')!==String(j.payload.body||''))throw Error('Native message does not match the send attempt');
+        const assigned=this.db.prepare("SELECT key FROM records WHERE kind='job' AND key<>? AND json_extract(json,'$.providerId')=? LIMIT 1").get(j.key,evidence.providerId);
+        if(assigned)throw Error('Native message already belongs to another job');
+        if(candidates.length!==1)throw Error('More than one native message could match this job');
+        if(j.payload.type==='text'){
+          if(!j.payload.body||evidence.match!=='exact_text')throw Error('Exact text evidence is required');
+        }else if(evidence.match==='exact_url'){
+          if(!j.payload.url||canonical.url!==j.payload.url)throw Error('Exact media URL evidence is required');
+        }else if(evidence.match==='media_sha256'){
+          if(!/^[a-f0-9]{64}$/.test(evidence.mediaSha256||'')||evidence.mediaSha256!==evidence.expectedMediaSha256||evidence.payloadHash!==expected.payloadHash)throw Error('Matching original and native media hashes are required');
+        }else throw Error('Media caption and time alone are not sufficient evidence');
+        proof={source:'native_history',providerId:evidence.providerId,messageKey:canonical.key,match:evidence.match,...(evidence.match==='media_sha256'?{mediaSha256:evidence.mediaSha256}:{})};
+      }else{
+        if(c.optedOut)throw Error('Customer has opted out');
+        if(j.providerId||candidates.length)throw Error('A possible native send exists; reconcile its identity before retrying');
+        if((j.reconciliationRetries||0)>=1)throw Error('This job already used its guarded retry');
+        const f=evidence.failure;
+        const gatewayProof=evidence.source==='gateway_failure'&&j.failure?.outcome==='not_sent'&&JSON.stringify(f)===JSON.stringify(j.failure)&&(
+          f.status===409&&f.providerCode==='ENGINE_NOT_READY'&&['not_connected','reinjecting'].includes(f.providerReason)||f.status===429&&f.providerCode==='SEND_PACING_LIMITED');
+        const providerProof=evidence.source==='provider_failed_row'&&typeof evidence.providerRowId==='string'&&/^[a-zA-Z0-9_-]{1,100}$/.test(evidence.providerRowId)&&evidence.state==='failed'&&evidence.waMessageId===null&&f?.code==='ENGINE_NOT_READY'&&f.status===409&&f.preSend===true&&evidence.peer===j.peer&&evidence.type===j.payload.type&&evidence.payloadHash===expected.payloadHash&&evidence.attemptStartedAt===j.startedAt&&evidence.attemptCompletedAt===(j.completedAt??null)&&Number.isFinite(evidence.recordedAt)&&evidence.recordedAt>=j.startedAt-2000&&evidence.recordedAt<=end+2000;
+        const ownerReview=evidence.source==='owner_reviewed_history'&&evidence.explicitRetryAuthorization===true&&Number.isFinite(evidence.reviewedAt)&&evidence.reviewedAt>=evidence.observedAt&&evidence.reviewedAt>=at-600000&&evidence.reviewedAt<=at+5000&&['evidenceId','historySha256','providerRowsSha256'].every(k=>/^[a-f0-9]{64}$/.test(evidence[k]||''))&&evidence.expectedSnapshot&&Object.keys(current).every(k=>evidence.expectedSnapshot[k]===current[k]);
+        if(!gatewayProof&&!providerProof&&!ownerReview)throw Error('Verified refusal or explicit fresh owner review is required; missing history alone is insufficient');
+        proof=ownerReview?{source:evidence.source,outcome:'owner_reviewed_retry',reviewedAt:evidence.reviewedAt,evidenceId:evidence.evidenceId,historySha256:evidence.historySha256,providerRowsSha256:evidence.providerRowsSha256}:{source:evidence.source,providerRowId:evidence.providerRowId||null,code:providerProof?'ENGINE_NOT_READY':f.providerCode,status:f.status,preSend:true,outcome:'not_sent'};
+      }
+      const reconciliation={action,at,observedAt:evidence.observedAt,originalRevision:expected.revision,startedAt:expected.startedAt,completedAt:expected.completedAt,payloadHash:expected.payloadHash,...proof};
+      const placeholder=this.get('out:'+j.key);
+      if(action==='adopt'){
+        this.put({...j,state:'accepted',providerId:canonical.providerId,canonicalMessageKey:canonical.key,error:'',failure:null,ownerResolution:'reconciled_sent',reconciliation});
+        this.put({...canonical,source:j.phase.startsWith('manual-')?'owner':'funnel',jobKey:j.key});
+        if(placeholder?.kind==='message'&&placeholder.key!==canonical.key)this.put({key:placeholder.key,kind:'deleted',peer:j.peer,deletedAt:at,reason:'reconciled_to_native_message',canonicalMessageKey:canonical.key});
+        c.lastSentAt=Math.max(c.lastSentAt||0,canonical.at);
+        if(c.lastMessageKey===placeholder?.key)c.lastMessageKey=canonical.key;
+        if(j.phase==='first'&&j.step===firstSequence.length-1)c.stage='waiting_for_details';
+      }else{
+        this.put({...j,state:'queued',dueAt:at,startedAt:null,completedAt:null,providerId:null,error:proof.outcome==='owner_reviewed_retry'?'Owner-reviewed retry; original send outcome remains uncertain':'Verified not sent; same step queued once',failure:null,ownerResolution:proof.outcome==='owner_reviewed_retry'?'owner_reviewed_retry':'reconciled_retry',deferAttempts:0,reconciliationRetries:(j.reconciliationRetries||0)+1,reconciliation});
+        if(placeholder?.kind==='message')this.put({...placeholder,status:'retry_queued'});
+      }
+      let resumeHeld=null;
+      if(resume){
+        if(c.optedOut)resumeHeld='customer_opted_out';
+        else if(c.pauseReason)resumeHeld='owner_or_existing_pause';
+        else if(this.db.prepare("SELECT 1 FROM due_jobs WHERE peer=? AND state IN ('unknown','sending','blocked') LIMIT 1").get(j.peer))resumeHeld='other_unresolved_jobs';
+        else{c.paused=false;c.pauseReason=null;}
+      }
+      this.put(c);
+      return{reconciled:true,action,key:j.key,providerId:canonical?.providerId||null,queued:action==='retry',resumed:resume&&!resumeHeld&&!c.paused&&!c.optedOut,resumeHeld};
     });
   }
   ack(providerId, ack) {

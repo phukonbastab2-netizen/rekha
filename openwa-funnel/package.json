@@ -7,7 +7,7 @@
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env gateway.mjs",
-    "test": "node --test test.mjs cloud.test.mjs http.test.mjs api.test.mjs scale.test.mjs mobile.test.mjs inbox-sync.test.mjs receiver-watchdog.test.mjs outgoing-engine.test.mjs mirror-mutations.test.mjs message-state.test.mjs receiver-probe.test.mjs phone-history.test.mjs attachment-queue.test.mjs provider-journal.test.mjs async-deadline.test.mjs lead-enrollment.test.mjs missed-leads.test.mjs openwa-provider.test.mjs openwa-gateway.test.mjs send-recovery.test.mjs sender-capacity.test.mjs cloud-gateway.test.mjs retention.test.mjs",
+    "test": "node --test test.mjs cloud.test.mjs http.test.mjs api.test.mjs scale.test.mjs mobile.test.mjs inbox-sync.test.mjs receiver-watchdog.test.mjs outgoing-engine.test.mjs mirror-mutations.test.mjs message-state.test.mjs receiver-probe.test.mjs phone-history.test.mjs attachment-queue.test.mjs provider-journal.test.mjs async-deadline.test.mjs lead-enrollment.test.mjs missed-leads.test.mjs openwa-provider.test.mjs openwa-gateway.test.mjs send-recovery.test.mjs sender-capacity.test.mjs cloud-gateway.test.mjs retention.test.mjs reconciliation.test.mjs",
     "build:mobile": "node build-mobile-assets.mjs"
   },
   "dependencies": {
