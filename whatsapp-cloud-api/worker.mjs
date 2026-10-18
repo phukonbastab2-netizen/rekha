@@ -76,6 +76,17 @@ function nextJob(state) {
     .sort((a, b) => (stageOrder[a.stage] ?? 3) - (stageOrder[b.stage] ?? 3) || a.order - b.order)[0];
 }
 
+function holdForNameApproval(state) {
+  state.nameApprovalRequired = true;
+  for (const job of state.jobs) {
+    if (['pending', 'retry'].includes(job.state)
+      || (job.state === 'failed' && job.lastError?.code === 131037 && job.lastError.status === 400 && !job.messageId)) {
+      job.state = 'held'; job.reason = 'display_name_approval_required';
+    }
+  }
+  state.pendingRestrictionFlag = { reason: 'display_name_approval_required', code: 131037, at: Date.now() };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -192,6 +203,13 @@ export class FunnelConversation {
   }
   async load() {
     const state = await this.storage.get('state') || initialState(this.env.WA_PHONE_NUMBER_ID);
+    // A definite 131037 rejection is an approval hold, not an uncertain send.
+    // Migrate older failed jobs without issuing or retrying any WhatsApp send.
+    if (state.jobs.some(job => job.state === 'failed' && job.lastError?.code === 131037 && job.lastError.status === 400 && !job.messageId)) {
+      holdForNameApproval(state);
+      await this.storage.put('state', state);
+      await this.storage.setAlarm(Date.now() + 1);
+    }
     // Owner-reviewed repair for a specific local validation failure. A matching
     // object and activation are required; generic network uncertainty stays held.
     let repair; try { repair = JSON.parse(this.env.LOCAL_REDIRECT_REPAIR || 'null'); } catch { repair = null; }
@@ -246,7 +264,7 @@ export class FunnelConversation {
       if (!state || state.phoneNumberId !== this.env.WA_PHONE_NUMBER_ID) return json({ found: false });
       return json({ found: true, lastInboundAt: state.lastInboundAt, firstStarted: state.firstStarted,
         reminderScheduled: state.reminderScheduled, mediaScheduled: state.mediaScheduled, paymentState: state.paymentState,
-        optedOut: state.optedOut, restricted: state.restricted,
+        optedOut: state.optedOut, restricted: state.restricted, nameApprovalRequired: Boolean(state.nameApprovalRequired),
         jobs: state.jobs.map(({ id, stage, state: status, dueAt, acceptedAt, delivery, reason, lastError, deliveryFailure }) => ({ id, stage, status, dueAt, acceptedAt, delivery, reason,
           ...(lastError ? { errorCode: lastError.code, httpStatus: lastError.status } : {}),
           ...(deliveryFailure?.length ? { deliveryErrorCodes: deliveryFailure.map(e => e.code) } : {}),
@@ -394,7 +412,10 @@ export class FunnelConversation {
       delete job.reason;
     } catch (error) {
       job.lastError = { code: error.code ?? null, status: error.status ?? null, at: Date.now() };
-      if (error.isRestriction) { state.restricted = true; job.state = error.uncertain ? 'uncertain' : 'failed'; job.reason = error.uncertain ? 'delivery_requires_review' : 'account_restricted'; state.pendingRestrictionFlag = { reason: 'provider_restriction', code: error.code ?? null, at: Date.now() }; }
+      if (error.code === 131037 && error.status === 400 && !error.uncertain) {
+        job.state = 'failed'; holdForNameApproval(state);
+      }
+      else if (error.isRestriction) { state.restricted = true; job.state = error.uncertain ? 'uncertain' : 'failed'; job.reason = error.uncertain ? 'delivery_requires_review' : 'account_restricted'; state.pendingRestrictionFlag = { reason: 'provider_restriction', code: error.code ?? null, at: Date.now() }; }
       else if (error.uncertain || !error.retryable) { job.state = error.uncertain || error.retryable === undefined ? 'uncertain' : 'failed'; job.reason = job.state === 'uncertain' ? 'delivery_requires_review' : 'provider_rejected'; }
       else if (job.attempts < MAX_ATTEMPTS) { job.state = 'retry'; job.dueAt = Date.now() + Math.max(GAP * 2 ** (job.attempts - 1), Math.min(3600, Number(error.retryAfterSeconds) || 0) * 1000); }
       else { job.state = 'failed'; job.reason = 'retry_limit_reached'; }
@@ -430,7 +451,7 @@ export class CloudApiControl {
         const value = await request.json();
         const previous = await this.storage.get('account');
         const account = previous?.reason === 'provider_restriction' ? previous : {
-          paused: true, reason: value.reason === 'provider_restriction' ? 'provider_restriction' : 'owner_pause',
+          paused: true, reason: ['provider_restriction', 'display_name_approval_required'].includes(value.reason) ? value.reason : 'owner_pause',
           ...(Number.isFinite(Number(value.code)) ? { code: Number(value.code) } : {}), at: Date.now(),
         };
         await this.storage.put('account', account);

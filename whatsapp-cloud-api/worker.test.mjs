@@ -497,3 +497,35 @@ test('late confirmed delivery resolves a failure without replaying its accepted 
   assert.equal(state.deliveryBlocked, false); assert.equal(state.jobs[0].delivery, 'delivered');
   assert.equal(state.jobs[0].attempts, 1); assert.equal(h.requests[1].type, 'video');
 });
+
+test('display-name rejection preserves all work and pauses sending for every contact', async (t) => {
+  const h = harness(t); await h.incoming();
+  let calls = 0;
+  h.object().fetchImpl = async () => { calls++; return Response.json({ error: { code: 131037 } }, { status: 400 }); };
+  await h.object().alarm(); await h.object().alarm();
+  const state = await h.state();
+  assert.ok(state.jobs.every(j => j.state === 'held'));
+  assert.equal(state.jobs[0].reason, 'display_name_approval_required');
+  assert.equal(state.nameApprovalRequired, true); assert.equal(state.jobs[0].attempts, 1);
+  await h.incoming('Hi', 'wamid.new-lead', {}, '919000000001');
+  await h.object('919000000001').alarm();
+  assert.ok((await h.state('919000000001')).jobs.every(j => j.state === 'held'));
+  const result = await worker.fetch(new Request('https://x.test/admin/status', { headers: { authorization: 'Bearer private_admin' } }), h.env);
+  assert.equal((await result.json()).account.reason, 'display_name_approval_required');
+  assert.equal(calls, 1); assert.equal(h.requests.length, 0);
+});
+
+test('existing rejected reminders migrate to an approval hold without replaying the first five', async (t) => {
+  const h = harness(t); await h.incoming(); await drain(h);
+  await h.incoming('', 'wamid.proof', { type: 'image' });
+  const state = await h.state(); const job = state.jobs.find(j => j.stage === 'reminder');
+  job.state = 'failed'; job.attempts = 1; job.lastError = { code: 131037, status: 400, at: h.now() };
+  await h.object().storage.put('state', state);
+  const restarted = new FunnelConversation({ storage: h.object().storage, waitUntil() {} }, h.env);
+  await restarted.alarm();
+  const migrated = await h.state();
+  assert.equal(migrated.jobs.find(j => j.stage === 'reminder').state, 'held');
+  assert.equal(migrated.jobs.filter(j => j.stage === 'payment_followup' && j.state === 'held').length, 4);
+  assert.ok(migrated.jobs.filter(j => j.stage === 'first').every(j => j.state === 'accepted'));
+  assert.equal(h.requests.length, 5); assert.equal(migrated.pendingRestrictionFlag, undefined);
+});
