@@ -98,13 +98,25 @@ test('owner deletion blocks old messages and persistent mirror tombstones are ne
   assert.equal(e.contact(peer).paused,true);assert.equal(e.contact(peer).unread,0);assert.equal(e.stats().queued,0);
 });
 
-test('invalid, self, system, group and pre-boundary messages create no rows',t=>{
+test('invalid, system, group and pre-boundary messages create no rows',t=>{
   const {engine:e}=setup(t);
   const invalid=[
     {peer:'group@g.us'},{peer:'invalid'},{id:''},{id:'x'.repeat(301)},{at:0},{at:NaN},{since:undefined},{since:-1},{at:899999},{at:1400001},
-    {fromMe:false},{isGroupMsg:true},{isGroup:true},{isSelf:true},{self:true},{selfPeer:peer},{ownerPeer:peer},{isPSA:true},{isNotification:true},{name:'WhatsApp'},{type:'protocol'}
+    {fromMe:false},{isGroupMsg:true},{isGroup:true},{isPSA:true},{isNotification:true},{name:'WhatsApp'},{type:'protocol'}
   ];
   for(const extra of invalid)assert.equal(e.captureOutgoing(outgoing(extra)).ignored,true,JSON.stringify(extra));
   assert.equal(e.stats().contacts,0);assert.equal(e.stats().messages,0);assert.equal(e.stats().queued,0);
   assert.equal(e.captureOutgoing(outgoing({type:'chat',at:900000})).accepted,true);
+});
+
+test('outgoing self notes mirror read-only without starting or accepting any send jobs',t=>{
+  const {engine:e}=setup(t),self=outgoing({id:'self-note',isSelf:true,name:'+91 98765 43210'});
+  const result=e.captureOutgoing(self);assert.equal(result.accepted,true);
+  assert.equal(e.contact(peer).isSelf,true);assert.equal(e.contact(peer).name,'You');assert.equal(e.contact(peer).unread,0);assert.equal(e.stats().queued,0);
+  assert.equal(e.inbound({peer,id:'self-echo',at:1000000,type:'text',body:'Echo'}).ignored,true);
+  assert.throws(()=>e.manual(peer,'Do not send from the mirror','request-id-self-001'),/own WhatsApp chat/);
+  assert.equal(e.captureOutgoing({...self,mutation:'edit',editedAt:1050000,body:'Edited self note'}).mutated,true);
+  assert.equal(e.get(result.key).body,'Edited self note');
+  assert.equal(e.captureOutgoing({...self,mutation:'revoke',observedAt:1100000}).mutated,true);
+  assert.equal(e.get(result.key).revoked,true);assert.equal(e.stats().queued,0);
 });

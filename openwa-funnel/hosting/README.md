@@ -46,6 +46,14 @@ The first phone link was confirmed by both the owner and the server, but the pai
 
 After the second link, the persistent profile grew with browser state and the service restarted successfully without another pairing prompt. The compact checkpoint remained absent; the verified restore uses the private Chromium profile, not an asserted encrypted compact-session backup. The real incoming/outgoing recipient test then passed and the owner confirmed all five messages arrived. Do not interpret a visible profile or a READY flag alone as evidence of delivery.
 
+## Unattended browser and message recovery (18 October 2026)
+
+Snap Chromium failed to launch from the system service after the interactive user session was gone: `is not a snap cgroup`. The production owner is `ubuntu`, UID 1001. User lingering is now enabled with `loginctl enable-linger ubuntu`. A service drop-in at `/etc/systemd/system/rekha-whatsapp.service.d/20-snap-session.conf` requires and starts after `user@1001.service`, and sets `XDG_RUNTIME_DIR=/run/user/1001` and `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1001/bus`. Verify the actual UID before reproducing this setup. The sandbox and private saved profile remain enabled. The existing login recovered after a service restart without a phone code.
+
+The message mirror now reads bounded pages of the provider's stored message journal as well as live events and loaded chats. It hydrates actual stored records using the provider's native reader; encrypted raw rows are never treated as message bodies. Local coverage does not prove that every phone-only historical message has synchronized. Existing eligible chats can request more history through **Refresh WhatsApp**, with persistent cooldowns. This does not send a customer message or reset the linked account.
+
+Phone-sent replies, edits, revocations and self notes are mirrored without replaying the funnel. Recent conversation order is separate from edit/receipt revisions. Attachment downloads and browser scans have deadlines, while a local callback probe checks both incoming and outgoing handlers. Quiet chats alone do not cause reconnection. Keep the exact funnel-copy regression test and owner-deletion tombstones when deploying updates.
+
 ## Other hosts evaluated
 
 Lightning currently shows a platform-access suspension/security incident; its Free plan also requires four-hour restarts. No session/secrets were uploaded there. Render Free sleeps after 15 minutes without inbound traffic and loses local files at restarts, so it is unsuitable for a persistent WhatsApp browser profile. Google Cloud's small free VM and limited free egress are a poorer fit for this video-heavy flow.

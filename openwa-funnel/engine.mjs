@@ -18,9 +18,13 @@ export class Engine {
       CREATE TABLE IF NOT EXISTS due_jobs(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,key TEXT UNIQUE NOT NULL,peer TEXT NOT NULL,due_at INTEGER NOT NULL,state TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS jobs_due_state ON due_jobs(state,due_at);
       CREATE INDEX IF NOT EXISTS jobs_peer_state ON due_jobs(peer,state);`);
+    // A durable change cursor must advance even when several writes share the
+    // same wall clock millisecond, including after a process restart.
+    this.lastStamp=Number(this.db.prepare('SELECT max(stamp) AS stamp FROM records').get()?.stamp)||0;
     this.db.exec(`CREATE INDEX IF NOT EXISTS records_page ON records(kind,stamp DESC,key DESC);
       CREATE INDEX IF NOT EXISTS changes_key_seq ON changes(key,seq);
       CREATE INDEX IF NOT EXISTS records_peer_page ON records(peer,kind,stamp DESC,key DESC);
+      CREATE INDEX IF NOT EXISTS records_peer_timeline ON records(peer,kind,coalesce(json_extract(json,'$.at'),stamp) DESC,key DESC);
       CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS counters(key TEXT PRIMARY KEY,value INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS dispatch_heads(peer TEXT NOT NULL,lane TEXT NOT NULL,key TEXT NOT NULL,due_at INTEGER NOT NULL,PRIMARY KEY(peer,lane));
@@ -66,7 +70,8 @@ export class Engine {
   transaction(fn) { if(this.inTransaction)return fn();this.db.exec('BEGIN IMMEDIATE');this.inTransaction=true;try { const value = fn(); this.db.exec('COMMIT'); return value; } catch (e) { this.db.exec('ROLLBACK'); throw e; } finally{this.inTransaction=false;} }
   get(key) { const row = this.db.prepare('SELECT json FROM records WHERE key=?').get(key); return row ? JSON.parse(row.json) : null; }
   put(value) {
-    const stamp = this.now(), json = JSON.stringify(value), peer = value.peer || '';
+    const stamp = Math.max(this.now(),this.lastStamp+1), json = JSON.stringify(value), peer = value.peer || '';
+    this.lastStamp=stamp;
     this.db.prepare('INSERT INTO records VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET kind=excluded.kind,peer=excluded.peer,stamp=excluded.stamp,json=excluded.json').run(value.key, value.kind, peer, stamp, json);
     // Backup is a state mirror: keep only the newest pending revision of each key.
     // AUTOINCREMENT still makes acknowledgements safe while a batch is in flight.
@@ -79,7 +84,7 @@ export class Engine {
   refreshHead(peer) {
     this.db.prepare('DELETE FROM dispatch_heads WHERE peer=?').run(peer);
     const c = this.contact(peer);
-    if (!c || c.optedOut || c.deleted || this.db.prepare("SELECT 1 FROM due_jobs WHERE peer=? AND state IN ('sending','unknown') LIMIT 1").get(peer)) return;
+    if (!c || c.isSelf || c.optedOut || c.deleted || this.db.prepare("SELECT 1 FROM due_jobs WHERE peer=? AND state IN ('sending','unknown') LIMIT 1").get(peer)) return;
     for (const lane of ['auto','manual']) {
       if (lane === 'auto' && c.paused) continue;
       const job = this.db.prepare(`SELECT j.key,j.due_at FROM due_jobs j INDEXED BY jobs_peer_ready WHERE j.peer=? AND j.state='queued'
@@ -97,6 +102,16 @@ export class Engine {
       : this.db.prepare('SELECT stamp,key,json FROM records WHERE kind=? AND (stamp,key)<(?,?) ORDER BY stamp DESC,key DESC LIMIT ?').all(kind, stamp, key, limit);
     return rows.map(r => ({ ...JSON.parse(r.json), _cursor: Buffer.from(JSON.stringify({ stamp: r.stamp, key: r.key })).toString('base64url') }));
   }
+  listMessagesTimeline(peer,before='',limit=50){
+    if(!validPeer(peer))throw Error('Invalid chat');
+    limit=Math.max(1,Math.min(100,Number.isSafeInteger(limit)?limit:50));
+    let at=Number.MAX_SAFE_INTEGER,key='\uffff';
+    if(typeof before==='string'&&before&&before.length<1500)try{const cursor=JSON.parse(Buffer.from(before,'base64url').toString());if(Number.isSafeInteger(cursor.at)&&typeof cursor.key==='string'&&cursor.key.length<=600){at=cursor.at;key=cursor.key;}}catch{}
+    const rows=this.db.prepare("SELECT stamp,key,json,coalesce(json_extract(json,'$.at'),stamp) AS at FROM records WHERE peer=? AND kind='message' AND (coalesce(json_extract(json,'$.at'),stamp),key)<(?,?) ORDER BY coalesce(json_extract(json,'$.at'),stamp) DESC,key DESC LIMIT ?").all(peer,at,key,limit);
+    const latest=this.db.prepare("SELECT stamp,key FROM records WHERE peer=? AND kind='message' ORDER BY stamp DESC,key DESC LIMIT 1").get(peer);
+    const encode=value=>Buffer.from(JSON.stringify(value)).toString('base64url');
+    return{messages:rows.map(row=>({...JSON.parse(row.json),_cursor:encode({stamp:row.stamp,key:row.key}),_historyCursor:encode({at:row.at,key:row.key})})),revisionCursor:latest?encode({stamp:latest.stamp,key:latest.key}):''};
+  }
   settings() { return this.get('settings') || { key: 'settings', kind: 'settings', enabled: false }; }
   enable(enabled) { this.put({ ...this.settings(), enabled: !!enabled }); }
   contact(peer) { return this.get('contact:' + peer); }
@@ -109,30 +124,37 @@ export class Engine {
   }
   inbound(input) {
     if (!validPeer(input.peer) || typeof input.id !== 'string' || input.id.length > 300 || !input.id) return { ignored: true };
+    if(input.isSelf||this.contact(input.peer)?.isSelf)return{ignored:true};
+    if(input.mutation)return this.captureMutation({...input,direction:'in'});
     const body = String(input.body || '').slice(0, 8000), sensitive = isSensitive(body);
     const scheduleAt=input.recovered&&Number.isFinite(input.at)&&input.at>0?Math.min(input.at,this.now()):this.now();
     return this.transaction(() => {
-      if (this.db.prepare('SELECT id FROM receipts WHERE id=?').get(input.id)) return { duplicate: true };
+      if (this.db.prepare('SELECT id FROM receipts WHERE id=?').get(input.id)) {
+        if(input.editedAt)return this.captureMutation({...input,mutation:'edit',direction:'in'});
+        const previous=this.get('in:'+input.id);
+        if(previous?.kind==='message'&&!previous.revoked&&!previous.body&&body&&previous.type===input.type)return this.captureMutation({...input,mutation:'hydrate',direction:'in'});
+        return { duplicate: true };
+      }
       const existing=this.contact(input.peer);
       if(input.recovered&&existing?.contentDeletedAt&&input.at<=existing.contentDeletedAt)return{ignored:true};
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id, input.peer, this.now());
       let c = this.contact(input.peer);
       const isNew = !c;
-      if (!c) c = { key: 'contact:' + input.peer, kind: 'contact', peer: input.peer, name: String(input.name || '').slice(0, 100), firstAt: this.now(), stage: 'new', optedOut: false, paused: false, payment: 'not_received', unread: 0, firstStarted: false, reminderScheduled: false, mediaScheduled: false, lastSentAt: 0 };
-      c = { ...c, lastAt: this.now(), lastInboundAt: this.now(), unread: c.unread + 1, preview: sensitive ? '[Sensitive message omitted]' : (body || '[' + input.type + ']').slice(0, 150) };
-      this.put({ key: 'in:' + input.id, kind: 'message', peer: input.peer, id: input.id, direction: 'in', type: input.type || 'text', body: sensitive ? '[Sensitive message omitted]' : body, at: input.at || this.now(), receivedAt: this.now(), sensitive, status: 'received', media: sensitive ? null : input.media || null });
+      if (!c) c = { key: 'contact:' + input.peer, kind: 'contact', peer: input.peer, name: String(input.name || '').slice(0, 100), firstAt: this.now(), stage: input.passive?'history_only':'new', optedOut: false, paused: false, payment: 'not_received', unread: 0, firstStarted: false, reminderScheduled: false, mediaScheduled: false, lastSentAt: 0 };
+      c = { ...c, lastAt: this.now(), lastInboundAt: this.now(), unread: c.unread + 1, lastMessageKey:'in:'+input.id, preview: sensitive ? '[Sensitive message omitted]' : (body || '[' + input.type + ']').slice(0, 150) };
+      this.put({ key: 'in:' + input.id, kind: 'message', peer: input.peer, id: input.id, direction: 'in', type: input.type || 'text', body: sensitive ? '[Sensitive message omitted]' : body, at: input.at || this.now(), receivedAt: this.now(), sensitive, status: 'received', media: sensitive ? null : input.media || null, ...this.mirrorMetadata(input,sensitive) });
       const command = body.trim().toLowerCase();
       if (['stop', 'unsubscribe', 'बंद', 'बंद करें'].includes(command)) {
         c.optedOut = true;
         for (const row of this.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='queued'").all(c.peer)) this.put({ ...this.get(row.key), state: 'cancelled', error: 'Customer opted out' });
       } else if (command === 'start') c.optedOut = false;
-      if (!sensitive && !c.optedOut && !c.firstStarted) {
+      if (!input.passive && !sensitive && !c.optedOut && !c.firstStarted) {
         c.firstStarted = true; c.stage = 'first_sequence';
         firstSequence.forEach((p, i) => this.job(c.peer, 'first', i, scheduleAt + i * GAP, p));
-      } else if (!sensitive && !c.optedOut && !isNew && c.stage === 'waiting_for_details' && !c.reminderScheduled) {
+      } else if (!input.passive && !sensitive && !c.optedOut && !isNew && c.stage === 'waiting_for_details' && !c.reminderScheduled) {
         c.reminderScheduled = true; this.job(c.peer, 'reminder', 0, scheduleAt + REMINDER_DELAY, reminder);
       }
-      if (!sensitive && !c.optedOut && ['image', 'video', 'audio', 'ptt', 'document', 'sticker','payment'].includes(input.type) && !c.mediaScheduled) {
+      if (!input.passive && !sensitive && !c.optedOut && ['image', 'video', 'audio', 'ptt', 'document', 'sticker','payment'].includes(input.type) && !c.mediaScheduled) {
         c.mediaScheduled = true; if(c.payment!=='verified_by_owner')c.payment = 'pending';
         mediaSequence.forEach((p, i) => this.job(c.peer, 'media', i, scheduleAt + MEDIA_DELAY + i * GAP, p));
       }
@@ -142,27 +164,32 @@ export class Engine {
   }
   importHistory(input) {
     if(!validPeer(input.peer)||!input.id||input.id.length>300)return false;
+    if(input.isSelf||this.contact(input.peer)?.isSelf)return false;
+    if(input.mutation)return false;
     return this.transaction(()=>{
       const current=this.contact(input.peer);
       if(current?.contentDeletedAt&&input.at<=current.contentDeletedAt)return false;
       if(this.db.prepare('SELECT 1 FROM receipts WHERE id=?').get(input.id))return false;
       this.db.prepare('INSERT INTO receipts VALUES(?,?,?)').run(input.id,input.peer,this.now());
       const body=String(input.body||'').slice(0,8000),sensitive=isSensitive(body),at=input.at||this.now();
-      this.put({key:'in:'+input.id,kind:'message',peer:input.peer,id:input.id,direction:'in',type:input.type||'text',body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),sensitive,status:'received',historical:true});
+      this.put({key:'in:'+input.id,kind:'message',peer:input.peer,id:input.id,direction:'in',type:input.type||'text',body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),sensitive,status:'received',historical:true,...this.mirrorMetadata(input,sensitive)});
       const c=current||{key:'contact:'+input.peer,kind:'contact',peer:input.peer,name:String(input.name||'').slice(0,100),firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
       const command=body.trim().toLowerCase();
       if(!current||at>(c.lastInboundAt||0)){
         if(['stop','unsubscribe','बंद','बंद करें'].includes(command))c.optedOut=true;
         else if(command==='start')c.optedOut=false;
       }
-      if(!current||at>(c.lastAt||0)){c.lastAt=at;c.lastInboundAt=at;c.preview=sensitive?'[Sensitive message omitted]':(body||'['+input.type+']').slice(0,150);}
+      if(!current||at>(c.lastAt||0)){c.lastAt=at;c.lastInboundAt=at;c.lastMessageKey='in:'+input.id;c.preview=sensitive?'[Sensitive message omitted]':(body||'['+input.type+']').slice(0,150);}
       this.put(c);return true;
     });
   }
   captureOutgoing(input) {
     const at=Number(input?.at),since=Number(input?.since),type=input?.type==='chat'?'text':input?.type;
     const name=String(input?.name||'').slice(0,100);
-    if(!validPeer(input?.peer)||typeof input?.id!=='string'||!input.id||input.id.length>300||!Number.isFinite(at)||at<=0||!Number.isFinite(since)||since<0||at<since||at>this.now()+300000||!['text','image','video','audio','ptt','document','sticker','payment'].includes(type)||input.fromMe===false||input.isGroupMsg||input.isGroup||input.isSelf||input.self===true||input.peer===input.selfPeer||input.peer===input.ownerPeer||input.isPSA||input.isNotification&&type!=='payment'||/^(?:Facebook Business|Meta Business|WhatsApp)$/i.test(name.trim()))return{ignored:true};
+    const isSelf=!!input?.isSelf||input?.self===true||input?.peer===input?.selfPeer||input?.peer===input?.ownerPeer;
+    const selfName=value=>!String(value||'').trim()||/^\+?[\d\s()-]+$/.test(value)?'You':value;
+    if(input?.mutation)return this.captureMutation({...input,direction:'out'});
+    if(!validPeer(input?.peer)||typeof input?.id!=='string'||!input.id||input.id.length>300||!Number.isFinite(at)||at<=0||!Number.isFinite(since)||since<0||at<since||at>this.now()+300000||!['text','image','video','audio','ptt','document','sticker','payment','vcard','multi_vcard','location','live_location','unsupported'].includes(type)||input.fromMe===false||input.isGroupMsg||input.isGroup||input.isPSA||input.isNotification&&type!=='payment'||/^(?:Facebook Business|Meta Business|WhatsApp)$/i.test(name.trim()))return{ignored:true};
     return this.transaction(()=>{
       let c=this.contact(input.peer);
       if(c?.deleted||c?.contentDeletedAt&&at<=c.contentDeletedAt)return{ignored:true};
@@ -173,6 +200,9 @@ export class Engine {
       if(row){
         const existing=JSON.parse(row.json);
         if(existing.peer!==input.peer||existing.direction!=='out')return{ignored:true};
+        if(isSelf&&c&&!c.isSelf){c={...c,isSelf:true,name:selfName(c.name||name)};this.put(c);}
+        if(input.editedAt){const mutation=this.captureMutation({...input,mutation:'edit',direction:'out'});if(mutation.mutated)return mutation;}
+        else if(!existing.revoked&&!existing.body&&input.body&&existing.type===type){const mutation=this.captureMutation({...input,mutation:'hydrate',direction:'out'});if(mutation.mutated)return mutation;}
         const ack=Number(input.ack),status=ack>=3?'read':ack===2?'delivered':ack===1?'sent':ack===-1?'failed':null;
         const rank={queued:0,accepted:0,sent:1,delivered:2,read:3,failed:4};
         // Repeated snapshots must not rewrite unchanged ACKs into cloud backup.
@@ -183,13 +213,53 @@ export class Engine {
       // Defer it until the next provider scan instead of creating a second row.
       if(this.db.prepare("SELECT 1 FROM due_jobs WHERE peer=? AND state='sending' LIMIT 1").get(input.peer))return{deferred:true};
       const body=String(input.body||'').slice(0,8000),sensitive=isSensitive(body);
-      this.put({key,kind:'message',peer:input.peer,id:input.id,providerId:input.id,direction:'out',type,body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),source:'owner_whatsapp',sensitive,media:sensitive?null:input.media||null,status:'queued'});
+      this.put({key,kind:'message',peer:input.peer,id:input.id,providerId:input.id,direction:'out',type,body:sensitive?'[Sensitive message omitted]':body,at,receivedAt:this.now(),source:'owner_whatsapp',sensitive,media:sensitive?null:input.media||null,status:'queued',...this.mirrorMetadata(input,sensitive)});
       // ACK 0 is only queued on the sending device; it is not delivery evidence.
       const ack=Number(input.ack);if(Number.isFinite(ack)&&ack!==0)this.ack(input.id,ack);
-      if(!c)c={key:'contact:'+input.peer,kind:'contact',peer:input.peer,name,firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
-      if(at>=(c.lastAt||0))c={...c,lastAt:at,preview:sensitive?'[Sensitive message omitted]':(body||'['+type+']').slice(0,150)};
+      if(!c)c={key:'contact:'+input.peer,kind:'contact',peer:input.peer,name:isSelf?selfName(name):name,firstAt:at,stage:'history_only',optedOut:false,paused:false,payment:'not_received',unread:0,firstStarted:false,reminderScheduled:false,mediaScheduled:false,lastSentAt:0};
+      if(isSelf)c={...c,isSelf:true,name:selfName(c.name||name)};
+      if(at>=(c.lastAt||0))c={...c,lastAt:at,lastMessageKey:key,preview:sensitive?'[Sensitive message omitted]':(body||'['+type+']').slice(0,150)};
       this.put({...c,lastOutboundAt:Math.max(at,c.lastOutboundAt||0)});
       return{accepted:true,key};
+    });
+  }
+  mirrorMetadata(input,sensitive=false){
+    const value={};
+    if(input.providerType)value.providerType=String(input.providerType).slice(0,80);
+    if(!sensitive&&typeof input.filename==='string')value.filename=input.filename.slice(0,500);
+    const editedAt=Number(input.editedAt);
+    if(Number.isFinite(editedAt)&&editedAt>=Number(input.at)&&editedAt<=this.now()+300000){value.editedAt=editedAt;if(typeof input.editKey==='string'&&input.editKey.length<=300)value.editKey=input.editKey;}
+    if(!sensitive&&input.sharedLocation){const {latitude,longitude}=input.sharedLocation;if(Number.isFinite(latitude)&&latitude>=-90&&latitude<=90&&Number.isFinite(longitude)&&longitude>=-180&&longitude<=180)value.sharedLocation={latitude,longitude,label:String(input.sharedLocation.label||'').slice(0,1000),live:!!input.sharedLocation.live};}
+    return value;
+  }
+  captureMutation(input){
+    const at=Number(input?.at),direction=input?.direction;
+    if(!validPeer(input?.peer)||typeof input?.id!=='string'||!input.id||input.id.length>300||!['in','out'].includes(direction)||!['edit','revoke','hydrate'].includes(input?.mutation)||!Number.isFinite(at)||at<=0||at>this.now()+300000||typeof input.fromMe==='boolean'&&input.fromMe!==(direction==='out')||input.isGroupMsg||input.isGroup||input.isPSA||direction==='in'&&(input.isSelf||input.peer===input.selfPeer||input.peer===input.ownerPeer))return{ignored:true};
+    return this.transaction(()=>{
+      const c=this.contact(input.peer);
+      if(!c||c.deleted||c.contentDeletedAt&&at<=c.contentDeletedAt)return{ignored:true};
+      let m;
+      if(direction==='in')m=this.get('in:'+input.id);
+      else {const row=this.db.prepare("SELECT json FROM records WHERE kind='message' AND json_extract(json,'$.providerId')=? LIMIT 1").get(input.id);m=row?JSON.parse(row.json):null;}
+      // Mutations never invent the original message, revive owner tombstones,
+      // or cross a customer/direction boundary on the strength of an ID alone.
+      const targetedRevoke=input.mutation==='revoke'&&input.targetKey===input.id;
+      if(m?.kind!=='message'||m.peer!==input.peer||m.direction!==direction||m.revoked||Math.abs(at-m.at)>300000&&!targetedRevoke)return{ignored:true};
+      const editedAt=Number(input.editedAt),observedAt=Number(input.observedAt??this.now()),body=String(input.body||'').slice(0,8000);
+      if(input.mutation==='edit'&&(!Number.isFinite(editedAt)||editedAt<at||editedAt>this.now()+300000||editedAt<=(m.editedAt||0)))return{duplicate:true};
+      if(input.mutation==='revoke'&&(!Number.isFinite(observedAt)||observedAt<at||observedAt>this.now()+300000))return{ignored:true};
+      if(input.mutation==='hydrate'&&(m.body||!body||m.type!==input.type||m.editedAt))return{duplicate:true};
+      const revoked=input.mutation==='revoke',sensitive=!revoked&&isSensitive(body),removedMedia=[];
+      if((revoked||sensitive)&&/^[a-f0-9]{64}$/.test(m.media?.id||'')){
+        removedMedia.push(m.media.id);
+        this.put({key:'media-deleted:'+m.media.id,kind:'deleted',peer:m.peer,mediaId:m.media.id,deletedAt:this.now()});
+      }
+      const update=revoked?{...m,type:'revoked',body:'',url:null,media:null,filename:null,sharedLocation:null,attachmentError:null,sensitive:false,revoked:true,revokedAt:observedAt,revokedAtSource:'observed'}:{...m,body:sensitive?'[Sensitive message omitted]':body,sensitive,...this.mirrorMetadata(input,sensitive),...(sensitive?{url:null,media:null,filename:null,sharedLocation:null,attachmentError:null}:{})};
+      if(input.mutation==='hydrate')update.hydratedAt=this.now();
+      this.put(update);
+      const latest=c.lastMessageKey?null:this.db.prepare("SELECT key FROM records WHERE peer=? AND kind='message' ORDER BY json_extract(json,'$.at') DESC,key DESC LIMIT 1").get(input.peer);
+      if(c.lastMessageKey===m.key||!c.lastMessageKey&&latest?.key===m.key)this.put({...c,preview:revoked?'[Message deleted on WhatsApp]':sensitive?'[Sensitive message omitted]':(body||'['+m.type+']').slice(0,150)});
+      return{mutated:true,key:m.key,removedMedia};
     });
   }
   markSeen(peer) { const c = this.contact(peer); if (c?.unread) this.put({ ...c, unread: 0 }); }
@@ -215,6 +285,7 @@ export class Engine {
   }
   manual(peer, body, requestId) {
     if (!this.contact(peer) || !validPeer(peer)) throw Error('Unknown customer');
+    if(this.contact(peer).isSelf)throw Error('This is your own WhatsApp chat. Send notes from WhatsApp.');
     if (this.contact(peer).optedOut) throw Error('Customer has opted out');
     body = String(body || '').trim();
     if (!body || body.length > 8000 || !/^[a-zA-Z0-9-]{10,80}$/.test(requestId)) throw Error('Invalid message');

@@ -8,8 +8,13 @@ import { ensurePairingCompatibility } from './pairing-compat.mjs';
 import { withPersistentProfile } from './persistent-driver.mjs';
 import {createMonitor} from './monitor.mjs';
 import {createMobileBridge} from './mobile-bridge.mjs';
-import {createInboxSync,normalizeIncoming,normalizeOutgoing,installFastInboxBridge} from './inbox-sync.mjs';
+import {createInboxSync,normalizeIncoming,normalizeOutgoing,installFastInboxBridge,serializeNativeMessage} from './inbox-sync.mjs';
 import {createReceiverWatchdog} from './receiver-watchdog.mjs';
+import {createReceiverProbe,readMirrorSnapshot} from './receiver-probe.mjs';
+import {createPhoneHistory} from './phone-history.mjs';
+import {createAttachmentQueue,canAttachMedia} from './attachment-queue.mjs';
+import {createProviderJournal} from './provider-journal.mjs';
+import {withDeadline} from './async-deadline.mjs';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const data = process.env.REKHA_DATA_DIR || path.join(root, '.local');
@@ -49,8 +54,16 @@ if(!engine.db.prepare("SELECT 1 FROM migrations WHERE name='shop-qr-shahrukh-202
 if(copyRestored)console.log('Updated pending automatic messages to current owner-approved content.');
 let client, runtime, connecting = false, stopping = false, busy = 0, syncing = false, connectedSince = 0, eventsInstalled = false;
 let fastBridge={ready:false},checkingBridge=false;
+let mirror={checkedAt:null,lastIncomingAt:null,lastOutgoingAt:null,lastProviderMessageAt:null},manualSyncing=false;
+const mirrorCounters={outgoing:0,mutations:0,journalImports:0};
+const receiverProbe=createReceiverProbe();
+const phoneHistory=createPhoneHistory({evaluate:(fn,arg)=>client.evaluate(fn,arg),get:key=>engine.get(key),put:value=>engine.put(value)});
 let mediaActive=0;
-const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>client.evaluate(fn,arg),onIncoming:message=>incoming(message,true),onOutgoing:message=>outgoing(message,true)});
+const inboxSync=createInboxSync({engine,evaluate:(fn,arg)=>withDeadline(()=>client.evaluate(fn,arg),40000,'Inbox scan'),onIncoming:message=>incoming(message,true),onOutgoing:message=>outgoing(message,true)});
+const providerJournal=createProviderJournal({engine,evaluate:(fn,arg)=>withDeadline(()=>client.evaluate(fn,arg),30000,'Stored message scan'),serializeNativeMessage,onMessage:mirrorStoredMessage});
+const attachmentQueue=createAttachmentQueue({run:saveIncomingMedia,eligible:key=>{
+ const m=engine.get(key);return m?.kind==='message'&&!m.media&&!m.url&&!m.sensitive&&!m.revoked&&(m.attachmentAttempts||0)<3&&(m.attachmentRetryAt||0)<=Date.now();
+}});
 const pendingAcks = new Map();
 const safeId = value => typeof value === 'string' ? value : value?._serialized || '';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -107,24 +120,28 @@ async function sync() {
   } catch { state.cloud = 'retrying'; } finally { syncing = false; }
 }
 async function saveIncomingMedia(message, recordKey) {
-  if (!client || engine.get(recordKey)?.sensitive) return;
-  if(mediaActive>=2){const m=engine.get(recordKey);if(m?.kind==='message')engine.put({...m,attachmentError:'Attachment storage is busy. The original file remains in WhatsApp.'});return;}
+  const original=engine.get(recordKey);
+  if (!client || original?.kind!=='message'||original.sensitive||original.revoked) return;
   mediaActive++;
   try {
     const disk=fs.statfsSync(data);
     if(disk.bavail*disk.bsize<2*1024**3)throw Error('Low disk space');
+    const attempts=(original.attachmentAttempts||0)+1;
+    engine.put({...original,attachmentAttempts:attempts,attachmentRetryAt:Date.now()+30000*2**(attempts-1)});
     // Only customer-chosen attachments in this chat are accessed.
-    const encoded = await client.decryptMedia(message);
+    const encoded = await withDeadline(()=>client.decryptMedia(message),30000,'Attachment download');
     const match = /^data:(image\/(?:jpeg|png|webp)|video\/mp4|audio\/(?:mpeg|ogg|mp4|wav)|application\/pdf);base64,([A-Za-z0-9+/=\r\n]+)$/.exec(encoded);
     if (!match || match[2].length > 35 * 1024 * 1024) return;
     const bytes = Buffer.from(match[2], 'base64'); if (!bytes.length || bytes.length > 25 * 1024 * 1024) return;
+    const current=engine.get(recordKey);if(!canAttachMedia(current,original))return;
     const id = createHash('sha256').update(recordKey).digest('hex');
     fs.writeFileSync(path.join(data, 'media', id), bytes, { mode: 0o600 });
-    const m = engine.get(recordKey); if (m?.kind==='message') engine.put({ ...m, media: { id, mime: match[1], size: bytes.length } });
+    const m = engine.get(recordKey); if (canAttachMedia(m,original)) engine.put({ ...m, media: { id, mime: match[1], size: bytes.length },attachmentError:null,attachmentRetryAt:null });
     else fs.unlinkSync(path.join(data,'media',id));
-  } catch { const m = engine.get(recordKey); if (m?.kind==='message') engine.put({ ...m, attachmentError: 'Open the original attachment in WhatsApp; download was unavailable.' }); }finally{mediaActive--;}
+  } catch { const m = engine.get(recordKey); if (canAttachMedia(m,original)) engine.put({ ...m, attachmentError: 'Open the original attachment in WhatsApp; download was unavailable.',attachmentRetryAt:m.attachmentRetryAt||Date.now()+1800000 }); }finally{mediaActive--;}
 }
 async function incoming(message,recovered=false) {
+  if(receiverProbe.consume(message,'in'))return;
   ingress.events++;ingress.lastEventAt=Date.now();
   const peer = safeId(message.from), id = safeId(message.id), at = Number(message.timestamp || message.t || 0) * 1000;
   ingress.lastShape={peerType:typeof message.from,idType:typeof message.id,timestampType:typeof(message.timestamp??message.t),timestamp:at,fromMe:!!message.fromMe,group:!!message.isGroupMsg,notification:!!message.isNotification,type:String(message.type||'').slice(0,25),validPeer:validPeer(peer),hasId:!!id};
@@ -132,31 +149,57 @@ async function incoming(message,recovered=false) {
   const normalized=normalizeIncoming(message,inboxSync.since);
   const reject=normalized.reason;
   if(reject){ingress.rejected[reject]=(ingress.rejected[reject]||0)+1;return;}
+  noteProviderMessage(normalized.input,'in');
   const {type}=normalized.input;
   const result = engine.inbound({...normalized.input,recovered});
+  if(result.mutated){mirrorCounters.mutations++;removeMedia(result.removedMedia||[]);void sync();return false;}
   if(result.duplicate)ingress.duplicates++;
+  if ((result.accepted||result.duplicate)&&['image','video','audio','ptt','document','sticker'].includes(type) && !isSensitive(message.caption || message.body || '')) attachmentQueue.offer(message,'in:'+id);
   if (!result.accepted) return;
   ingress.accepted++;ingress.lastAcceptedAt=Date.now();
-  if (!['text','payment'].includes(type) && !isSensitive(message.caption || message.body || '')) void saveIncomingMedia(message, 'in:' + id);
   void sync(); void pump();return true;
 }
 async function outgoing(message,historical=false){
+  if(receiverProbe.consume(message,'out'))return false;
   const normalized=normalizeOutgoing(message,historical?0:inboxSync.since);
   if(normalized.reason)return false;
+  noteProviderMessage(normalized.input,'out');
   const result=engine.captureOutgoing(normalized.input);
+  if(result.mutated){mirrorCounters.mutations++;removeMedia(result.removedMedia||[]);void sync();return false;}
+  if((result.accepted||result.duplicate)&&['image','video','audio','ptt','document','sticker'].includes(normalized.input.type)&&!isSensitive(normalized.input.body))attachmentQueue.offer(message,result.key||'out:provider:'+normalized.input.id);
   if(!result.accepted)return false;
-  if(!['text','payment'].includes(normalized.input.type)&&!isSensitive(normalized.input.body))void saveIncomingMedia(message,result.key);
+  mirrorCounters.outgoing++;
   void sync();return true;
+}
+function noteProviderMessage(input,direction){
+ const field=direction==='out'?'lastOutgoingAt':'lastIncomingAt';
+ mirror[field]=Math.max(mirror[field]||0,input.at)||null;
+ mirror.lastProviderMessageAt=Math.max(mirror.lastIncomingAt||0,mirror.lastOutgoingAt||0)||null;
+}
+async function mirrorStoredMessage(message){
+ if(message.fromMe||message.id?.fromMe||message.self==='out')return outgoing(message,true);
+ const normalized=normalizeIncoming(message,0);if(normalized.reason)return false;
+ const input=normalized.input;
+ noteProviderMessage(input,'in');
+ if(input.mutation||input.editedAt&&engine.get('in:'+input.id)?.kind==='message')return incoming({...message,...(input.mutation?{}:{mutation:'edit'})},true);
+ if(input.at>=inboxSync.since)return incoming(message,true);
+ const imported=engine.importHistory(input);
+ if(['image','video','audio','ptt','document','sticker'].includes(input.type))attachmentQueue.offer(message,'in:'+input.id);
+ if(imported){mirrorCounters.journalImports++;void sync();}return imported;
 }
 async function checkFastBridge(){
   if(checkingBridge||stopping||!client||state.connection!=='connected')return;
   checkingBridge=true;
   let timeout;
-  try{fastBridge=await Promise.race([client.evaluate(installFastInboxBridge,{since:inboxSync.since}),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Receiver probe timed out')),8000);})]);return fastBridge;}catch{fastBridge={ready:false};return fastBridge;}finally{clearTimeout(timeout);checkingBridge=false;}
+  try{
+    const [bridge,snapshot,roundTrip]=await Promise.race([Promise.all([client.evaluate(installFastInboxBridge,{since:inboxSync.since}),client.evaluate(readMirrorSnapshot),receiverProbe.check((fn,arg)=>client.evaluate(fn,arg))]),new Promise((_,reject)=>{timeout=setTimeout(()=>reject(Error('Receiver probe timed out')),8000);})]);
+    mirror={...mirror,...snapshot,lastIncomingAt:Math.max(mirror.lastIncomingAt||0,snapshot.lastIncomingAt||0)||null,lastOutgoingAt:Math.max(mirror.lastOutgoingAt||0,snapshot.lastOutgoingAt||0)||null};mirror.lastProviderMessageAt=Math.max(mirror.lastIncomingAt||0,mirror.lastOutgoingAt||0)||null;
+    fastBridge={...bridge,ready:!!bridge.ready&&roundTrip.ready,roundTrip};return fastBridge;
+  }catch{fastBridge={ready:false};return fastBridge;}finally{clearTimeout(timeout);checkingBridge=false;}
 }
 const receiverWatchdog=createReceiverWatchdog({
  probe:async()=>state.connection==='connected'?await checkFastBridge():{ready:false},
- canReconnect:()=>process.env.AUTO_CONNECT==='true'&&!stopping&&!connecting&&!busy&&!syncing&&!mediaActive&&!inboxSync.status.running&&['connected','disconnected','error'].includes(state.connection),
+ canReconnect:()=>process.env.AUTO_CONNECT==='true'&&!stopping&&!connecting&&!busy&&!syncing&&!mediaActive&&!inboxSync.status.running&&!providerJournal.status.running&&!manualSyncing&&['connected','disconnected','error'].includes(state.connection),
  reconnect:async()=>{state.connection='disconnected';await connect();}
 });
 async function connect() {
@@ -196,6 +239,7 @@ async function connect() {
     pairingPhone='';
     await checkFastBridge();
     void inboxSync.scan().then(()=>sync());
+    void providerJournal.scan().then(()=>sync());
     if (fs.existsSync(pairingFile)) fs.unlinkSync(pairingFile);
   } catch (error) {
     saveConnectionDiagnostic(error,'connection');
@@ -242,8 +286,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { ...privateHeaders, 'Content-Type': 'text/html; charset=utf-8', 'Set-Cookie': `rekha_owner=${cookie}; HttpOnly; SameSite=Strict; Path=/` }); return res.end(fs.readFileSync(path.join(root, 'public', 'index.html')));
     }
     if (!sameCookie(req)) return json(res, { error: 'Open the private control page first' }, 401);
-    if (['/app.js','/api.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
-    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, linkedBefore:linkedBefore(), enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:inboxSync.status,receiver:receiverWatchdog.status });
+    if (['/app.js','/api.js','/message-state.js','/style.css'].includes(url.pathname) && req.method === 'GET') { res.writeHead(200, { ...privateHeaders, 'Content-Type': url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css' }); return res.end(fs.readFileSync(path.join(root, 'public', url.pathname.slice(1)))); }
+    if (req.method === 'GET' && url.pathname === '/api/status') return json(res, { ...state, linkedBefore:linkedBefore(), enabled: engine.settings().enabled, ...engine.stats(), source,inboxSync:inboxSync.status,receiver:receiverWatchdog.status,mirror,journal:providerJournal.status });
     if (req.method === 'GET' && url.pathname === '/api/monitor') return json(res,monitor.snapshot());
     if(req.method==='GET'&&url.pathname==='/api/runtime-status'){
       const ready=runtime?.getReadiness?.();
@@ -251,7 +295,7 @@ const server = http.createServer(async (req, res) => {
       // The pinned client declares getConnectionState unsupported. Probe only safe
       // connection metadata through its supported evaluate API instead.
       const [probe,number]=client?await Promise.all([timed(client.evaluate(()=>{const store=globalThis.Store,models=store?.Msg?.getModelsArray?.()||store?.Msg?._models||store?.Msg?.models||[];return{socket:store?.State?.Socket?.state||store?.State?.default?.state||null,loadedMessages:models.length,lastIncomingAt:models.slice(-200).reduce((latest,m)=>!m.id?.fromMe?Math.max(latest,Number(m.t||0)*1000):latest,0),online:navigator.onLine};}).catch(()=>null)),timed(client.getHostNumber().catch(()=>null))]):[null,null];
-      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status,fastBridge,receiver:receiverWatchdog.status});
+      return json(res,{state:runtime?.getState?.()||null,ready:ready?.ready||false,pending:ready?.pending||[],blockers:ready?.blockers||[],provider:probe,linkedNumberLast4:typeof number==='string'?number.replace(/\D/g,'').slice(-4):null,ingress,inboxSync:inboxSync.status,fastBridge,receiver:receiverWatchdog.status,mirror,journal:providerJournal.status,attachments:{active:attachmentQueue.active,pending:attachmentQueue.pending}});
     }
     if (req.method === 'GET' && url.pathname === '/api/session-status') {
       const portable = runtime?.getTransport?.()?.portable;
@@ -259,7 +303,7 @@ const server = http.createServer(async (req, res) => {
       return json(res,{saved:fs.existsSync(path.join(root,'.sessions','rekha-29.data.json')),checkpoint:!!portable?.hasCheckpoint,revision:portable?.revision,documentBound:!!portable?.documentId,browser});
     }
     if (req.method === 'GET' && url.pathname === '/api/contacts') return json(res, engine.list('contact', '', url.searchParams.get('before') || '', 50));
-    if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); return json(res, { messages: engine.list('message', peer, url.searchParams.get('before') || '', 50), jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='unknown' LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }
+    if (req.method === 'GET' && url.pathname === '/api/messages') { const peer = url.searchParams.get('peer'); if (!validPeer(peer)) return json(res, { error: 'Invalid chat' }, 400); const rows=url.searchParams.get('order')==='timeline'?engine.listMessagesTimeline(peer,url.searchParams.get('before')||'',50):{messages:engine.list('message',peer,url.searchParams.get('before')||'',50)};return json(res, { ...rows,jobs: engine.db.prepare("SELECT key FROM due_jobs WHERE peer=? AND state='unknown' LIMIT 30").all(peer).map(r => engine.get(r.key)), contact: engine.contact(peer) }); }
     if (req.method === 'GET' && /^\/media\/[a-f0-9]{64}$/.test(url.pathname)) {
       const file = path.join(data, 'media', url.pathname.slice(7)); if (!fs.existsSync(file)) return json(res, { error: 'Not found' }, 404);
       const saved=engine.db.prepare("SELECT json_extract(json,'$.media.mime') AS mime FROM records WHERE kind='message' AND json_extract(json,'$.media.id')=? LIMIT 1").get(url.pathname.slice(7));
@@ -270,6 +314,18 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST') {
       if (req.headers.origin !== origin || !String(req.headers['content-type']).startsWith('application/json')) return json(res, { error: 'Forbidden' }, 403);
       const input = await body(req);
+      if(url.pathname==='/api/sync-inbox'){
+        if(state.connection!=='connected'||!client)return json(res,{error:'WhatsApp is not connected. The saved login will be reused.'},409);
+        if(input.peer!==undefined&&(!validPeer(input.peer)||!engine.contact(input.peer)))return json(res,{error:'Choose a saved chat first.'},400);
+        if(manualSyncing||inboxSync.status.running||providerJournal.status.running)return json(res,{busy:true,recovered:0,outgoingMirrored:0,checkedAt:mirror.checkedAt,mirror,history:{requested:false,reason:'An inbox check is already running.'}},202);
+        manualSyncing=true;
+        const before={incoming:ingress.accepted,imported:inboxSync.status.imported,...mirrorCounters};
+        try{
+          const history=input.peer?await phoneHistory.request(input.peer):{requested:false,reason:''};
+          await inboxSync.scan();await providerJournal.scan();await checkFastBridge();void sync();
+          return json(res,{checkedAt:inboxSync.status.checkedAt,recovered:Math.max(0,ingress.accepted-before.incoming+inboxSync.status.imported-before.imported+mirrorCounters.journalImports-before.journalImports),outgoingMirrored:Math.max(0,mirrorCounters.outgoing-before.outgoing),updated:Math.max(0,mirrorCounters.mutations-before.mutations),mirror,history,journal:providerJournal.status});
+        }finally{manualSyncing=false;}
+      }
       if(url.pathname==='/api/mobile-link'){
         if(!mobileBridge)return json(res,{error:'Cloud backup is not configured'},409);
         return json(res,{...await mobileBridge.issueCode(),url:cloud+'/admin',apk:cloud+'/downloads/rekha-whatsapp-admin.apk'});
@@ -307,7 +363,7 @@ const server = http.createServer(async (req, res) => {
       if (!validPeer(input.peer)) return json(res, { error: 'Invalid customer' }, 400);
       if (url.pathname === '/api/pause') engine.pauseContact(input.peer, !!input.paused);
       else if (url.pathname === '/api/payment') engine.verifyPayment(input.peer, !!input.verified);
-      else if (url.pathname === '/api/seen') { engine.markSeen(input.peer); if (client && state.connection === 'connected') void client.sendSeen(input.peer).catch(() => { state.error = 'WhatsApp read receipt could not be confirmed.'; }); }
+      else if (url.pathname === '/api/seen') { engine.markSeen(input.peer); if (client && state.connection === 'connected'&&!engine.contact(input.peer)?.isSelf) void client.sendSeen(input.peer).catch(() => { state.error = 'WhatsApp read receipt could not be confirmed.'; }); }
       else if (url.pathname === '/api/resolve') { if (engine.get(input.key)?.peer !== input.peer) throw Error('Invalid job'); engine.resolveUnknown(input.key, input.action); }
       else return json(res, { error: 'Not found' }, 404);
       return json(res, { ok: true });
@@ -318,6 +374,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, '127.0.0.1', () => console.log(`Private WhatsApp controls: ${origin}`));
 const pumping = setInterval(() => void pump(), 1000), backing = setInterval(() => void sync(), 15000);
 const inboxPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void inboxSync.scan().then(()=>sync());},15000);
+const journalPolling=setInterval(()=>{if(!stopping&&client&&state.connection==='connected')void providerJournal.scan().then(()=>sync());},15000);
 const bridgeChecking=setInterval(()=>{if(!stopping)void receiverWatchdog.tick();},3000);
 const mobilePolling=setInterval(()=>void mobileBridge?.poll(),5000);
 const housekeeping = setInterval(() => {
@@ -325,7 +382,7 @@ const housekeeping = setInterval(() => {
   const expiry = Date.now() - 90 * 86400000;
   for (const entry of fs.readdirSync(path.join(data, 'media'), { withFileTypes: true })) if (entry.isFile() && fs.statSync(path.join(data,'media',entry.name)).mtimeMs < expiry) fs.unlinkSync(path.join(data,'media',entry.name));
 }, 3600000);
-async function shutdown(exitCode = 0) { if (stopping) return; stopping = true; mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); if(connecting)try{await runtime?.stop?.('Gateway stopping');}catch{} while (busy||syncing||mediaActive||mobileBridge?.busy||inboxSync.status.running||checkingBridge||connecting||receiverWatchdog.busy) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
+async function shutdown(exitCode = 0) { if (stopping) return; stopping = true;receiverProbe.cancel();attachmentQueue.close(); mobileBridge?.close();monitor.close();clearInterval(bridgeChecking);clearInterval(inboxPolling);clearInterval(journalPolling);clearInterval(mobilePolling); clearInterval(pumping); clearInterval(backing); clearInterval(housekeeping); server.close(); if(connecting)try{await runtime?.stop?.('Gateway stopping');}catch{} while (busy||syncing||mediaActive||attachmentQueue.active||mobileBridge?.busy||inboxSync.status.running||providerJournal.status.running||checkingBridge||connecting||receiverWatchdog.busy||manualSyncing||phoneHistory.busy) await sleep(100);try { await client?.stop('Owner stopped gateway'); } catch {} engine.close(); process.exit(exitCode); }
 process.on('SIGINT', () => void shutdown()); process.on('SIGTERM', () => void shutdown());
 void sync();
 void mobileBridge?.poll();

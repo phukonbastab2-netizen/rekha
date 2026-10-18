@@ -20,6 +20,13 @@ test('private controls reject unauthenticated, foreign-origin and DNS-rebinding 
   assert.equal((await fetch(base+'/media/'+mediaId+'?inline=1')).status,401);
   const page=await fetch(base+'/'),cookie=page.headers.get('set-cookie').split(';')[0];assert.equal(page.status,200);assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
   const status=await(await fetch(base+'/api/status',{headers:{Cookie:cookie}})).json();assert.equal(status.connection,'disconnected');assert.equal(status.enabled,false);
+  assert.equal((await fetch(base+'/message-state.js')).status,401);
+  assert.equal((await fetch(base+'/message-state.js',{headers:{Cookie:cookie}})).status,200);
+  const timeline=await(await fetch(base+'/api/messages?order=timeline&peer=919876543210%40c.us',{headers:{Cookie:cookie}})).json();
+  assert.equal(timeline.messages.length,1);assert.ok(timeline.messages[0]._historyCursor);assert.ok(timeline.revisionCursor);
+  const syncInbox=origin=>fetch(base+'/api/sync-inbox',{method:'POST',headers:{Cookie:cookie,Origin:origin,'Content-Type':'application/json'},body:'{}'});
+  assert.equal((await syncInbox('https://foreign.test')).status,403);
+  assert.equal((await syncInbox(base)).status,409);
   const audio=await fetch(base+'/media/'+mediaId+'?inline=1',{headers:{Cookie:cookie}});
   assert.equal(audio.headers.get('content-type'),'audio/ogg');assert.match(audio.headers.get('content-disposition'),/^inline/);assert.equal(await audio.text(),'ogg');
   assert.equal(status.linkedBefore,false);
