@@ -1,0 +1,14 @@
+{
+  "name": "rekha-whatsapp-cloud-api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test transport.test.mjs worker.test.mjs funnel.test.mjs",
+    "deploy:check": "node --check worker.mjs && node --check transport.mjs"
+  },
+  "devDependencies": {}
+}

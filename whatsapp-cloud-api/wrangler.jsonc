@@ -1,0 +1,38 @@
+{
+  "name": "rekha-whatsapp-cloud-api",
+  "main": "entry.mjs",
+  "compatibility_date": "2026-10-18",
+  "account_id": "17b4c6b100c17f80099c4d7eaf7ed744",
+  "workers_dev": true,
+  "vars": {
+    "SEND_ENABLED": "false",
+    "SEND_EPOCH": "setup-disabled",
+    "READ_ENABLED": "false",
+    "GRAPH_VERSION": "v26.0",
+    "WA_PHONE_NUMBER_ID": ""
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CONVERSATIONS",
+        "class_name": "FunnelConversation"
+      },
+      {
+        "name": "CONTROL",
+        "class_name": "CloudApiControl"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "FunnelConversation",
+        "CloudApiControl"
+      ]
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}

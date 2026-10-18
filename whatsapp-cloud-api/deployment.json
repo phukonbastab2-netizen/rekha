@@ -1,0 +1,23 @@
+{
+  "service": "rekha-whatsapp-cloud-api",
+  "url": "https://rekha-whatsapp-cloud-api.phukonbastab2.workers.dev",
+  "callback": "https://rekha-whatsapp-cloud-api.phukonbastab2.workers.dev/webhook",
+  "verifiedAt": "2026-10-18T07:07:57.314Z",
+  "version": "888c0ab7f2e94a548916c13156c6b9f8",
+  "sending": false,
+  "metaConnected": false,
+  "liveChecks": {
+    "health": true,
+    "privateStatusRequiresAuthentication": true,
+    "webhookVerificationChallenge": true,
+    "incorrectVerifyTokenRejected": true,
+    "unconfiguredIncomingMessagesRejected": true,
+    "qrAssetMatchesOwnerSource": true,
+    "separateDurableObjectBindings": true,
+    "existingWorkerSettingsUnchanged": true,
+    "existingWorkerDeploymentsPredateSetup": true
+  },
+  "offlineTestsPassed": 39,
+  "liveMessageDeliveryVerified": false,
+  "blocker": "Existing Meta rekha WhatsApp Business account shown as Banned; no Meta sender credentials attached."
+}
