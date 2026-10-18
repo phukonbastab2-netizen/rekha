@@ -8,6 +8,7 @@ class Storage {
   data = new Map(); alarmAt = null;
   async get(key) { return structuredClone(this.data.get(key)); }
   async put(key, value) { this.data.set(key, structuredClone(value)); }
+  async list({prefix='',limit=1000}={}) { return new Map([...this.data].filter(([key])=>key.startsWith(prefix)).sort(([a],[b])=>a.localeCompare(b)).slice(0,limit).map(([key,value])=>[key,structuredClone(value)])); }
   async setAlarm(time) { this.alarmAt = Number(time); }
   async deleteAlarm() { this.alarmAt = null; }
   async transaction(fn) {
@@ -112,6 +113,45 @@ test('owner-only receipt inspection is read-only and excludes customer text and 
   assert.equal(value.found, true); assert.equal(value.lastInboundAt, h.now());
   assert.equal(raw.includes(waId), false); assert.equal(raw.includes('private customer text'), false);
   assert.deepEqual(await h.state(), before); assert.equal(h.requests.length, 0);
+});
+
+test('sender preserves the global fetch receiver required by Workers', async (t) => {
+  const h = harness(t);
+  globalThis.fetch = function () {
+    assert.equal(this, globalThis, 'Illegal invocation: incorrect fetch receiver');
+    return Promise.resolve(Response.json({ messages: [{ id: 'wamid.bound-fetch' }] }));
+  };
+  await h.incoming(); await h.object().alarm();
+  assert.equal((await h.state()).jobs[0].state, 'accepted');
+});
+
+test('enabling read receipts can mark the existing latest inbound without sending or replaying messages', async (t) => {
+  const h = harness(t); await h.incoming(); h.env.READ_ENABLED='true';
+  const before=await h.state();
+  const response=await h.object().fetch(new Request('https://conversation.internal/read-latest',{method:'POST'}));
+  assert.deepEqual(await response.json(),{read:true});
+  assert.equal(h.requests.length,1); assert.equal(h.requests[0].status,'read');
+  assert.equal(h.requests[0].message_id,'wamid.incoming1');
+  assert.deepEqual((await h.state()).jobs,before.jobs);
+  await h.object().fetch(new Request('https://conversation.internal/read-latest',{method:'POST'}));
+  assert.equal(h.requests.length,1);
+});
+
+test('reviewed local validation repair is limited to its object and epoch and cannot send by itself', async (t) => {
+  const h = harness(t);
+  const object = h.object(); object.ctx.id = { toString: () => 'reviewed-owner-object' };
+  object.fetchImpl = async () => { throw new TypeError('Invalid redirect value'); };
+  await h.incoming(); await object.alarm();
+  assert.equal((await h.state()).jobs[0].state, 'uncertain');
+  h.env.LOCAL_REDIRECT_REPAIR = JSON.stringify({ objectId:'another-object', epoch:'activation-1' });
+  await object.load(); assert.equal((await h.state()).jobs[0].state, 'uncertain');
+  h.env.LOCAL_REDIRECT_REPAIR = JSON.stringify({ objectId:'reviewed-owner-object', epoch:'another-epoch' });
+  await object.load(); assert.equal((await h.state()).jobs[0].state, 'uncertain');
+  h.env.LOCAL_REDIRECT_REPAIR = JSON.stringify({ objectId:'reviewed-owner-object', epoch:'activation-1' });
+  await object.load(); await object.alarm();
+  assert.ok((await h.state()).jobs.every(j => j.state === 'held'));
+  assert.equal((await h.state()).jobs[0].reconciliation, 'unsupported_redirect_rejected_before_network');
+  assert.equal(h.requests.length, 0);
 });
 
 test('Meta verification uses its separate token; private preflight requires owner token', async (t) => {

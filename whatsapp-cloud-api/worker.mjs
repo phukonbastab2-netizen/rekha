@@ -71,9 +71,37 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') return json({ ok: true, service: 'rekha-whatsapp-cloud-api' });
-    if (['/admin/preflight', '/admin/status', '/admin/pause', '/admin/conversation-status'].includes(url.pathname)) {
+    if (['/admin/preflight', '/admin/status', '/admin/pause', '/admin/conversation-status', '/admin/transport-check', '/admin/read-latest'].includes(url.pathname)) {
       const auth = request.headers.get('authorization') || '';
       if (!env.ADMIN_TOKEN || !auth.startsWith('Bearer ') || !await equalSecret(auth.slice(7), env.ADMIN_TOKEN)) return json({ error: 'unauthorized' }, 401);
+      if (url.pathname === '/admin/read-latest') {
+        if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+        let value; try { value = await request.json(); } catch { return json({ error: 'invalid_json' }, 400); }
+        if (!/^[a-f0-9]{64}$/i.test(value.id || '')) return json({ error: 'invalid_object_id' }, 400);
+        try {
+          const stub = env.CONVERSATIONS.get(env.CONVERSATIONS.idFromString(value.id));
+          const result = await stub.fetch('https://conversation.internal/read-latest', { method: 'POST' });
+          return json(await result.json(), result.status);
+        } catch { return json({ error: 'storage_unavailable' }, 503); }
+      }
+      if (url.pathname === '/admin/transport-check') {
+        if (request.method !== 'GET' || !ready(env)) return json({ error: 'not_ready' }, 409);
+        const target = `https://graph.facebook.com/${env.GRAPH_VERSION}/${env.WA_PHONE_NUMBER_ID}?fields=id`;
+        const init = () => ({ headers: { Authorization: `Bearer ${env.META_ACCESS_TOKEN}` }, signal: AbortSignal.timeout(10000), redirect: 'manual' });
+        let unboundStatus = null, unboundReceiverError = false;
+        try { const unbound = globalThis.fetch; unboundStatus = (await unbound(target, init())).status; }
+        catch (error) { unboundReceiverError = /illegal invocation|incorrect.*this|receiver/i.test(String(error?.message)); }
+        let boundStatus = null, boundContentType = null;
+        try {
+          const response = await globalThis.fetch(target, init());
+          boundStatus = response.status; boundContentType = response.headers.get('content-type');
+          const value = await response.json();
+          return json({ unboundStatus, unboundReceiverError, boundStatus: response.status, boundPhoneMatches: value.id === env.WA_PHONE_NUMBER_ID });
+        } catch (error) {
+          const diagnostic = String(error?.message || 'Unknown error').replaceAll(env.META_ACCESS_TOKEN, '[hidden]').replace(/https?:\/\/\S+/g, '[url]').slice(0,250);
+          return json({ unboundStatus, unboundReceiverError, boundStatus, boundContentType, boundRequestFailed: true, diagnostic }, 502);
+        }
+      }
       if (url.pathname === '/admin/conversation-status') {
         if (request.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
         const objectId = url.searchParams.get('id') || '';
@@ -148,13 +176,29 @@ function initialState(phoneNumberId) {
 
 export class FunnelConversation {
   constructor(ctx, env) {
-    this.ctx = ctx; this.env = env; this.storage = ctx.storage; this.serial = Promise.resolve(); this.loaded = false; this.fetchImpl = globalThis.fetch;
+    this.ctx = ctx; this.env = env; this.storage = ctx.storage; this.serial = Promise.resolve(); this.loaded = false; this.fetchImpl = globalThis.fetch.bind(globalThis);
   }
   exclusive(fn) {
     const result = this.serial.then(fn); this.serial = result.catch(() => {}); return result;
   }
   async load() {
     const state = await this.storage.get('state') || initialState(this.env.WA_PHONE_NUMBER_ID);
+    // Owner-reviewed repair for a specific local validation failure. A matching
+    // object and activation are required; generic network uncertainty stays held.
+    let repair; try { repair = JSON.parse(this.env.LOCAL_REDIRECT_REPAIR || 'null'); } catch { repair = null; }
+    if (repair && this.ctx.id?.toString() === repair.objectId && state.phoneNumberId === this.env.WA_PHONE_NUMBER_ID) {
+      const job = state.jobs.find(j => j.id === 'first:0');
+      if (job?.state === 'uncertain' && job.epoch === repair.epoch && job.attempts === 1 && !job.messageId
+        && job.lastError?.code === 'NETWORK_ERROR' && !job.lastError.status && !state.restricted
+        && state.jobs.every(j => j.state !== 'accepted' && !j.messageId)) {
+        job.state = 'held'; job.epoch = null; job.reason = 'local_validation_error_corrected';
+        job.reconciledAt = Date.now(); job.reconciliation = 'unsupported_redirect_rejected_before_network';
+        for (const next of state.jobs) if (['pending','retry'].includes(next.state)) {
+          next.state = 'held'; next.epoch = null; next.reason = 'awaiting_fresh_inbound_after_local_repair';
+        }
+        await this.storage.put('state', state);
+      }
+    }
     if (!this.loaded) {
       this.loaded = true;
       let changed = false;
@@ -170,12 +214,33 @@ export class FunnelConversation {
     return false;
   }
   async fetch(request) {
+    if (request.method === 'POST' && new URL(request.url).pathname === '/read-latest') return this.exclusive(async () => {
+      const state = await this.load();
+      if (!await this.checkSender(state) || !ready(this.env) || !isTrue(this.env.READ_ENABLED)
+        || state.optedOut || state.restricted || Date.now()-state.lastInboundAt >= DAY || (await control(this.env)).paused) return json({ read: false, reason: 'not_available' }, 409);
+      const entries = await this.storage.list({ prefix: 'inbound:', limit: 128 });
+      const latest = [...entries].filter(([,value])=>value.eventAt===state.lastInboundAt).pop();
+      if (!latest) return json({ read: false, reason: 'latest_message_not_available' }, 409);
+      const messageId = latest[0].slice('inbound:'.length);
+      if (state.lastReadMessageId === messageId) return json({ read: true, alreadyMarked: true });
+      try {
+        await markCloudMessageRead({ token: this.env.META_ACCESS_TOKEN, phoneNumberId: this.env.WA_PHONE_NUMBER_ID, graphVersion: this.env.GRAPH_VERSION, messageId, fetchImpl: this.fetchImpl });
+        state.lastReadMessageId = messageId; state.lastReadAt = Date.now(); await this.storage.put('state',state);
+        return json({ read: true });
+      } catch(error) {
+        if (error.isRestriction) { state.restricted=true; state.pendingRestrictionFlag={reason:'provider_restriction',code:error.code??null,at:Date.now()};await this.storage.put('state',state);await this.propagateRestriction(state); }
+        return json({ read: false, errorCode: error.code??null }, 502);
+      }
+    });
     if (request.method === 'GET' && new URL(request.url).pathname === '/summary') return this.exclusive(async () => {
-      const state = await this.storage.get('state');
+      const state = await this.load();
       if (!state || state.phoneNumberId !== this.env.WA_PHONE_NUMBER_ID) return json({ found: false });
       return json({ found: true, lastInboundAt: state.lastInboundAt, firstStarted: state.firstStarted,
         optedOut: state.optedOut, restricted: state.restricted,
-        jobs: state.jobs.map(({ stage, state: status, delivery, reason }) => ({ stage, status, delivery, reason })),
+        jobs: state.jobs.map(({ stage, state: status, delivery, reason, lastError, deliveryFailure }) => ({ stage, status, delivery, reason,
+          ...(lastError ? { errorCode: lastError.code, httpStatus: lastError.status } : {}),
+          ...(deliveryFailure?.length ? { deliveryErrorCodes: deliveryFailure.map(e => e.code) } : {}),
+        })),
       });
     });
     if (request.method !== 'POST' || new URL(request.url).pathname !== '/ingest') return json({ error: 'not_found' }, 404);

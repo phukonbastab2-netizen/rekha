@@ -80,7 +80,7 @@ test('send targets only fixed Graph origin and returns only the accepted message
     calls += 1;
     assert.equal(url, 'https://graph.facebook.com/v25.0/123456789012345/messages');
     assert.equal(init.method, 'POST');
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     assert.equal(init.headers.Authorization, `Bearer ${credentials.token}`);
     assert.equal(JSON.parse(init.body).text.body, outbound.step.body);
     assert.ok(init.signal instanceof AbortSignal);

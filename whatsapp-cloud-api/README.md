@@ -6,7 +6,9 @@ This service has its own Worker, callback, credentials and Durable Object storag
 
 The separate connection was configured on 18 October 2026 under the **rekha** portfolio, using its existing **rekha astrology** app and the approved WABA `1618188039845611`. A dedicated Employee system user has access to only that app and WABA. Its 60-day token has WhatsApp messaging and management scopes. Credentials remain private Worker secrets.
 
-Sending and read receipts remain disabled. The verification challenge and signature checks pass. Both the selected WABA and its phone have explicit webhook overrides pointing to this service; the app-wide callback is unchanged. A real owner-controlled inbound test was received and stored at **2026-10-18 16:28:36 UTC**, with all five original funnel jobs held and no outgoing send. Outgoing delivery has not been verified.
+Sending and read receipts are now enabled for fresh customer messages. The verification challenge and signature checks pass. Both the selected WABA and its phone have explicit webhook overrides pointing to this service; the app-wide callback is unchanged. The first live inbound test was stored on **18 October 2026 at 9:58:36 pm IST**. The completed outgoing test received at **10:10:37 pm IST** produced all five original messages, with signed Meta receipts confirming each as delivered or read. Previous held work was not automatically released: a fresh customer message authorized the tested sequence.
+
+The Cloudflare runtime rejected `redirect: 'error'` before any provider request. The transport now uses `redirect: 'manual'`, never follows redirects and treats unexpected responses as uncertain. The single locally rejected test attempt was reconciled only after runtime proof of the pre-network error and owner confirmation of non-receipt. Its one-time repair binding has been removed. Ordinary uncertain sends remain blocked and are never automatically retried. The deployed transport and durable workflow have **45 passing checks**.
 
 The latest Meta health check reports the portfolio and app as available, the display name as pending review, and a payment-method error blocking business-initiated conversations. This is not evidence that incoming messages or customer-service replies are blocked. Do not interpret `readyForConnection` as permission or readiness to send; it checks local configuration only.
 
@@ -25,6 +27,10 @@ The original owner-supplied ₹29 funnel text, media and five-second spacing are
 `POST /admin/pause` with `Authorization: Bearer <ADMIN_TOKEN>` durably pauses the account. `/admin/status` and `/admin/preflight` require the same token. There is deliberately no public send or resume route. A provider restriction also pauses all contacts. A restriction pause requires a reviewed maintenance change after Meta restores eligibility; changing the enable flag cannot bypass it.
 
 Private status includes timestamps for successfully stored inbound/status webhooks. `/admin/conversation-status?id=<durable-object-id>` lets the owner verify stored receipt times and held job states without exposing customer text, phone numbers or message IDs. It is read-only, requires the same owner token and never releases queued messages.
+
+Authenticated `POST /admin/read-latest` accepts an opaque conversation object ID to mark its most recent stored inbound as read. This covers a message received before read receipts were enabled, without sending a chat reply or replaying the funnel. It checks the service window, opt-out and global pause, and repeated marking of the same message is idempotent. A successful current-test acknowledgment was confirmed by Meta after activation.
+
+`/admin/transport-check` performs only authenticated read-only Meta requests to check edge-to-Meta connectivity. It sends no WhatsApp message. The current access token uses a 60-day expiry and needs renewal around **17 December 2026**; there is no automatic token renewal or account recovery process.
 
 Separate credentials and storage limit accidental cross-account changes. They cannot guarantee that a WhatsApp restriction will leave its Meta portfolio unaffected. Meta controls account and organization enforcement; there is no ban-proof portfolio setting. Respect opt-outs, service windows and approved limits, and retain a direct support route before activating automation.
 

@@ -139,7 +139,7 @@ async function postGraph(options, payload, kind) {
       const response = await fetchImpl(url, {
         method: 'POST',
         headers: { Authorization: `Bearer ${options.token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload), signal: controller.signal, redirect: 'error'
+        body: JSON.stringify(payload), signal: controller.signal, redirect: 'manual'
       });
       const raw = await response.text();
       let data;
