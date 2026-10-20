@@ -91,16 +91,16 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     if (url.pathname === '/health' && request.method === 'GET') return json({ ok: true, service: 'rekha-whatsapp-cloud-api' });
-    if (['/admin/preflight', '/admin/status', '/admin/pause', '/admin/conversation-status', '/admin/transport-check', '/admin/read-latest'].includes(url.pathname)) {
+    if (['/admin/preflight', '/admin/status', '/admin/pause', '/admin/conversation-status', '/admin/transport-check', '/admin/read-latest', '/admin/start-owner-test'].includes(url.pathname)) {
       const auth = request.headers.get('authorization') || '';
       if (!env.ADMIN_TOKEN || !auth.startsWith('Bearer ') || !await equalSecret(auth.slice(7), env.ADMIN_TOKEN)) return json({ error: 'unauthorized' }, 401);
-      if (url.pathname === '/admin/read-latest') {
+      if (['/admin/read-latest', '/admin/start-owner-test'].includes(url.pathname)) {
         if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
         let value; try { value = await request.json(); } catch { return json({ error: 'invalid_json' }, 400); }
         if (!/^[a-f0-9]{64}$/i.test(value.id || '')) return json({ error: 'invalid_object_id' }, 400);
         try {
           const stub = env.CONVERSATIONS.get(env.CONVERSATIONS.idFromString(value.id));
-          const result = await stub.fetch('https://conversation.internal/read-latest', { method: 'POST' });
+          const result = await stub.fetch('https://conversation.internal/'+(url.pathname === '/admin/start-owner-test' ? 'start-owner-test' : 'read-latest'), { method: 'POST' });
           return json(await result.json(), result.status);
         } catch { return json({ error: 'storage_unavailable' }, 503); }
       }
@@ -137,7 +137,7 @@ export default {
       }
       if (request.method !== 'GET' || url.pathname === '/admin/pause') return json({ error: 'method_not_allowed' }, 405);
       let account; try { account = await control(env); } catch { account = { paused: true, reason: 'control_unavailable' }; }
-      return json({ service: 'rekha-whatsapp-cloud-api', sendEnabled: enabled(env), readEnabled: isTrue(env.READ_ENABLED), configured: {
+      return json({ service: 'rekha-whatsapp-cloud-api', sendEnabled: enabled(env), readEnabled: isTrue(env.READ_ENABLED), testConversationOnly: Boolean(env.TEST_CONVERSATION_ID), configured: {
         accessToken: Boolean(env.META_ACCESS_TOKEN), appSecret: Boolean(env.META_APP_SECRET), verifyToken: Boolean(env.META_VERIFY_TOKEN),
         phoneNumber: digits(env.WA_PHONE_NUMBER_ID), graphVersion: /^v\d+\.\d+$/.test(env.GRAPH_VERSION || ''), conversations: Boolean(env.CONVERSATIONS), control: Boolean(env.CONTROL), sendEpoch: Boolean(env.SEND_EPOCH),
       }, readyForConnection: ready(env) && Boolean(env.META_APP_SECRET && env.META_VERIFY_TOKEN && env.CONVERSATIONS && env.CONTROL), account, automaticBacklogRelease: false });
@@ -201,6 +201,9 @@ export class FunnelConversation {
   exclusive(fn) {
     const result = this.serial.then(fn); this.serial = result.catch(() => {}); return result;
   }
+  sendAllowed() {
+    return enabled(this.env) && (!this.env.TEST_CONVERSATION_ID || this.ctx.id?.toString() === this.env.TEST_CONVERSATION_ID);
+  }
   async load() {
     const state = await this.storage.get('state') || initialState(this.env.WA_PHONE_NUMBER_ID);
     // A definite 131037 rejection is an approval hold, not an uncertain send.
@@ -241,9 +244,23 @@ export class FunnelConversation {
     return false;
   }
   async fetch(request) {
+    if (request.method === 'POST' && new URL(request.url).pathname === '/start-owner-test') return this.exclusive(async () => {
+      const state = await this.load();
+      if (!this.env.TEST_CONVERSATION_ID || !this.sendAllowed() || !ready(this.env)
+        || !await this.checkSender(state) || state.optedOut || state.restricted || this.blocked(state)
+        || !state.lastInboundAt || Date.now()-state.lastInboundAt > 10*60*1000
+        || (await control(this.env)).paused) return json({ started: false, reason: 'not_available' }, 409);
+      if (state.ownerTestStartedAt) return json({ started: true, duplicate: true });
+      const first = state.jobs.filter(job => job.stage === 'first');
+      if (first.length !== firstSequence.length || first.some(job => job.state !== 'held' || job.attempts !== 0 || job.messageId)) return json({ started: false, reason: 'not_an_unattempted_test' }, 409);
+      state.ownerTestStartedAt = Date.now();
+      for (const job of first) { job.state = 'pending'; job.epoch = this.env.SEND_EPOCH; job.authorizedAt = state.lastInboundAt; }
+      await this.storage.put('state', state); await this.schedule(state);
+      return json({ started: true });
+    });
     if (request.method === 'POST' && new URL(request.url).pathname === '/read-latest') return this.exclusive(async () => {
       const state = await this.load();
-      if (!await this.checkSender(state) || !ready(this.env) || !isTrue(this.env.READ_ENABLED)
+      if (!await this.checkSender(state) || !this.sendAllowed() || !ready(this.env) || !isTrue(this.env.READ_ENABLED)
         || state.optedOut || state.restricted || Date.now()-state.lastInboundAt >= DAY || (await control(this.env)).paused) return json({ read: false, reason: 'not_available' }, 409);
       const entries = await this.storage.list({ prefix: 'inbound:', limit: 128 });
       const latest = [...entries].filter(([,value])=>value.eventAt===state.lastInboundAt).pop();
@@ -262,7 +279,7 @@ export class FunnelConversation {
     if (request.method === 'GET' && new URL(request.url).pathname === '/summary') return this.exclusive(async () => {
       const state = await this.load();
       if (!state || state.phoneNumberId !== this.env.WA_PHONE_NUMBER_ID) return json({ found: false });
-      return json({ found: true, lastInboundAt: state.lastInboundAt, firstStarted: state.firstStarted,
+      return json({ found: true, senderLastFour: state.waId?.slice(-4), lastInboundAt: state.lastInboundAt, firstStarted: state.firstStarted,
         reminderScheduled: state.reminderScheduled, mediaScheduled: state.mediaScheduled, paymentState: state.paymentState,
         optedOut: state.optedOut, restricted: state.restricted, nameApprovalRequired: Boolean(state.nameApprovalRequired),
         jobs: state.jobs.map(({ id, stage, state: status, dueAt, acceptedAt, delivery, reason, lastError, deliveryFailure }) => ({ id, stage, status, dueAt, acceptedAt, delivery, reason,
@@ -317,7 +334,7 @@ export class FunnelConversation {
       state.optedOut = true; state.optedOutAt = now;
       for (const job of state.jobs) if (['pending', 'held', 'retry'].includes(job.state)) { job.state = 'cancelled'; job.reason = 'customer_opt_out'; }
     } else if (fresh && !state.optedOut && !state.restricted) {
-      const active = enabled(this.env) && ready(this.env);
+      const active = this.sendAllowed() && ready(this.env);
       if (active) for (const job of state.jobs) if (['held', 'pending', 'retry'].includes(job.state)) { job.state = 'pending'; job.epoch = this.env.SEND_EPOCH; job.authorizedAt = eventAt; }
       const customerMessage = isCustomerMessage(event, text);
       if (customerMessage && !state.firstStarted) {
@@ -343,7 +360,7 @@ export class FunnelConversation {
       await tx.put(eventKey, { type: event.type, text, eventAt, receivedAt: now });
     });
     await this.schedule(state);
-    if (fresh && !decline && !state.optedOut && !state.restricted && enabled(this.env) && ready(this.env) && isTrue(this.env.READ_ENABLED)) {
+    if (fresh && !decline && !state.optedOut && !state.restricted && this.sendAllowed() && ready(this.env) && isTrue(this.env.READ_ENABLED)) {
       const work = this.exclusive(async () => {
         try {
           if ((await control(this.env)).paused) return;
@@ -386,7 +403,7 @@ export class FunnelConversation {
     const job = nextJob(state);
     if (!job) { await this.storage.deleteAlarm(); return; }
     const now = Date.now();
-    if (!enabled(this.env) || !ready(this.env) || job.epoch !== this.env.SEND_EPOCH || now - state.lastInboundAt >= DAY) {
+    if (!this.sendAllowed() || !ready(this.env) || job.epoch !== this.env.SEND_EPOCH || now - state.lastInboundAt >= DAY) {
       for (const pending of state.jobs) if (['pending', 'retry'].includes(pending.state)) { pending.state = 'held'; pending.reason = now - state.lastInboundAt >= DAY ? 'service_window_expired' : 'sending_disabled_or_new_activation'; }
       await this.storage.put('state', state); await this.storage.deleteAlarm(); return;
     }

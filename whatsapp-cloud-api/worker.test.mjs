@@ -59,6 +59,76 @@ async function drain(h) {
   for (let i = 0; i < firstSequence.length; i++) { await h.object().alarm(); h.advance(GAP); }
 }
 
+test('owner conversation gate holds other leads and does not mark them read', async (t) => {
+  const h=harness(t,{TEST_CONVERSATION_ID:'owner-test',READ_ENABLED:'true'});
+  h.object().ctx.id={toString:()=> 'owner-test'};
+  const other='919876540000';h.object(other).ctx.id={toString:()=> 'another-contact'};
+  await h.incoming('Hi','wamid.owner-inbound');
+  await h.incoming('Hi','wamid.other-inbound',{},other);
+  await Promise.all(h.waits);
+  assert.equal(h.requests.filter(x=>x.status==='read').length,1);
+  assert.ok((await h.state()).jobs.every(x=>x.state==='pending'));
+  assert.ok((await h.state(other)).jobs.every(x=>x.state==='held'));
+  await h.object(other).alarm();
+  await h.object().alarm();
+  assert.equal(h.requests.filter(x=>x.type==='text').length,1);
+  assert.equal(h.requests.find(x=>x.type==='text').to,waId);
+});
+
+test('owner gate blocks a previously pending contact at alarm execution', async (t) => {
+  const h=harness(t);
+  await h.incoming();
+  h.env.TEST_CONVERSATION_ID='different-object';
+  h.object().ctx.id={toString:()=> 'previous-contact'};
+  await h.object().alarm();
+  assert.equal(h.requests.length,0);
+  assert.ok((await h.state()).jobs.every(x=>x.state==='held'));
+});
+
+test('owner gate also applies to manual read acknowledgments', async (t) => {
+  const h=harness(t,{TEST_CONVERSATION_ID:'owner-test',READ_ENABLED:'true'});
+  h.object().ctx.id={toString:()=> 'another-contact'};
+  await h.incoming();await Promise.all(h.waits);
+  const response=await h.object().fetch(new Request('https://conversation.internal/read-latest',{method:'POST'}));
+  assert.equal(response.status,409);assert.equal(h.requests.length,0);
+});
+
+test('an explicit owner test uses only a recent real inbound and cannot replay accepted steps', async (t) => {
+  const h=harness(t,{SEND_ENABLED:'false',TEST_CONVERSATION_ID:'owner-test'});
+  h.object().ctx.id={toString:()=> 'owner-test'};
+  const start=()=>h.object().fetch(new Request('https://conversation.internal/start-owner-test',{method:'POST'}));
+  assert.equal((await start()).status,409);
+  await h.incoming();h.env.SEND_ENABLED='true';
+  assert.equal((await start()).status,200);await h.object().alarm();
+  assert.equal(h.requests.length,1);
+  assert.equal((await (await start()).json()).duplicate,true);
+  assert.equal((await h.state()).jobs.filter(j=>j.state==='accepted').length,1);
+  assert.equal(h.requests.length,1);
+});
+
+test('owner test cannot release another contact, stale inbound or a global pause', async (t) => {
+  const h=harness(t,{SEND_ENABLED:'false',TEST_CONVERSATION_ID:'owner-test'});
+  h.object().ctx.id={toString:()=> 'other'};await h.incoming();h.env.SEND_ENABLED='true';
+  const start=()=>h.object().fetch(new Request('https://conversation.internal/start-owner-test',{method:'POST'}));
+  assert.equal((await start()).status,409);
+  h.object().ctx.id={toString:()=> 'owner-test'};h.advance(10*60*1000+1);
+  assert.equal((await start()).status,409);
+  h.env.SEND_ENABLED='false';await h.incoming('Hi','wamid.new-inbound');h.env.SEND_ENABLED='true';
+  await h.env.CONTROL.get(`account:${phoneId}`).fetch('https://control.internal/pause',{method:'POST',body:JSON.stringify({reason:'owner_pause',at:h.now()})});
+  assert.equal((await start()).status,409);
+  assert.equal(h.requests.length,0);
+});
+
+test('owner test endpoint requires authentication and cannot retry a previously accepted first step', async (t) => {
+  const h=harness(t,{TEST_CONVERSATION_ID:'a'.repeat(64)});
+  h.object().ctx.id={toString:()=> 'a'.repeat(64)};await h.incoming();await h.object().alarm();
+  h.env.CONVERSATIONS.idFromString=()=>`${phoneId}:${waId}`;
+  const url='https://x.test/admin/start-owner-test',body=JSON.stringify({id:'a'.repeat(64)});
+  assert.equal((await worker.fetch(new Request(url,{method:'POST',body}),h.env)).status,401);
+  assert.equal((await worker.fetch(new Request(url,{method:'POST',headers:{Authorization:'Bearer private_admin'},body}),h.env)).status,409);
+  assert.equal(h.requests.length,1);
+});
+
 test('webhook authenticates the raw body and exact configured number before persisting', async (t) => {
   const h = harness(t);
   assert.equal((await worker.fetch(signedRequest(payload(), 'wrong'), h.env)).status, 401);
