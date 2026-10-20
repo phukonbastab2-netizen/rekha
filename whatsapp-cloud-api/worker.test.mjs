@@ -129,6 +129,63 @@ test('owner test endpoint requires authentication and cannot retry a previously 
   assert.equal(h.requests.length,1);
 });
 
+test('a stored webhook exposes only its opaque object ID in authenticated recent receipts', async (t) => {
+  const h=harness(t,{SEND_ENABLED:'false'}),objectId='b'.repeat(64);
+  h.env.CONVERSATIONS.idFromName=()=>objectId;
+  assert.equal((await worker.fetch(signedRequest(payload()),h.env)).status,200);
+  const response=await worker.fetch(new Request('https://x.test/admin/status',{headers:{Authorization:'Bearer private_admin'}}),h.env);
+  const value=await response.json();
+  assert.deepEqual(value.account.ingestion.recentConversationIds,[objectId]);
+  assert.equal(JSON.stringify(value).includes(waId),false);
+  assert.equal((await worker.fetch(new Request('https://x.test/admin/status'),h.env)).status,401);
+});
+
+test('recent conversation lookup stays bounded and deduplicated under concurrent receipts', async () => {
+  const control=new CloudApiControl({storage:new Storage()});
+  const send=ids=>control.fetch(new Request('https://control.internal/receipt',{method:'POST',body:JSON.stringify({inbound:true,conversationIds:ids})}));
+  const ids=Array.from({length:110},(_,i)=>i.toString(16).padStart(64,'0'));
+  await Promise.all(ids.map(id=>send([id])));
+  await send(['invalid',ids[20]]);
+  const value=await(await control.fetch(new Request('https://control.internal/state'))).json();
+  assert.equal(value.ingestion.recentConversationIds.length,100);
+  assert.equal(new Set(value.ingestion.recentConversationIds).size,100);
+  assert.equal(value.ingestion.recentConversationIds.at(-1),ids[20]);
+  assert.equal(value.ingestion.recentConversationIds.includes('invalid'),false);
+});
+
+test('reviewed owner permission repair is single-use and only retries a definite unaccepted code 10', async (t) => {
+  const h=harness(t,{SEND_ENABLED:'false',TEST_CONVERSATION_ID:'owner-test'});
+  h.object().ctx.id={toString:()=> 'owner-test'};await h.incoming();h.env.SEND_ENABLED='true';
+  await h.object().fetch(new Request('https://conversation.internal/start-owner-test',{method:'POST'}));
+  const send=h.object().fetchImpl;
+  h.object().fetchImpl=async()=>Response.json({error:{code:10}},{status:400});
+  await h.object().alarm();assert.equal((await h.state()).jobs[0].state,'failed');
+  const repair=()=>h.object().fetch(new Request('https://conversation.internal/repair-owner-permission-test',{method:'POST'}));
+  assert.equal((await repair()).status,200);assert.equal((await repair()).status,409);
+  h.object().fetchImpl=send;await h.object().alarm();
+  assert.equal((await h.state()).jobs[0].state,'accepted');
+  assert.equal((await h.state()).jobs[0].attempts,2);
+  assert.equal((await h.state()).ownerPermissionRepair.previousError.code,10);
+  assert.equal(h.requests.length,1);
+});
+
+test('permission repair rejects uncertainty, different provider errors and already accepted work', async (t) => {
+  const h=harness(t,{SEND_ENABLED:'false',TEST_CONVERSATION_ID:'owner-test'});
+  h.object().ctx.id={toString:()=> 'owner-test'};await h.incoming();h.env.SEND_ENABLED='true';
+  await h.object().fetch(new Request('https://conversation.internal/start-owner-test',{method:'POST'}));
+  const repair=()=>h.object().fetch(new Request('https://conversation.internal/repair-owner-permission-test',{method:'POST'}));
+  for(const mutation of [
+    {state:'uncertain',attempts:1,lastError:{code:10,status:400}},
+    {state:'failed',attempts:1,lastError:{code:131037,status:400}},
+    {state:'failed',attempts:1,lastError:{code:10,status:500}},
+    {state:'failed',attempts:1,lastError:{code:10,status:400},messageId:'wamid.already-accepted'},
+  ]){
+    const state=await h.state();state.jobs[0]={...state.jobs[0],...mutation};await h.object().storage.put('state',state);
+    assert.equal((await repair()).status,409);
+  }
+  assert.equal(h.requests.length,0);
+});
+
 test('webhook authenticates the raw body and exact configured number before persisting', async (t) => {
   const h = harness(t);
   assert.equal((await worker.fetch(signedRequest(payload(), 'wrong'), h.env)).status, 401);
