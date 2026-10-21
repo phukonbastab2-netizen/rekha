@@ -1,0 +1,28 @@
+[Unit]
+Description=Rekha Oracle private inbox and manual replies only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/rekha-manual-inbox-4525
+EnvironmentFile=/home/ubuntu/rekha-private/manual-inbox-4525.env
+ExecStart=/home/ubuntu/.local/node/bin/node oracle/manual-server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/rekha-private/manual-inbox-4525
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
