@@ -1,0 +1,21 @@
+{
+  "measuredAt": "2026-10-21",
+  "environment": "Existing Oracle A1 server, 2 OCPUs and 12 GB RAM",
+  "synthetic": true,
+  "customersTested": 10000,
+  "messagesTested": 100000,
+  "queryP50Milliseconds": 1.232,
+  "queryP95Milliseconds": 3.211,
+  "queryP99Milliseconds": 3.705,
+  "databaseBytes": 91197440,
+  "projectedTenMillionGiBWithTenMessagesEach": 84.94,
+  "projectionIsNotACapacityTest": true,
+  "tenMillionCapacityVerified": false,
+  "discoveryIndexLimit": 100,
+  "requiredBeforeTenMillionGuarantee": [
+    "Storage sized for real customer history, backups and growth",
+    "Durable event discovery instead of the recent 100-conversation window",
+    "A recovery replica or independently recoverable backup",
+    "Load testing at the actual target size and observed traffic"
+  ]
+}

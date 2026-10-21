@@ -166,6 +166,27 @@ export async function sendCloudMessage(options) {
   return postGraph(options, makeCloudPayload(options.to, options.step), 'send');
 }
 
+/** Owner composer only. The automatic funnel continues using its old builder. */
+export async function sendOwnerMessage(options) {
+  const step=options.step;
+  let payload;
+  if(step?.type==='text'||(step?.type==='image'&&step.url))payload=makeCloudPayload(options.to,step);
+  else if(step?.type==='reaction'){
+    if(!validMessageId(step.messageId)||typeof step.emoji!=='string'||[...step.emoji].length>16)fail('INVALID_REACTION');
+    payload={messaging_product:'whatsapp',recipient_type:'individual',to:recipient(options.to),type:'reaction',reaction:{message_id:step.messageId,emoji:step.emoji}};
+  } else {
+    if(!['image','video','audio','document','sticker'].includes(step?.type)||!/^\d{1,32}$/.test(step.mediaId||''))fail('INVALID_OWNER_MEDIA');
+    payload={messaging_product:'whatsapp',recipient_type:'individual',to:recipient(options.to),type:step.type,[step.type]:{id:step.mediaId}};
+    const caption=textField(step.body,1024,'INVALID_CAPTION');
+    if(caption&&['image','video','document'].includes(step.type))payload[step.type].caption=caption;
+    if(step.type==='document'&&step.filename)payload.document.filename=textField(step.filename,240,'INVALID_FILENAME');
+    // OGG/Opus is uploaded for recordings. Keep the standard audio object rather
+    // than inventing unsupported native-voice flags.
+  }
+  if(options.replyTo){if(!validMessageId(options.replyTo))fail('INVALID_CONTEXT');payload.context={message_id:options.replyTo};}
+  return postGraph(options,payload,'send');
+}
+
 export async function markCloudMessageRead(options) {
   if (!validMessageId(options.messageId)) fail('INVALID_MESSAGE_ID');
   return postGraph(options, { messaging_product: 'whatsapp', status: 'read', message_id: options.messageId }, 'read');

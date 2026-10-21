@@ -20,7 +20,7 @@ export class FunnelConversation extends ExistingConversation {
    const records=[...await this.storage.list({prefix:'inbound:',limit:200,...(after?{startAfter:after}:{})})];
    return json({found:true,phoneNumberId:state.phoneNumberId,waId:state.waId,lastInboundAt:state.lastInboundAt,optedOut:state.optedOut,restricted:state.restricted,
     nameApprovalRequired:Boolean(state.nameApprovalRequired),firstStarted:state.firstStarted,reminderScheduled:state.reminderScheduled,mediaScheduled:state.mediaScheduled,
-    jobs:state.jobs,records,next:records.length===200?records.at(-1)[0]:null});
+    jobs:state.jobs,ownerReceipts:state.ownerReceipts||{},records,next:records.length===200?records.at(-1)[0]:null});
   });
   return super.fetch(request);
  }

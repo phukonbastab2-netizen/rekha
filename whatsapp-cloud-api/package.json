@@ -7,7 +7,7 @@
   },
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test transport.test.mjs worker.test.mjs funnel.test.mjs inbox-entry.test.mjs oracle/inbox.test.mjs",
+    "test": "node --test transport.test.mjs worker.test.mjs funnel.test.mjs inbox-entry.test.mjs oracle/inbox.test.mjs oracle/rich-inbox.test.mjs",
     "deploy:check": "node --check worker.mjs && node --check transport.mjs"
   },
   "devDependencies": {}

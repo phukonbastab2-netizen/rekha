@@ -165,7 +165,13 @@ export default {
         if (String(value?.metadata?.phone_number_id || '') !== String(env.WA_PHONE_NUMBER_ID)) return json({ error: 'phone_number_mismatch' }, 403);
         for (const message of Array.isArray(value.messages) ? value.messages : []) {
           if (!digits(message.from) || !message.id || String(message.id).length > 512) continue;
-          events.push({ kind: 'inbound', waId: String(message.from), id: String(message.id), type: String(message.type || 'unknown'), text: textOf(message), timestamp: message.timestamp });
+          const mediaValue = ['image','video','audio','document','sticker'].includes(message.type) ? message[message.type] : null;
+          const media = mediaValue && /^\d{1,32}$/.test(String(mediaValue.id || '')) ? {
+            id:String(mediaValue.id),mime:String(mediaValue.mime_type||'').slice(0,120),
+            caption:String(mediaValue.caption||'').slice(0,1024),filename:String(mediaValue.filename||'').slice(0,240),
+          } : null;
+          events.push({ kind: 'inbound', waId: String(message.from), id: String(message.id), type: String(message.type || 'unknown'), text: textOf(message), timestamp: message.timestamp,
+            ...(media ? {media} : {}), ...(message.context?.id ? {replyTo:String(message.context.id).slice(0,512)} : {}) });
         }
         for (const status of Array.isArray(value.statuses) ? value.statuses : []) {
           if (!digits(status.recipient_id) || !status.id || String(status.id).length > 512) continue;
@@ -327,6 +333,18 @@ export class FunnelConversation {
         // Only a signed delivered/read receipt can clear a previous delivery
         // failure. Continue with the next step; never replay the accepted one.
         state.deliveryBlocked = state.jobs.some(j => j.delivery === 'failed');
+      } else {
+        // Keep receipts for owner replies in the existing state commit. This
+        // does not enroll a lead or add a second Cloudflare storage write.
+        const receipts = state.ownerReceipts || {};
+        const ranks = { sent:1,delivered:2,read:3 };
+        const prior = receipts[event.id];
+        if (!prior || (ranks[event.status]||0) > (ranks[prior.status]||0)
+          || (event.status==='failed' && !['delivered','read'].includes(prior.status))) {
+          delete receipts[event.id];
+          receipts[event.id] = {status:event.status,at:Date.now(),...(event.errors?.length?{errors:event.errors}: {})};
+        }
+        state.ownerReceipts = Object.fromEntries(Object.entries(receipts).reverse().sort((a,b)=>b[1].at-a[1].at).slice(0,128).reverse());
       }
       const restriction = event.status === 'failed' && event.errors?.find((e) => restrictedCodes.has(Number(e.code)));
       if (restriction) { state.restricted = true; state.pendingRestrictionFlag = { reason: 'provider_restriction', code: restriction.code, at: Date.now() }; }
@@ -376,7 +394,8 @@ export class FunnelConversation {
     // State and the incoming ID commit together before acknowledging Meta.
     await this.storage.transaction(async (tx) => {
       await tx.put('state', state);
-      await tx.put(eventKey, { type: event.type, text, eventAt, receivedAt: now });
+      await tx.put(eventKey, { type: event.type, text, eventAt, receivedAt: now,
+        ...(event.media ? {media:event.media} : {}), ...(event.replyTo ? {replyTo:event.replyTo} : {}) });
     });
     await this.schedule(state);
     if (fresh && !decline && !state.optedOut && !state.restricted && this.sendAllowed() && ready(this.env) && isTrue(this.env.READ_ENABLED)) {
@@ -478,10 +497,11 @@ export class CloudApiControl {
         const now = Date.now();
         const ids = (Array.isArray(value.conversationIds) ? value.conversationIds : []).filter(id => /^[a-f0-9]{64}$/i.test(id)).slice(-100);
         const recentConversationIds = [...new Set([...(previous.recentConversationIds || []).filter(id => !ids.includes(id)), ...ids])].slice(-100);
+        const recentConversationUpdates = Object.fromEntries(recentConversationIds.map(id => [id, ids.includes(id) ? now : previous.recentConversationUpdates?.[id] || 0]));
         const ingestion = { ...previous, lastWebhookAt: now,
           ...(value.inbound === true ? { lastInboundAt: now } : {}),
           ...(value.status === true ? { lastStatusAt: now } : {}),
-          ...(recentConversationIds.length ? { recentConversationIds } : {}),
+          ...(recentConversationIds.length ? { recentConversationIds,recentConversationUpdates } : {}),
         };
         await this.storage.put('ingestion', ingestion);
         return json({ stored: true });

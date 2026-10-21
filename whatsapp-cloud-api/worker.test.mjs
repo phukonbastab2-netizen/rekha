@@ -656,3 +656,22 @@ test('existing rejected reminders migrate to an approval hold without replaying 
   assert.ok(migrated.jobs.filter(j => j.stage === 'first').every(j => j.state === 'accepted'));
   assert.equal(h.requests.length, 5); assert.equal(migrated.pendingRestrictionFlag, undefined);
 });
+
+test('signed incoming media keeps its private media ID and caption in the existing inbound record', async(t)=>{
+ const h=harness(t);const body=payload({from:waId,id:'wamid.photo',type:'image',image:{id:'12345678',mime_type:'image/jpeg',caption:'Payment screenshot'},timestamp:String(h.now()/1000)});
+ assert.equal((await worker.fetch(signedRequest(body),h.env)).status,200);
+ const saved=await h.object().storage.get('inbound:wamid.photo');assert.equal(saved.media.id,'12345678');assert.equal(saved.media.caption,'Payment screenshot');assert.equal((await h.state()).paymentState,'customer_reported_pending_review');
+});
+
+test('unknown owner-message receipts are bounded and never enroll or replay the funnel',async(t)=>{
+ const h=harness(t);for(let i=0;i<140;i++)await h.object().ingest({kind:'status',waId,id:'wamid.owner'+i,status:'delivered'});
+ const state=await h.state();assert.equal(state.firstStarted,false);assert.equal(state.jobs.length,0);assert.equal(Object.keys(state.ownerReceipts).length,128);assert.equal(h.requests.length,0);
+ await h.object().ingest({kind:'status',waId,id:'wamid.owner139',status:'read'});await h.object().ingest({kind:'status',waId,id:'wamid.owner139',status:'sent'});assert.equal((await h.state()).ownerReceipts['wamid.owner139'].status,'read');
+});
+
+test('changed-contact revision is piggybacked on the existing account ingestion record',async(t)=>{
+ const h=harness(t),id='a'.repeat(64);const stub=h.env.CONTROL.get('account:'+phoneId);
+ await stub.fetch('https://control.internal/receipt',{method:'POST',body:JSON.stringify({inbound:true,conversationIds:[id]})});
+ const first=await(await stub.fetch('https://control.internal/state')).json();assert.equal(first.ingestion.recentConversationUpdates[id],h.now());h.advance(3000);
+ await stub.fetch('https://control.internal/receipt',{method:'POST',body:JSON.stringify({status:true,conversationIds:[id]})});const second=await(await stub.fetch('https://control.internal/state')).json();assert.equal(second.ingestion.recentConversationUpdates[id],h.now());assert.equal(second.ingestion.recentConversationIds.length,1);
+});
