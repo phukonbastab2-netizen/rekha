@@ -1,0 +1,25 @@
+[Unit]
+Description=Rekha private Oracle inbox connection to Cloudflare
+After=network-online.target rekha-manual-inbox-4525.service
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+ExecStart=/home/ubuntu/.local/bin/cloudflared tunnel --no-autoupdate run --token-file /home/ubuntu/rekha-private/4525-cloudflared-token
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

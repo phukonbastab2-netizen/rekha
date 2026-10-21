@@ -10,10 +10,7 @@ bearer token, read existing Durable Object records directly, and never call
 `put`, `load`, `schedule` or the send transport. All original public requests
 continue through `entry.mjs`. The original Worker classes remain authoritative.
 
-`oracle/rich-server.mjs` binds to loopback and is available through the
-owner's existing Oracle SSH access on port 4342. No public DNS, Cloudflare
-Tunnel or public server port is required. Its private browser session uses an
-HttpOnly SameSite cookie and same-origin JSON checks for sending.
+`oracle/rich-server.mjs` binds to loopback on port 4342. An owner password is required for both the SSH view and optional public access. Configure a salted scrypt OWNER_PASSWORD_HASH, a random OWNER_SESSION_KEY, PUBLIC_ORIGIN and PUBLIC_BASE_PATH. Passwords and Meta tokens are never embedded in the Android APK. Sessions are signed, expire after 30 days, and use HttpOnly SameSite=Strict cookies (Secure on HTTPS). Login has per-client and global rate limits. Every mutation checks the exact origin. Public routing must terminate through the managed Oracle tunnel and preserve the main website host. The separate proxy handles only /manual-inbox/.
 
 The inbox polls the bounded discovery index every three seconds while the owner
 is viewing it and every thirty seconds when idle, with backoff on failures. A
@@ -69,7 +66,7 @@ about 85 GiB before adequate backups and headroom. This is a projection, not a
 ten-million-customer test. The inspected server has roughly 37 GiB free, so it
 cannot honestly be certified to retain that workload on its current disk.
 
-No plan upgrade, paid container or public tunnel was created. At least a larger
+No plan upgrade or paid container was created. A public tunnel is an optional owner-approved deployment step. At least a larger
 history-storage allocation, durable event discovery and independent recovery
 must be reviewed before promising the full target. The capacity drawer reports
 actual free disk and explicitly leaves the ten-million target unverified.
@@ -92,8 +89,7 @@ actual free disk and explicitly leaves the ten-million target unverified.
   the existing public links.
 - WhatsApp messages sent directly from the phone are not exposed by this Cloud
   API history. Replies sent in this separate inbox are saved locally.
-- No untested public/mobile access or high-availability claim is made. The
-  Oracle service runs without the PC; the PC opens an SSH tunnel to view it.
+- The Oracle service runs without the PC. Public phone access requires the tunnel and separate page route to be verified live; an APK build alone does not prove phone permissions or device behavior. There is no high-availability claim.
 
 This is a WhatsApp-style operator interface on the official API, not a complete
 implementation of phone-app features such as native payments, groups, video
@@ -104,3 +100,13 @@ Run the original test suite plus `inbox-entry.test.mjs`,
 `oracle/inbox.test.mjs` and `oracle/rich-inbox.test.mjs`. Keep `.env`, SQLite files, SSH keys and API tokens
 outside Git. `backup.mjs` creates a consistent Oracle-local SQLite backup;
 such a backup alone does not protect against losing the VM's disk.
+
+## Android inbox
+
+The separate `in.rekhaastrology.oracleinbox` Android app opens only the secure /manual-inbox/ page. It has INTERNET, RECORD_AUDIO and MODIFY_AUDIO_SETTINGS permissions. Microphone approval is requested after a visible recording action; photos/documents use the Android system picker, and the camera uses a temporary, narrowly granted private provider URI. API credentials and the owner password are not packaged. Keep release signing files outside the repository. Public APK downloads use /manual-inbox/downloads/RekhaInbox.apk.
+
+## Published phone access (2026-10-21)
+
+Owner-approved URL: https://rekhaastrology.in/manual-inbox/
+Android download: https://rekhaastrology.in/manual-inbox/downloads/RekhaInbox.apk
+The dedicated rekha-manual-inbox Worker matches only rekhaastrology.in/manual-inbox*. A healthy managed cloudflared connector on Oracle routes through inbox-origin.rekhaastrology.in to loopback port 4342, overriding the origin Host to rekhaastrology.in. The existing website route and original automatic funnel were not changed. The tunnel token, password hash and session key stay in the private Oracle directory; neither the APK nor repository contains them. Both inbox and connector services are enabled at boot. Live HTTPS checks verified the password sign-in, 401 before sign-in, cross-origin rejection, real chat data and the exact signed APK hash. Installation, recording and file picking still require real Android-device verification.

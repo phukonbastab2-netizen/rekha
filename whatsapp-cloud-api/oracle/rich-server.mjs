@@ -1,28 +1,47 @@
 import http from 'node:http';
 import fs from 'node:fs';
-import {randomBytes,timingSafeEqual} from 'node:crypto';
+import {OwnerAuth} from './owner-auth.mjs';
 import {Readable,Transform} from 'node:stream';
 import {RichInbox} from './rich-inbox.mjs';
 import {firstSequence} from '../funnel.mjs';
 process.umask(0o077);
 const env={...process.env};
 if(!env.SQLITE_PATH||!env.ADMIN_TOKEN||!env.META_ACCESS_TOKEN||!/^https:\/\//.test(env.FUNNEL_ORIGIN||''))throw Error('private_configuration_required');
-const inbox=new RichInbox(env.SQLITE_PATH,env),port=Number(env.PORT||4342),session=randomBytes(32).toString('hex');
-const html=fs.readFileSync(new URL('./inbox.html',import.meta.url));
-const equal=(a,b)=>{const x=Buffer.from(a||''),y=Buffer.from(b||'');return x.length===y.length&&timingSafeEqual(x,y);};
+const inbox=new RichInbox(env.SQLITE_PATH,env),port=Number(env.PORT||4342),auth=new OwnerAuth(env),base=auth.base;
+const publicOrigin=env.PUBLIC_ORIGIN||'';
+if(publicOrigin&&!/^https:\/\/[a-z0-9.-]+$/.test(publicOrigin))throw Error('invalid_public_origin');
+const html=fs.readFileSync(new URL('./inbox.html',import.meta.url),'utf8').replaceAll('__BASE__',base);
+const loginHtml=fs.readFileSync(new URL('./login.html',import.meta.url),'utf8').replaceAll('__BASE__',base);
 let active=0,uploadRequests=0,lastViewerAt=0,stopping=false;
 const server=http.createServer(async(req,res)=>{
  active++;res.once('close',()=>active--);const reply=(status,value)=>{if(res.destroyed)return;res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));};
- const host=req.headers.host;if(!['127.0.0.1:'+port,'localhost:'+port].includes(host))return reply(403,{error:'Private owner connection required.'});
- const url=new URL(req.url,'http://'+host);
- if(url.pathname==='/'&&req.method==='GET'){
-  res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','set-cookie':'rekha_oracle_session='+session+'; HttpOnly; SameSite=Strict; Path=/',
-   'content-security-policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",'x-content-type-options':'nosniff'});return res.end(html);
+ const host=req.headers.host,local=['127.0.0.1:'+port,'localhost:'+port].includes(host),secure=Boolean(publicOrigin&&host===new URL(publicOrigin).host);
+ if(!local&&!secure)return reply(403,{error:'Use the owner inbox address.'});
+ const origin=secure?publicOrigin:'http://'+host,url=new URL(req.url,origin);
+ res.setHeader('x-content-type-options','nosniff');res.setHeader('x-frame-options','DENY');res.setHeader('referrer-policy','no-referrer');res.setHeader('x-robots-tag','noindex, nofollow');res.setHeader('cache-control','no-store');
+ if(secure)res.setHeader('strict-transport-security','max-age=31536000');
+ if(base&&url.pathname===base||local&&base&&url.pathname==='/'){res.writeHead(302,{location:base+'/'});return res.end();}
+ if(base&&!url.pathname.startsWith(base+'/'))return reply(404,{error:'Not found.'});
+ url.pathname=url.pathname.slice(base.length)||'/';
+ const allowedOrigin=req.headers.origin===origin;
+ if(req.method==='POST'&&(!allowedOrigin||!(/^(application\/json|multipart\/form-data)(;|$)/.test(String(req.headers['content-type']||'')))||['cross-site','same-site'].includes(req.headers['sec-fetch-site'])))return reply(403,{error:'Use the owner inbox page.'});
+ const page=value=>{res.writeHead(200,{'content-type':'text/html; charset=utf-8','content-security-policy':"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' https: data: blob:; media-src 'self' https: blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"});res.end(value);};
+ if(url.pathname==='/downloads/RekhaInbox.apk'&&req.method==='GET'){
+  const path=new URL('./downloads/RekhaInbox.apk',import.meta.url);if(!fs.existsSync(path))return reply(404,{error:'Android app is being prepared.'});
+  const stat=fs.statSync(path);res.writeHead(200,{'content-type':'application/vnd.android.package-archive','content-disposition':'attachment; filename="RekhaInbox.apk"','content-length':stat.size,'cache-control':'public, max-age=300'});return fs.createReadStream(path).pipe(res);
  }
- if(url.pathname==='/app.js'&&req.method==='GET'){res.writeHead(200,{'content-type':'application/javascript; charset=utf-8','cache-control':'no-store','x-content-type-options':'nosniff'});return res.end(fs.readFileSync(new URL('./app.js',import.meta.url)));}
- const cookie=String(req.headers.cookie||'').split(';').map(x=>x.trim()).find(x=>x.startsWith('rekha_oracle_session='))?.slice('rekha_oracle_session='.length);
- if(!equal(cookie,session))return reply(401,{error:'Reopen the inbox to reconnect your private session.'});lastViewerAt=Date.now();
- if(req.method==='POST'&&(req.headers.origin!=='http://'+host||!/^application\/json|^multipart\/form-data/.test(String(req.headers['content-type']||''))))return reply(403,{error:'Use the private owner page.'});
+ if(url.pathname==='/auth/login'&&req.method==='POST'){
+  try{let length=0;const chunks=[];for await(const c of req){length+=c.length;if(length>1024)return reply(413,{error:'Request too large.'});chunks.push(c);}const value=JSON.parse(Buffer.concat(chunks).toString());
+   const ip=secure?String(req.headers['cf-connecting-ip']||'public').slice(0,64):'local';const result=await auth.login(value.password,ip);
+   if(!result.ok)return reply(result.status,{error:result.status===429?'Please try again later.':'Incorrect password.'});
+   res.setHeader('set-cookie',auth.cookie(result.token,secure));return reply(200,{ok:true});
+  }catch{return reply(400,{error:'Invalid request.'});}
+ }
+ const signedIn=auth.authenticated(req);
+ if(url.pathname==='/'&&req.method==='GET')return page(signedIn?html:loginHtml);
+ if(!signedIn)return reply(401,{error:'Please sign in to your inbox.'});lastViewerAt=Date.now();
+ if(url.pathname==='/auth/logout'&&req.method==='POST'){res.setHeader('set-cookie',auth.cookie('',secure));return reply(200,{ok:true});}
+ if(url.pathname==='/app.js'&&req.method==='GET'){res.writeHead(200,{'content-type':'application/javascript; charset=utf-8'});return res.end(fs.readFileSync(new URL('./app.js',import.meta.url)));}
  try{
   if(req.method==='GET'){
    if(url.pathname==='/api/status')return reply(200,inbox.status());

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ <uses-permission android:name="android.permission.INTERNET" />
+ <uses-permission android:name="android.permission.RECORD_AUDIO" />
+ <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+ <uses-feature android:name="android.hardware.microphone" android:required="false" />
+ <queries><intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent></queries>
+ <application android:label="Rekha Inbox" android:icon="@drawable/app_icon" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true">
+  <provider android:name=".PhotoProvider" android:authorities="in.rekhaastrology.oracleinbox.photo" android:exported="false" android:grantUriPermissions="true" />
+  <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+ </application>
+</manifest>
